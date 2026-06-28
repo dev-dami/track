@@ -1,2 +1,16 @@
 /target
 /tmp_benchmark
+*.o
+*.out
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
