@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/track-lang/track/actions"><img src="https://img.shields.io/github/actions/workflow/status/track-lang/track/ci.yml?branch=main&style=flat-square&label=build" alt="Build Status"></a>
-  <a href="https://github.com/track-lang/track/blob/main/LICENSE"><img src="https://img.shields.io/github/license/track-lang/track?style=flat-square" alt="License"></a>
-  <a href="https://github.com/track-lang/track/releases"><img src="https://img.shields.io/github/v/release/track-lang/track?style=flat-square&include_prereleases" alt="Release"></a>
-  <a href="https://github.com/track-lang/track"><img src="https://img.shields.io/github/stars/track-lang/track?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/dev-dami/track/actions"><img src="https://img.shields.io/github/actions/workflow/status/dev-dami/track/ci.yml?branch=main&style=flat-square&label=build" alt="Build Status"></a>
+  <a href="https://github.com/dev-dami/track/blob/main/LICENSE"><img src="https://img.shields.io/github/license/dev-dami/track?style=flat-square" alt="License"></a>
+  <a href="https://github.com/dev-dami/track/releases"><img src="https://img.shields.io/github/v/release/dev-dami/track?style=flat-square&include_prereleases" alt="Release"></a>
+  <a href="https://github.com/dev-dami/track"><img src="https://img.shields.io/github/stars/dev-dami/track?style=flat-square" alt="Stars"></a>
 </p>
 
 ---
