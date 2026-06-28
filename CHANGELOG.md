@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Escape Analysis**: Implemented safe return checks ensuring reference values do not outlive the local variables they borrow (pointer safety).
 - **Borrow-Locking**: Implemented compiler-level locks preventing moves or mutation of resources while active borrows/references exist.
 - **Reference Examples**: Added `examples/borrow.trk`, `examples/escape_err.trk`, and `examples/borrow_lock_err.trk`.
+- **Zig-style `@use()` modules**: Implemented comptime module import syntax supporting full path importing, aliasing (`as`), and specific item import selection (`path::{a, b}`). Added namespaced identifiers (`namespace::name`) to the parser and checker.
 
 ## [0.3.0] — 2026-06-28
 
