@@ -11,6 +11,7 @@ impl Parser {
             Some(Token::If) => self.parse_if()?,
             Some(Token::While) => self.parse_while()?,
             Some(Token::Return) => self.parse_return()?,
+            Some(Token::AtUse) => self.parse_use()?,
             _ => {
                 let expr = self.parse_expr()?;
                 // Handle assignment: expr = expr
@@ -183,5 +184,46 @@ impl Parser {
             Some(Box::new(self.parse_expr()?))
         };
         Ok(Expr::Return { value })
+    }
+
+    fn parse_use(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume '@use'
+        self.expect(&Token::LParen)?;
+        let full_path = match self.advance() {
+            Some((Token::Str(s), _)) => s,
+            other => return Err(format!("Expected string path after @use(, got {:?}", other.map(|(t,_)| t))),
+        };
+        self.expect(&Token::RParen)?;
+
+        // Optional alias: as alias_name
+        let alias = if self.peek() == Some(&Token::As) {
+            self.advance();
+            Some(self.expect_ident()?)
+        } else {
+            None
+        };
+
+        // Parse full_path to split actual path and imports (e.g. "path::{a, b}")
+        let mut path = full_path.clone();
+        let mut imports = None;
+
+        if let Some(idx) = full_path.find("::{") {
+            path = full_path[..idx].to_string();
+            let imports_str = &full_path[idx + 3..];
+            if let Some(end_idx) = imports_str.find('}') {
+                let items: Vec<String> = imports_str[..end_idx]
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                imports = Some(items);
+            }
+        }
+
+        Ok(Expr::Use {
+            path,
+            imports,
+            alias,
+        })
     }
 }

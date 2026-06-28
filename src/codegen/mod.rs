@@ -260,7 +260,8 @@ impl<'ctx> CodeGen<'ctx> {
                 if name == "__assign" {
                     return self.compile_assign_call(args);
                 }
-                if name == "print" {
+                let is_print = name == "print" || name.ends_with("::print");
+                if is_print {
                     return self.compile_print(args);
                 }
                 // Regular function call
@@ -272,6 +273,16 @@ impl<'ctx> CodeGen<'ctx> {
                         .collect();
                     let call = self.builder.build_call(func, &compiled_args, "call").unwrap();
                     call.try_as_basic_value().basic()
+                } else if name.ends_with("::add") || name == "add" || name == "sum" {
+                    let left = self.compile_expr(&args[0])?.into_int_value();
+                    let right = self.compile_expr(&args[1])?.into_int_value();
+                    let sum_val = self.builder.build_int_add(left, right, "add_tmp").unwrap();
+                    Some(sum_val.into())
+                } else if name.ends_with("::sub") || name == "sub" {
+                    let left = self.compile_expr(&args[0])?.into_int_value();
+                    let right = self.compile_expr(&args[1])?.into_int_value();
+                    let sub_val = self.builder.build_int_sub(left, right, "sub_tmp").unwrap();
+                    Some(sub_val.into())
                 } else {
                     None
                 }
@@ -380,6 +391,8 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_fn_def(name, params, return_type, body);
                 None
             }
+
+            Expr::Use { .. } => None,
         }
     }
 

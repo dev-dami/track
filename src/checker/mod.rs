@@ -211,6 +211,7 @@ impl LinearChecker {
             Expr::Return { .. } => Some(TrackType::Void),
             Expr::Assign { .. } => Some(TrackType::Void),
             Expr::FnDef { .. } => Some(TrackType::Void),
+            Expr::Use { .. } => Some(TrackType::Void),
         }
     }
 
@@ -488,6 +489,62 @@ impl LinearChecker {
                 self.lens_locked = saved_lens;
                 self.current_params = saved_params;
                 self.current_return_type = saved_ret;
+                Ok(())
+            }
+
+            Expr::Use { path, imports, alias } => {
+                let provided = match path.as_str() {
+                    "std/io" => vec![
+                        ("print".to_string(), Some(TrackType::Void)),
+                        ("read".to_string(), Some(TrackType::I64)),
+                    ],
+                    "math/vec" => vec![
+                        ("add".to_string(), Some(TrackType::I64)),
+                        ("sub".to_string(), Some(TrackType::I64)),
+                    ],
+                    _ => return Err(format!("Compile Error: Unknown module '{}'", path)),
+                };
+
+                let default_ns = path.split('/').last().unwrap_or(path);
+
+                if let Some(ref alias_name) = alias {
+                    if let Some(ref items) = imports {
+                        if items.len() == 1 {
+                            let item_name = &items[0];
+                            if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name) {
+                                self.functions.insert(alias_name.clone(), ret_ty.clone());
+                            } else {
+                                return Err(format!("Compile Error: Module '{}' does not export '{}'", path, item_name));
+                            }
+                        } else {
+                            for item_name in items {
+                                if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name) {
+                                    self.functions.insert(format!("{}::{}", alias_name, item_name), ret_ty.clone());
+                                } else {
+                                    return Err(format!("Compile Error: Module '{}' does not export '{}'", path, item_name));
+                                }
+                            }
+                        }
+                    } else {
+                        for (func_name, ret_ty) in &provided {
+                            self.functions.insert(format!("{}::{}", alias_name, func_name), ret_ty.clone());
+                        }
+                    }
+                } else {
+                    if let Some(ref items) = imports {
+                        for item_name in items {
+                            if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name) {
+                                self.functions.insert(item_name.clone(), ret_ty.clone());
+                            } else {
+                                return Err(format!("Compile Error: Module '{}' does not export '{}'", path, item_name));
+                            }
+                        }
+                    } else {
+                        for (func_name, ret_ty) in &provided {
+                            self.functions.insert(format!("{}::{}", default_ns, func_name), ret_ty.clone());
+                        }
+                    }
+                }
                 Ok(())
             }
         }

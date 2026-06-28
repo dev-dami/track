@@ -249,7 +249,7 @@ impl Parser {
             }
             Some(Token::If) => self.parse_if_expr(),
             Some(Token::Ident(_)) => {
-                let name = self.expect_ident()?;
+                let name = self.parse_namespaced_ident()?;
 
                 // Struct init: TypeName { fields }
                 if self.allow_struct && self.peek() == Some(&Token::LBrace) {
@@ -329,5 +329,15 @@ impl Parser {
             then_body,
             else_body,
         })
+     }
+
+    pub fn parse_namespaced_ident(&mut self) -> Result<String, String> {
+        let mut name = self.expect_ident()?;
+        while self.peek() == Some(&Token::ColonColon) {
+            self.advance();
+            let sub_name = self.expect_ident()?;
+            name = format!("{}::{}", name, sub_name);
+        }
+        Ok(name)
     }
 }

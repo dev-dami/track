@@ -71,6 +71,12 @@ pub enum Expr {
         return_type: Option<TrackType>,
         body: Vec<Expr>,
     },
+
+    Use {
+        path: String,
+        imports: Option<Vec<String>>,
+        alias: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

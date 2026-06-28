@@ -29,6 +29,8 @@ pub enum Token {
     Struct,
     #[token("as")]
     As,
+    #[token("@use")]
+    AtUse,
 
     // Type keywords
     #[token("i32")]
