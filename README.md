@@ -1,4 +1,3 @@
-````md
 <p align="center">
   <img src="assets/track-logo.svg" alt="Track" width="400">
 </p>
