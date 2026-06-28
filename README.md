@@ -235,6 +235,8 @@ Detailed documentation is available in the [/docs](file:///home/dev/track/docs) 
 - **[Constants](file:///home/dev/track/docs/constants.md)**: Compile-time constant definitions.
 - **[Macros](file:///home/dev/track/docs/macros.md)**: `@macro` system for code generation.
 - **[Yard Package Manager](file:///home/dev/track/docs/yard.md)**: Yard package layout, `Track.toml`, and command-line workflows.
+- **[LSP Server](file:///home/dev/track/src/lsp/mod.rs)**: Language server for IDE support.
+- **[Syntax Highlighting](file:///home/dev/track/grammars/README.md)**: TextMate grammar for GitHub and VS Code.
 
 See [CHANGELOG.md](file:///home/dev/track/CHANGELOG.md) for a historical record of all changes.
 
@@ -256,7 +258,36 @@ The `track` binary will be in `target/release/`.
 ./install.sh
 ```
 
-This builds and installs `track` to `/usr/local/bin`.
+This builds and installs `track` and `track-lsp` to `/usr/local/bin`.
+
+## LSP Server
+
+Track includes a language server for IDE support:
+
+```bash
+# Start the LSP server
+track-lsp
+```
+
+Features:
+- Diagnostics for `.trk` files
+- Diagnostics for `track` code blocks in markdown files
+- Auto-completion for keywords, types, macros, and enum/union variants
+- Hover documentation
+- Syntax highlighting via TextMate grammar
+
+### VS Code Integration
+
+Add to your `settings.json`:
+
+```json
+{
+  "language-server.track": {
+    "command": "track-lsp",
+    "filePatterns": ["*.trk", "*.md"]
+  }
+}
+```
 
 ## Yard (Package Manager)
 
@@ -331,12 +362,12 @@ Development is organized into versioned milestones. See [CHANGELOG.md](CHANGELOG
 - Hardware register access
 - Interrupt-safe data structures
 
-### v0.6 - Tooling (Planned)
+### v0.6 - Tooling (Complete)
 
-- LSP server
-- Test framework
-- Formatter and linter
-- Documentation generator
+- LSP server (`track-lsp`)
+- TextMate grammar for syntax highlighting
+- Diagnostics for `.trk` and markdown files
+- Auto-completion and hover documentation
 
 ### v0.7 - Concurrency (Planned)
 

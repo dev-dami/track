@@ -1,0 +1,180 @@
+{
+  "name": "Track",
+  "scopeName": "source.track",
+  "fileTypes": ["trk"],
+  "foldingStartMarkers": ["\\{\\s*$"],
+  "foldingStopMarkers": ["^\\s*\\}"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#macros" },
+    { "include": "#constants" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#punctuation" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.track",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.track",
+          "match": "\\b(fn|return|if|else|while|let|mut|with|struct|enum|union|match|const|as|true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.track",
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|bool|void|ptr|str)\\b"
+        }
+      ]
+    },
+    "macros": {
+      "patterns": [
+        {
+          "name": "entity.name.function.macro.track",
+          "match": "@(use|macro|bit|pin|register|compile_error|compile_warning|now|fib_comptime|timer|assert|size_of)"
+        },
+        {
+          "name": "keyword.other.macro.track",
+          "match": "@macro\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "keyword.other.const.track",
+          "match": "\\bconst\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.track",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.track",
+              "match": "\\\\(?:[\"\\\\nrt0])"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.track",
+          "match": "\\b0[xX][0-9a-fA-F]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.track",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.track",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.track",
+          "match": "(\\+|-|\\*|/|%)"
+        },
+        {
+          "name": "keyword.operator.logical.track",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.bitwise.track",
+          "match": "(&|\\||\\^|<<|>>)"
+        },
+        {
+          "name": "keyword.operator.assignment.track",
+          "match": "(=)"
+        },
+        {
+          "name": "keyword.operator.arrow.track",
+          "match": "(->|=>)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.block.begin.track",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.block.end.track",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.section.parens.begin.track",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.parens.end.track",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.section.bracket.begin.track",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.bracket.end.track",
+          "match": "\\]"
+        },
+        {
+          "name": "punctuation.separator.comma.track",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.colon.track",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.separator.namespace.track",
+          "match": "::"
+        },
+        {
+          "name": "punctuation.terminator.semicolon.track",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.accessor.dot.track",
+          "match": "\\."
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.track",
+          "match": "\\b[a-z_][a-zA-Z0-9_]*\\b"
+        },
+        {
+          "name": "entity.name.type.track",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

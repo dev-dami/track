@@ -50,7 +50,6 @@ Wrap code blocks:
 ```track
 @fib_comptime(40)    // evaluated at compile time
 @now()               // current timestamp
-@size_of(type)       // size in bytes
 @compile_error(msg)  // compile-time error
 @compile_warning(msg) // compile-time warning
 ```
@@ -84,17 +83,14 @@ Wrap code blocks:
 let GPIO_BASE = @register(0x40021000, 0x00FF);
 ```
 
-### Type-safe Enum String
+### Pin Definition
 
 ```track
-@macro enum_name(value: u32) -> str {
-    match value {
-        0 => "Active",
-        1 => "Locked",
-        2 => "Spent",
-        _ => "Unknown",
-    }
+@macro pin(port: u32, pin: u32) -> u32 {
+    return (port << 8) | pin;
 }
+
+let led = @pin(1, 5);
 ```
 
 ### Loop Unrolling

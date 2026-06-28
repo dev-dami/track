@@ -59,4 +59,4 @@ const CHUNK_SIZE = 64;
 | Evaluation | Compile-time | Runtime |
 | Mutability | Immutable | Mutable with `mut` |
 | Scope | File-level | Block-level |
-| overhead | Zero | Stack allocation |
+| Overhead | Zero | Stack allocation |

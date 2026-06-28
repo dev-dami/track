@@ -2,10 +2,10 @@
 set -e
 
 # Track Language Installer
-# Installs the track binary to /usr/local/bin
+# Installs track and track-lsp binaries to /usr/local/bin
 
 INSTALL_DIR="/usr/local/bin"
-BINARY_NAME="track"
+BINARIES=("track" "track-lsp")
 
 echo "Installing Track language..."
 
@@ -15,16 +15,18 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
-# Build release binary
-echo "Building release binary..."
+# Build release binaries
+echo "Building release binaries..."
 cargo build --release
 
 # Check if build succeeded
-BINARY_PATH="target/release/$BINARY_NAME"
-if [ ! -f "$BINARY_PATH" ]; then
-    echo "Error: Build failed. Binary not found at $BINARY_PATH"
-    exit 1
-fi
+for binary in "${BINARIES[@]}"; do
+    BINARY_PATH="target/release/$binary"
+    if [ ! -f "$BINARY_PATH" ]; then
+        echo "Error: Build failed. Binary not found at $BINARY_PATH"
+        exit 1
+    fi
+done
 
 # Create install directory if it doesn't exist
 if [ ! -d "$INSTALL_DIR" ]; then
@@ -32,15 +34,18 @@ if [ ! -d "$INSTALL_DIR" ]; then
     sudo mkdir -p "$INSTALL_DIR"
 fi
 
-# Copy binary
-echo "Installing to $INSTALL_DIR/$BINARY_NAME..."
-sudo cp "$BINARY_PATH" "$INSTALL_DIR/$BINARY_NAME"
-sudo chmod +x "$INSTALL_DIR/$BINARY_NAME"
+# Copy binaries
+for binary in "${BINARIES[@]}"; do
+    echo "Installing $binary to $INSTALL_DIR/$binary..."
+    sudo cp "target/release/$binary" "$INSTALL_DIR/$binary"
+    sudo chmod +x "$INSTALL_DIR/$binary"
+done
 
 # Verify installation
-if command -v "$BINARY_NAME" &> /dev/null; then
+if command -v "track" &> /dev/null; then
     echo "Track installed successfully!"
     echo "Run 'track --help' to get started."
+    echo "Run 'track-lsp' to start the language server."
 else
     echo "Warning: track installed but not in PATH. You may need to add $INSTALL_DIR to your PATH."
 fi

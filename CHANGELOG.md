@@ -5,6 +5,16 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-06-28
+
+### Added
+- **LSP Server**: Added `track-lsp` binary implementing Language Server Protocol for IDE support.
+- **Diagnostics**: Real-time error checking for `.trk` files and `track` code blocks in markdown.
+- **Auto-completion**: Completion for keywords, types, macros, and enum/union variants.
+- **Hover Documentation**: Hover information for language constructs.
+- **TextMate Grammar**: Added `track.tmLanguage.json` for syntax highlighting in GitHub and VS Code.
+- **LSP Documentation**: Added [src/lsp/mod.rs](file:///home/dev/track/src/lsp/mod.rs) and [grammars/README.md](file:///home/dev/track/grammars/README.md).
+
 ## [0.4.0] — 2026-06-28
 
 ### Added
@@ -17,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`const` definitions**: Added support for parsing and evaluating compile-time constant declarations (`const BUFFER_SIZE = 1024;`).
 - **`@macro` meta-operations**: Added support for defining and calling compile-time macros. Includes expression macros (e.g. `@bit(n)`), statement macros (e.g. `@assert(cond)`), block macros (e.g. `@timer { body }`), and compile-time evaluation built-ins (e.g. `@fib_comptime(n)`).
 - **Macro Examples**: Added [examples/macro_test.trk](file:///home/dev/track/examples/macro_test.trk).
+- **Plain Enums**: Added `enum` keyword for type-safe enumerations without associated data. Supports optional underlying integer types (`: u8`, `: i32`, etc.).
+- **Tagged Unions**: Added `union` keyword for variants with associated data. Each variant can hold a different type.
+- **Pattern Matching**: Added `match` expression for exhaustive control flow over enums and unions. Supports wildcard patterns, binding patterns, and guard conditions.
+- **String Arrays**: Added null-terminated string array assignment (`let buf: [u8; 16] = "hello";`).
+- **Union/Enum Examples**: Added [examples/union_enum_test.trk](file:///home/dev/track/examples/union_enum_test.trk).
 
 ## [0.3.0] — 2026-06-28
 

@@ -51,6 +51,13 @@ fn main() -> void {
 @use("path::to::module::{item1}") as alias
 ```
 
+## Built-in Modules
+
+| Module | Functions | Description |
+|--------|-----------|-------------|
+| `std::io` | `print`, `read` | I/O operations |
+| `math::vec` | `add`, `sub` | Vector math |
+
 ## Rules
 
 - Explicit paths only—no hidden imports
