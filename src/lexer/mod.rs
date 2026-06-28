@@ -27,6 +27,12 @@ pub enum Token {
     False,
     #[token("struct")]
     Struct,
+    #[token("enum")]
+    Enum,
+    #[token("union")]
+    Union,
+    #[token("match")]
+    Match,
     #[token("as")]
     As,
     #[token("@use")]
@@ -102,6 +108,8 @@ pub enum Token {
     Semicolon,
     #[token(".")]
     Dot,
+    #[token("_", priority = 3)]
+    Underscore,
     #[token("&")]
     Amp,
     #[token("|")]

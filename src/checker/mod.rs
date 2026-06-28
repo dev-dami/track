@@ -221,6 +221,12 @@ impl LinearChecker {
                     self.functions.get(name).cloned().flatten()
                 }
             }
+            Expr::LetDef { .. } => Some(TrackType::Void),
+            Expr::EnumDef { .. } => Some(TrackType::Void),
+            Expr::UnionDef { .. } => Some(TrackType::Void),
+            Expr::Match { arms, .. } => {
+                arms.first().and_then(|arm| self.infer_type(&arm.body))
+            }
         }
     }
 
@@ -269,31 +275,31 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::FunctionCall { name, args } => {
-                if name == "__assign" {
-                    if let Some(Expr::Variable(target)) = args.first() {
-                        self.declare(target.clone());
-                        if args.len() > 1 {
-                            self.check_expr(&args[1])?;
-                            if let Some(ty) = self.infer_type(&args[1]) {
-                                self.types.insert(target.clone(), ty.clone());
-                                if matches!(ty, TrackType::Ref(_)) {
-                                    let prov = self.get_provenance(&args[1]);
-                                    self.borrows.insert(target.clone(), prov);
-                                }
-                            }
-                        }
-                        self.update_borrow_states();
-                        Ok(())
-                    } else {
-                        Err("Compile Error: __assign requires a variable target".to_string())
-                    }
-                } else {
-                    for arg in args {
-                        self.check_expr(arg)?;
-                    }
-                    Ok(())
+            Expr::FunctionCall { name: _, args } => {
+                for arg in args {
+                    self.check_expr(arg)?;
                 }
+                Ok(())
+            }
+
+            Expr::LetDef { name, ty, value } => {
+                self.check_expr(value)?;
+                let inferred = self.infer_type(value);
+                let final_ty = if let Some(annotated_ty) = ty {
+                    annotated_ty.clone()
+                } else {
+                    inferred.unwrap_or(TrackType::Void)
+                };
+
+                self.declare(name.clone());
+                self.types.insert(name.clone(), final_ty.clone());
+
+                if matches!(final_ty, TrackType::Ref(_)) {
+                    let prov = self.get_provenance(value);
+                    self.borrows.insert(name.clone(), prov);
+                }
+                self.update_borrow_states();
+                Ok(())
             }
 
             Expr::LensBlock {
@@ -619,6 +625,66 @@ impl LinearChecker {
                         self.check_expr(stmt)?;
                         self.update_borrow_states();
                     }
+                }
+                Ok(())
+            }
+
+            Expr::EnumDef { name, underlying_type: _, variants } => {
+                for (var_name, val_opt) in variants {
+                    let fullname = format!("{}::{}", name, var_name);
+                    self.types.insert(fullname.clone(), TrackType::Custom(name.clone()));
+                    self.declare(fullname);
+                    if let Some(ref val) = val_opt {
+                        self.check_expr(val)?;
+                    }
+                }
+                Ok(())
+            }
+
+            Expr::UnionDef { name, variants } => {
+                for (var_name, ty_opt) in variants {
+                    let fullname = format!("{}::{}", name, var_name);
+                    if ty_opt.is_some() {
+                        self.functions.insert(fullname, Some(TrackType::Custom(name.clone())));
+                    } else {
+                        self.types.insert(fullname.clone(), TrackType::Custom(name.clone()));
+                        self.declare(fullname);
+                    }
+                }
+                Ok(())
+            }
+
+            Expr::Match { target, arms } => {
+                self.check_expr(target)?;
+                for arm in arms {
+                    let saved_registry = self.registry.clone();
+                    let saved_types = self.types.clone();
+                    let saved_borrows = self.borrows.clone();
+                    let saved_lens = self.lens_locked.clone();
+
+                    if let crate::ast::Pattern::Variant { ref enum_or_union, ref variant, binding: Some(ref bind_var) } = arm.pattern {
+                        let bind_ty = match (enum_or_union.as_str(), variant.as_str()) {
+                            ("Value", "Int") => TrackType::I32,
+                            ("Value", "Float") => TrackType::I64,
+                            ("Value", "Bool") => TrackType::Bool,
+                            ("Result", "Ok") => TrackType::I64,
+                            ("Result", "Err") => TrackType::I64,
+                            _ => TrackType::I32,
+                        };
+                        self.declare(bind_var.clone());
+                        self.types.insert(bind_var.clone(), bind_ty);
+                    }
+
+                    if let Some(ref guard_expr) = arm.guard {
+                        self.check_expr(guard_expr)?;
+                    }
+
+                    self.check_expr(&arm.body)?;
+
+                    self.registry = saved_registry;
+                    self.types = saved_types;
+                    self.borrows = saved_borrows;
+                    self.lens_locked = saved_lens;
                 }
                 Ok(())
             }

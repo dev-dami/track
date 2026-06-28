@@ -11,258 +11,354 @@
 
 ---
 
-Track is a systems programming language for deterministic software.
+Track is a systems programming language that enforces zero-allocation memory safety at compile time using linear types and lexical lenses. It targets bare-metal firmware, audio DSP, robotics, and other real-time systems where dynamic allocation is prohibited and deterministic memory behavior is a hard requirement.
 
-It combines **linear types**, **compile-time borrow checking**, and **lexical lenses** to eliminate resource leaks, use-after-free, and hidden allocations without requiring a garbage collector or runtime.
-
-Track targets firmware, robotics, audio DSP, operating systems, and other real-time software where deterministic memory behavior is essential.
-
-```track
-let user = User { name: "Alice", age: 30 };
-
-with user -> u {
-    print(u);
-}
-
-print(user);
-````
+Track compiles to native machine code via LLVM. There is no garbage collector, no runtime, and no complex lifetime annotations.
 
 ## Design Principles
 
-* Deterministic execution
-* Compile-time memory safety
-* Zero-cost abstractions
-* No garbage collector
-* No hidden memory allocations
-* Explicit control flow
-
----
+- **No hidden control flow.** All branches and jumps are explicit in the source.
+- **No hidden memory allocations.** Linear types prevent resource leaks by construction.
+- **No runtime overhead.** Safety checks occur entirely at compile time.
+- **Zero-allocation by default.** Dynamic allocation is not available unless explicitly opted in.
 
 ## Features
 
 ### Linear Types
 
-User-defined types are linear resources. Ownership moves by default, preventing resource leaks, double frees, and use-after-free errors entirely at compile time.
+User-defined types (`struct`, `[T; N]`) are linear resources. A value transitions through a strict state machine: `Active` -> `Locked` or `Spent`. The compiler rejects use-after-free, double-free, and resource leaks at compile time.
 
 ```track
 let data = Data { x: 42 };
-
-compute(data);
-
-compute(data); // error: use after free
+let result = compute(data);   // data is now Spent
+let result2 = compute(data);  // error: use after free
 ```
 
-Primitive types (`i32`, `u64`, `bool`, `ptr<T>`) have copy semantics.
-
-### Borrow References
-
-Shared references allow read-only access without transferring ownership.
-
-```track
-fn read(buf: &Buffer) {
-    print(buf);
-}
-```
-
-Borrowed values cannot be moved or mutably accessed until the borrow ends.
+Primitive types (`i32`, `u64`, `bool`, `ptr<T>`) have copy semantics and are exempt from linearity constraints.
 
 ### Lexical Lenses
 
-Lexical lenses provide scoped mutable access without transferring ownership.
+Lenses provide scoped mutable access to a resource without transferring ownership. The lens locks the resource for the duration of its block and releases it automatically on scope exit.
 
 ```track
 let user = User { name: "Alice", age: 30 };
 
 with user -> u {
-    u.age += 1;
+    print(u);  // u is Active inside the lens
 }
 
-print(user);
+print(user);  // user is restored to Active
 ```
-
-Resources are automatically unlocked when the lens scope exits.
 
 ### Uniform Function Call Syntax
 
-Any function may be called as if it were a method on its first argument.
+Any function can be called as a method on its first argument. This is syntactic sugar with no dynamic dispatch.
 
 ```track
-fn advance(ptr: ptr<i32>, offset: i32) -> ptr<i32> {
-    return ptr + offset;
+fn advance(p: ptr<i32>, offset: i32) -> ptr<i32> {
+    return p + offset;
 }
 
-let next = ptr.advance(16);
+let next = p.advance(16);  // desugars to: advance(p, 16)
 ```
-
-UFCS is purely syntactic sugar and introduces no runtime overhead.
 
 ### Direct Memory Access
 
-Pointers and array indexing compile directly to LLVM instructions.
+Array indexing and pointer arithmetic compile directly to LLVM `getelementptr` instructions.
 
 ```track
 let buffer = [10, 20, 30, 40];
-
 let first = buffer[0];
-
-let ptr = &first;
-
-let next = ptr + 8;
+let addr = &first;
+let offset = addr + 8;
 ```
 
----
+### Enums
+
+Plain enums for type-safe states and modes. No associated data—use unions for tagged data.
+
+```track
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Status : u8 {
+    Active,
+    Locked,
+    Spent,
+}
+
+let color = Color::Red;
+```
+
+### Unions
+
+Tagged unions for variants with associated data. Each variant holds a different type.
+
+```track
+union Value {
+    Int(i32),
+    Float(f64),
+    Bool(bool),
+}
+
+union Result(T, E) {
+    Ok(T),
+    Err(E),
+}
+
+let val: Value = Value::Int(42);
+```
+
+### Pattern Matching
+
+Exhaustive match expressions for enums and unions. No fallthrough—every case must be handled.
+
+```track
+match color {
+    Color::Red => print("red"),
+    Color::Green => print("green"),
+    Color::Blue => print("blue"),
+}
+
+match val {
+    Value::Int(x) => print(x),
+    Value::Float(x) => print(x),
+    Value::Bool(x) => print(x),
+}
+
+// Wildcard catch-all
+match val {
+    Value::Int(x) => print(x),
+    _ => print("other"),
+}
+```
+
+### `@use` Imports
+
+Explicit imports with `@use()`. Supports full paths, specific items, and aliasing.
+
+```track
+@use("std::io")
+@use("math::vec::{add, sub}")
+@use("utils::log") as logger
+
+fn main() -> void {
+    io::print("hello");
+    add(1, 2);
+    logger::log("done");
+}
+```
+
+### `const` Definitions
+
+Compile-time constants with explicit values. No hidden evaluation.
+
+```track
+const BUFFER_SIZE = 1024;
+const SAMPLE_RATE = 44100;
+const PI = 3.14159;
+```
+
+### `@macro` System
+
+Compile-time macros for code generation and meta-operations. Uses `@` prefix to signal meta-operation.
+
+```track
+// Expression macro
+@macro bit(n: u32) -> u32 {
+    return 1 << n;
+}
+
+let LED_PIN = @bit(5);
+
+// Statement macro
+@macro assert(condition: bool) -> void {
+    if (!condition) {
+        @compile_error("assertion failed");
+    }
+}
+
+@assert(x > 0);
+
+// Block macro
+@macro timer(body: block) -> void {
+    let start = @now();
+    body;
+    let end = @now();
+    print(end - start);
+}
+
+@timer {
+    // code to measure
+}
+```
 
 ## Type System
 
-| Type                      | Semantics | Description         |
-| ------------------------- | --------- | ------------------- |
-| `i8`, `i16`, `i32`, `i64` | Copy      | Signed integers     |
-| `u8`, `u16`, `u32`, `u64` | Copy      | Unsigned integers   |
-| `bool`                    | Copy      | Boolean             |
-| `void`                    | Copy      | Unit type           |
-| `ptr<T>`                  | Copy      | Raw pointer         |
-| `[T; N]`                  | Linear    | Fixed-size array    |
-| `struct`                  | Linear    | User-defined record |
+| Type | Semantics | Description |
+|------|-----------|-------------|
+| `i8`, `i16`, `i32`, `i64` | Copy | Signed integers |
+| `u8`, `u16`, `u32`, `u64` | Copy | Unsigned integers |
+| `bool` | Copy | Boolean |
+| `void` | Copy | Unit type |
+| `ptr<T>` | Copy | Raw pointer to `T` |
+| `&T` | Copy | Borrowed reference |
+| `[T; N]` | Linear | Fixed-size array |
+| `Struct { ... }` | Linear | User-defined record |
+| `enum { ... }` | Copy | Tagged enumeration |
+| `union { ... }` | Linear | Tagged union with data |
+| `str` | Copy | Compile-time string literal |
 
----
-
-## Compiler Pipeline
+## Compiler
 
 ```
-Source (.trk)
-      │
-      ▼
-Lexer
-      │
-      ▼
-Parser
-      │
-      ▼
-Type Checking
-      │
-      ▼
-Linear Analysis
-      │
-      ▼
-LLVM IR
-      │
-      ▼
-Native Binary
+.trk -> Lexer -> Parser -> Linear Checker -> LLVM IR -> Native Binary
 ```
 
-| Stage          | Implementation    | Description                                    |
-| -------------- | ----------------- | ---------------------------------------------- |
-| Lexer          | `logos`           | Tokenization with span tracking                |
-| Parser         | Recursive descent | Operator precedence and UFCS parsing           |
-| Type Checker   | Custom            | Static type checking                           |
-| Linear Checker | Custom            | Ownership, borrow checking, lifecycle tracking |
-| Codegen        | `inkwell`         | LLVM IR generation and object emission         |
-
----
-
+| Stage | Implementation | Description |
+|-------|---------------|-------------|
+| Lexer | `logos` | Tokenization with span tracking for diagnostics |
+| Parser | Recursive descent | Operator precedence climbing, UFCS resolution |
+| Linear Checker | Custom | Lifecycle tracking, copy/move inference, CFG state merging |
+| Codegen | `inkwell` | LLVM IR emission and object file output |
 ## Documentation
 
-Additional documentation is available in the `docs` directory.
+Detailed documentation is available in the [/docs](file:///home/dev/track/docs) folder:
 
-* **[Borrows and Escape Analysis](docs/borrows.md)** — borrow references, dereferencing, borrow locking, and escape analysis.
-* **[Yard Package Manager](docs/yard.md)** — package layout, `Track.toml`, dependency management, and workflows.
-* **[CHANGELOG](CHANGELOG.md)** — complete version history and development milestones.
+- **[Borrows and Escape Analysis](file:///home/dev/track/docs/borrows.md)**: Reference types (`&T`), dereferencing (`*`), compile-time borrow-locking, and escape safety.
+- **[Enums and Unions](file:///home/dev/track/docs/enums.md)**: Plain enums, tagged unions, and type-safe states.
+- **[Pattern Matching](file:///home/dev/track/docs/patterns.md)**: Exhaustive match expressions for enums and unions.
+- **[Imports](file:///home/dev/track/docs/imports.md)**: `@use()` module imports with paths and aliases.
+- **[Constants](file:///home/dev/track/docs/constants.md)**: Compile-time constant definitions.
+- **[Macros](file:///home/dev/track/docs/macros.md)**: `@macro` system for code generation.
+- **[Yard Package Manager](file:///home/dev/track/docs/yard.md)**: Yard package layout, `Track.toml`, and command-line workflows.
 
----
+See [CHANGELOG.md](file:///home/dev/track/CHANGELOG.md) for a historical record of all changes.
 
 ## Building
 
-### Prerequisites
-
-* Rust 2021
-* LLVM 22 development libraries
+**Prerequisites:**
+- Rust 2021 edition
+- LLVM 22 development libraries
 
 ```bash
 cargo build --release
 ```
 
-The compiler will be available at:
+The `track` binary will be in `target/release/`.
 
-```text
-target/release/track
-```
-
----
-
-## Yard
-
-Yard is Track's integrated package manager.
+## Installation
 
 ```bash
+./install.sh
+```
+
+This builds and installs `track` to `/usr/local/bin`.
+
+## Yard (Package Manager)
+
+Yard is the package manager for Track. It handles dependency resolution, project scaffolding, and build configuration.
+
+```bash
+# Initialize a new project
 track yard init my_project
 
+# Add a dependency
 track yard add <package>
 
+# Build the project
 track yard build
 
+# Run the project
 track yard run
 ```
 
-Yard handles project scaffolding, dependency resolution, and build orchestration.
-
----
+*Yard is integrated as a subcommand in the `track` binary.*
 
 ## Roadmap
 
-### v0.5 — Standard Library
+Development is organized into versioned milestones. See [CHANGELOG.md](CHANGELOG.md) for a complete list of changes.
 
-* Memory-mapped I/O
-* Ring buffers
-* Lock-free queues
-* Fixed-point arithmetic
-* Hardware register abstractions
-* Interrupt-safe data structures
+### v0.1 - Core Language (Complete)
 
-### v0.6 — Tooling
+- Lexer with token span tracking
+- Recursive descent parser with operator precedence
+- Typed AST
+- Linear checker (`Active`/`Spent`/`Locked` state machine)
+- Compile-time use-after-free and double-free detection
 
-* Language Server Protocol
-* Formatter
-* Linter
-* Documentation generator
-* Test framework
+### v0.2 - Control Flow and Primitives (Complete)
 
-### v0.7 — Concurrency
+- Struct literal disambiguation in conditionals
+- CFG state merging (`if`/`else`, `while`)
+- Primitive copy semantics via static type inference
+- Array indexing, address-of (`&`), pointer arithmetic
+- UFCS
+- Lexical lens blocks (`with ->`)
 
-* Channels
-* Static thread allocation
-* Priority-aware scheduling
-* Interrupt-safe concurrency primitives
+### v0.3 - LLVM IR Codegen (Complete)
 
-### v1.0 — Stable Release
+- LLVM IR emission via `inkwell`
+- Function, struct, array, and control flow codegen
+- Object file output
+- Conditional debug logging (suppressed in `--release`)
+- Linear type lifecycle operations in codegen
+- Lens block code generation
+- Linker integration
+- Yard package manager implementation (scaffolding, build orchestration, dependency routing)
 
-* Stable language specification
-* Stable ABI
-* Cross compilation (ARM, RISC-V, Xtensa)
-* Comprehensive test suite
+### v0.4 - Borrows, Enums, and Macros (Complete)
 
-### Future
+- Borrow references (`fn read(buf: &Buffer)`)
+- Escape analysis for pointer safety
+- Active borrow-locking to prevent moves/mutations of borrowed resources
+- Shared references (`&T`)
+- Enums (`enum Color { Red, Green, Blue }`)
+- Tagged unions (`union Value { Int(i32), Float(f64) }`)
+- Pattern matching (`match val { ... }`)
+- `@use()` imports with paths, items, and aliasing
+- `const` compile-time constants
+- `@macro` system for code generation
 
-* Generics
-* Compile-time evaluation
-* C FFI
-* WebAssembly backend
-* Incremental compilation
+### v0.5 - Standard Library (Planned)
 
----
+- Memory-mapped I/O abstractions
+- Ring buffers and lock-free queues
+- Fixed-point arithmetic
+- Hardware register access
+- Interrupt-safe data structures
 
-## Philosophy
+### v0.6 - Tooling (Planned)
 
-Track is designed around a simple principle:
+- LSP server
+- Test framework
+- Formatter and linter
+- Documentation generator
 
-> If memory behavior can be verified at compile time, it should not incur runtime cost.
+### v0.7 - Concurrency (Planned)
 
-Ownership, borrowing, and resource lifetimes are enforced statically, allowing generated code to remain as predictable as handwritten C while eliminating entire classes of memory errors.
+- Channel-based message passing
+- Static thread allocation
+- Priority-aware scheduling
+- Bare-metal interrupt handlers with linear safety
 
----
+### v1.0 - Stability (Planned)
+
+- Stable language specification
+- ABI stability
+- Cross-compilation (ARM, RISC-V, Xtensa)
+- Comprehensive test suite
+
+### Future Considerations
+
+- Generics and type parameters
+- C FFI without wrappers
+- WebAssembly target
+- Incremental compilation
 
 ## License
 
 Track is distributed under the [MIT License](LICENSE).
-
-```
-```

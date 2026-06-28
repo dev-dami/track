@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     IntLiteral(i64),
     StringLiteral(String),
@@ -95,6 +95,28 @@ pub enum Expr {
         args: Vec<Expr>,
         body: Option<Vec<Expr>>,
     },
+
+    LetDef {
+        name: String,
+        ty: Option<TrackType>,
+        value: Box<Expr>,
+    },
+
+    EnumDef {
+        name: String,
+        underlying_type: Option<TrackType>,
+        variants: Vec<(String, Option<Expr>)>,
+    },
+
+    UnionDef {
+        name: String,
+        variants: Vec<(String, Option<TrackType>)>,
+    },
+
+    Match {
+        target: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -136,4 +158,22 @@ pub enum UnaryOp {
     Neg,
     Not,
     Deref,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Ident(String),
+    Variant {
+        enum_or_union: String,
+        variant: String,
+        binding: Option<String>,
+    },
+    Wildcard,
 }

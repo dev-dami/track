@@ -249,6 +249,7 @@ impl Parser {
             }
             Some(Token::If) => self.parse_if_expr(),
             Some(Token::At) => self.parse_macro_call(),
+            Some(Token::Match) => self.parse_match(),
             Some(Token::Ident(_)) => {
                 let name = self.parse_namespaced_ident()?;
 
@@ -376,5 +377,80 @@ impl Parser {
             args,
             body,
         })
+    }
+
+    fn parse_match(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'match'
+        let saved_allow = self.allow_struct;
+        self.allow_struct = false;
+        let target = self.parse_expr()?;
+        self.allow_struct = saved_allow;
+        self.expect(&Token::LBrace)?;
+        
+        let mut arms = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let pattern = self.parse_pattern()?;
+            
+            let guard = if self.peek() == Some(&Token::If) {
+                self.advance();
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+            
+            self.expect(&Token::FatArrow)?;
+            let body = self.parse_statement()?;
+            
+            arms.push(crate::ast::MatchArm {
+                pattern,
+                guard,
+                body,
+            });
+
+            if self.peek() == Some(&Token::Comma) {
+                self.advance();
+            }
+        }
+        self.expect(&Token::RBrace)?;
+
+        Ok(Expr::Match {
+            target: Box::new(target),
+            arms,
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, String> {
+        match self.peek() {
+            Some(Token::Underscore) => {
+                self.advance();
+                Ok(crate::ast::Pattern::Wildcard)
+            }
+            Some(Token::Ident(_)) => {
+                let name = self.parse_namespaced_ident()?;
+                if name.contains("::") {
+                    let parts: Vec<&str> = name.split("::").collect();
+                    let enum_or_union = parts[0].to_string();
+                    let variant = parts[1].to_string();
+                    
+                    let binding = if self.peek() == Some(&Token::LParen) {
+                        self.advance();
+                        let b = self.expect_ident()?;
+                        self.expect(&Token::RParen)?;
+                        Some(b)
+                    } else {
+                        None
+                    };
+                    
+                    Ok(crate::ast::Pattern::Variant {
+                        enum_or_union,
+                        variant,
+                        binding,
+                    })
+                } else {
+                    Ok(crate::ast::Pattern::Ident(name))
+                }
+            }
+            other => Err(format!("Expected pattern, got {:?}", other)),
+        }
     }
 }

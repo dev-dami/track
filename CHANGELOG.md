@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Escape Analysis**: Implemented safe return checks ensuring reference values do not outlive the local variables they borrow (pointer safety).
 - **Borrow-Locking**: Implemented compiler-level locks preventing moves or mutation of resources while active borrows/references exist.
 - **Reference Examples**: Added `examples/borrow.trk`, `examples/escape_err.trk`, and `examples/borrow_lock_err.trk`.
-- **Zig-style `@use()` modules**: Implemented comptime module import syntax supporting full path importing, aliasing (`as`), and specific item import selection (`path::{a, b}`). Added namespaced identifiers (`namespace::name`) to the parser and checker.
+- **`@use()` modules**: Implemented comptime module import syntax supporting full path importing, aliasing (`as`), and specific item import selection (`path::{a, b}`). Added namespaced identifiers (`namespace::name`) to the parser and checker.
 - **`const` definitions**: Added support for parsing and evaluating compile-time constant declarations (`const BUFFER_SIZE = 1024;`).
 - **`@macro` meta-operations**: Added support for defining and calling compile-time macros. Includes expression macros (e.g. `@bit(n)`), statement macros (e.g. `@assert(cond)`), block macros (e.g. `@timer { body }`), and compile-time evaluation built-ins (e.g. `@fib_comptime(n)`).
 - **Macro Examples**: Added [examples/macro_test.trk](file:///home/dev/track/examples/macro_test.trk).

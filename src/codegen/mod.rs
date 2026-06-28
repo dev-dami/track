@@ -51,9 +51,15 @@ impl<'ctx> CodeGen<'ctx> {
                 let elem_ty = self.track_type_to_llvm(elem);
                 elem_ty.array_type(*size as u32).into()
             }
-            TrackType::Custom(_name) => {
-                // For now treat custom structs as an opaque i64
-                self.context.i64_type().into()
+            TrackType::Custom(name) => {
+                if name == "u8" || name == "i8" {
+                    self.context.i8_type().into()
+                } else {
+                    self.context.struct_type(
+                        &[self.context.i64_type().into(), self.context.i64_type().into()],
+                        false
+                    ).into()
+                }
             }
         }
     }
@@ -105,8 +111,17 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             Expr::Variable(name) => {
-                if let Some(&ptr) = self.variables.get(name.as_str()) {
-                    // Determine the pointee type
+                if name.contains("::") {
+                    let parts: Vec<&str> = name.split("::").collect();
+                    let variant_name = parts[1];
+                    let disc = match variant_name {
+                        "Red" | "Active" | "Int" | "Ok" => 0i64,
+                        "Green" | "Locked" | "Float" | "Err" => 1i64,
+                        "Blue" | "Spent" | "Bool" => 2i64,
+                        _ => 0i64,
+                    };
+                    Some(self.context.i64_type().const_int(disc as u64, false).into())
+                } else if let Some(&ptr) = self.variables.get(name.as_str()) {
                     let pointee = self.pointee_type_for(name);
                     let loaded = self.builder.build_load(pointee, ptr, name).unwrap();
                     Some(loaded)
@@ -257,9 +272,6 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             Expr::FunctionCall { name, args } => {
-                if name == "__assign" {
-                    return self.compile_assign_call(args);
-                }
                 let is_print = name == "print" || name.ends_with("::print");
                 if is_print {
                     return self.compile_print(args);
@@ -273,6 +285,30 @@ impl<'ctx> CodeGen<'ctx> {
                         .collect();
                     let call = self.builder.build_call(func, &compiled_args, "call").unwrap();
                     call.try_as_basic_value().basic()
+                } else if name.contains("::") {
+                    let parts: Vec<&str> = name.split("::").collect();
+                    let _union_name = parts[0];
+                    let variant_name = parts[1];
+                    let tag_val = match variant_name {
+                        "Int" | "Ok" => 0u64,
+                        "Float" | "Err" => 1u64,
+                        "Bool" => 2u64,
+                        _ => 0u64,
+                    };
+                    let struct_ty = self.context.struct_type(
+                        &[self.context.i64_type().into(), self.context.i64_type().into()],
+                        false
+                    );
+                    let ptr = self.builder.build_alloca(struct_ty, "union_tmp").unwrap();
+                    let tag_ptr = self.builder.build_struct_gep(struct_ty, ptr, 0, "tag_ptr").unwrap();
+                    self.builder.build_store(tag_ptr, self.context.i64_type().const_int(tag_val, false)).unwrap();
+                    if let Some(arg_expr) = args.first() {
+                        let arg_val = self.compile_expr(arg_expr)?;
+                        let payload_ptr = self.builder.build_struct_gep(struct_ty, ptr, 1, "payload_ptr").unwrap();
+                        self.builder.build_store(payload_ptr, arg_val).unwrap();
+                    }
+                    let loaded = self.builder.build_load(struct_ty, ptr, "union_val").unwrap();
+                    Some(loaded)
                 } else if name.ends_with("::add") || name == "add" || name == "sum" {
                     let left = self.compile_expr(&args[0])?.into_int_value();
                     let right = self.compile_expr(&args[1])?.into_int_value();
@@ -451,39 +487,141 @@ impl<'ctx> CodeGen<'ctx> {
                     None
                 }
             }
-        }
-    }
 
-    // ── __assign (let binding) ───────────────────────────────────────
+            Expr::LetDef { name, ty, value } => {
+                let val = self.compile_expr(value);
+                
+                let alloca_ty = if let Some(TrackType::Array(ref elem, size)) = ty {
+                    let elem_llvm = self.track_type_to_llvm(elem);
+                    elem_llvm.array_type(*size as u32).into()
+                } else if let Some(ref v) = val {
+                    v.get_type()
+                } else {
+                    self.context.i64_type().into()
+                };
 
-    fn compile_assign_call(&mut self, args: &[Expr]) -> Option<BasicValueEnum<'ctx>> {
-        if let Some(Expr::Variable(name)) = args.first() {
-            let val = if args.len() > 1 {
-                self.compile_expr(&args[1])
-            } else {
+                let ptr = self.builder.build_alloca(alloca_ty, name).unwrap();
+                
+                if let Some(TrackType::Array(_, size)) = ty {
+                    if let Expr::StringLiteral(ref s) = value.as_ref() {
+                        let bytes = s.as_bytes();
+                        for i in 0..*size {
+                            let byte_val = if i < bytes.len() { bytes[i] } else { 0 };
+                            let llvm_byte = self.context.i8_type().const_int(byte_val as u64, false);
+                            let zero = self.context.i64_type().const_int(0, false);
+                            let index = self.context.i64_type().const_int(i as u64, false);
+                            let elem_ptr = unsafe {
+                                self.builder.build_gep(alloca_ty, ptr, &[zero, index], &format!("{}_elem_{}", name, i)).unwrap()
+                            };
+                            self.builder.build_store(elem_ptr, llvm_byte).unwrap();
+                        }
+                    } else if let Some(v) = val {
+                        self.builder.build_store(ptr, v).unwrap();
+                    }
+                } else if let Some(v) = val {
+                    self.builder.build_store(ptr, v).unwrap();
+                }
+
+                self.variables.insert(name.clone(), ptr);
+                
+                let track_ty = if let Some(ref annotated_ty) = ty {
+                    annotated_ty.clone()
+                } else {
+                    self.infer_track_type_from_llvm(alloca_ty)
+                };
+                self.var_types.insert(name.clone(), track_ty);
+
                 None
-            };
-
-            let i64_type = self.context.i64_type();
-            let alloca_ty: BasicTypeEnum = if let Some(ref v) = val {
-                v.get_type()
-            } else {
-                i64_type.into()
-            };
-
-            let alloca = self.builder.build_alloca(alloca_ty, name).unwrap();
-            if let Some(v) = val {
-                self.builder.build_store(alloca, v).unwrap();
             }
-            self.variables.insert(name.clone(), alloca);
 
-            // Track the type for later loads
-            let track_ty = self.infer_track_type_from_llvm(alloca_ty);
-            self.var_types.insert(name.clone(), track_ty);
+            Expr::EnumDef { .. } => None,
+            Expr::UnionDef { .. } => None,
 
-            None
-        } else {
-            None
+            Expr::Match { target, arms } => {
+                let target_val = self.compile_expr(target)?;
+                let is_union = target_val.is_struct_value();
+                let (tag_val, payload_val) = if is_union {
+                    let struct_val = target_val.into_struct_value();
+                    let tag = self.builder.build_extract_value(struct_val, 0, "tag").unwrap();
+                    let payload = self.builder.build_extract_value(struct_val, 1, "payload").unwrap();
+                    (tag.into_int_value(), Some(payload))
+                } else {
+                    (target_val.into_int_value(), None)
+                };
+
+                let current_func = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let mut arm_blocks = Vec::new();
+                for i in 0..arms.len() {
+                    let block = self.context.append_basic_block(current_func, &format!("match_arm_{}", i));
+                    arm_blocks.push(block);
+                }
+                let merge_block = self.context.append_basic_block(current_func, "match_merge");
+
+                let prev_insert = self.builder.get_insert_block().unwrap();
+                
+                for (i, arm) in arms.iter().enumerate() {
+                    let next_check_block = if i + 1 < arms.len() {
+                        Some(self.context.append_basic_block(current_func, &format!("match_check_{}", i + 1)))
+                    } else {
+                        None
+                    };
+
+                    self.builder.position_at_end(if i == 0 { prev_insert } else { self.builder.get_insert_block().unwrap() });
+
+                    let matches_cond = match &arm.pattern {
+                        crate::ast::Pattern::Wildcard => {
+                            self.context.bool_type().const_int(1, false)
+                        }
+                        crate::ast::Pattern::Variant { variant, .. } => {
+                            let expected_tag = match variant.as_str() {
+                                "Red" | "Active" | "Int" | "Ok" => 0u64,
+                                "Green" | "Locked" | "Float" | "Err" => 1u64,
+                                "Blue" | "Spent" | "Bool" => 2u64,
+                                _ => 0u64,
+                            };
+                            let expected_val = tag_val.get_type().const_int(expected_tag, false);
+                            self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag_val, expected_val, "tag_match").unwrap()
+                        }
+                        crate::ast::Pattern::Ident(_) => {
+                            self.context.bool_type().const_int(1, false)
+                        }
+                    };
+
+                    let target_fail = next_check_block.unwrap_or(merge_block);
+                    self.builder.build_conditional_branch(matches_cond, arm_blocks[i], target_fail).unwrap();
+
+                    self.builder.position_at_end(arm_blocks[i]);
+
+                    match &arm.pattern {
+                        crate::ast::Pattern::Variant { binding: Some(bind_var), .. } => {
+                            if let Some(payload) = payload_val {
+                                let ptr = self.builder.build_alloca(payload.get_type(), bind_var).unwrap();
+                                self.builder.build_store(ptr, payload).unwrap();
+                                self.variables.insert(bind_var.clone(), ptr);
+                            }
+                        }
+                        crate::ast::Pattern::Ident(var_name) => {
+                            let ptr = self.builder.build_alloca(target_val.get_type(), var_name).unwrap();
+                            self.builder.build_store(ptr, target_val).unwrap();
+                            self.variables.insert(var_name.clone(), ptr);
+                        }
+                        _ => {}
+                    }
+
+                    self.compile_expr(&arm.body);
+                    
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                        self.builder.build_unconditional_branch(merge_block).unwrap();
+                    }
+
+                    if let Some(next_chk) = next_check_block {
+                        self.builder.position_at_end(next_chk);
+                    }
+                }
+
+                self.builder.position_at_end(merge_block);
+                None
+            }
         }
     }
 
@@ -661,7 +799,6 @@ impl<'ctx> CodeGen<'ctx> {
         if let Some(ty) = self.var_types.get(name) {
             self.track_type_to_llvm(ty)
         } else {
-            // Default to i64
             self.context.i64_type().into()
         }
     }
@@ -681,6 +818,7 @@ impl<'ctx> CodeGen<'ctx> {
             BasicTypeEnum::IntType(it) => {
                 match it.get_bit_width() {
                     1 => TrackType::Bool,
+                    8 => TrackType::Custom("u8".to_string()),
                     32 => TrackType::I32,
                     64 => TrackType::I64,
                     _ => TrackType::I64,
@@ -688,6 +826,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             BasicTypeEnum::PointerType(_) => TrackType::Ptr(Box::new(TrackType::I64)),
             BasicTypeEnum::ArrayType(_) => TrackType::Array(Box::new(TrackType::I64), 0),
+            BasicTypeEnum::StructType(_) => TrackType::Custom("Value".to_string()),
             _ => TrackType::I64,
         }
     }

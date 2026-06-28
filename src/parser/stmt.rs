@@ -14,6 +14,8 @@ impl Parser {
             Some(Token::AtUse) => self.parse_use()?,
             Some(Token::Const) => self.parse_const()?,
             Some(Token::AtMacro) => self.parse_macro_def()?,
+            Some(Token::Enum) => self.parse_enum()?,
+            Some(Token::Union) => self.parse_union()?,
             _ => {
                 let expr = self.parse_expr()?;
                 // Handle assignment: expr = expr
@@ -45,8 +47,7 @@ impl Parser {
         };
         let name = self.expect_ident()?;
 
-        // Optional type annotation: let x: Type = expr
-        let _ty = if self.peek() == Some(&Token::Colon) {
+        let ty = if self.peek() == Some(&Token::Colon) {
             self.advance();
             Some(self.parse_type()?)
         } else {
@@ -55,9 +56,10 @@ impl Parser {
 
         self.expect(&Token::Eq)?;
         let val = self.parse_expr()?;
-        Ok(Expr::FunctionCall {
-            name: "__assign".to_string(),
-            args: vec![Expr::Variable(name), val],
+        Ok(Expr::LetDef {
+            name,
+            ty,
+            value: Box::new(val),
         })
     }
 
@@ -279,6 +281,78 @@ impl Parser {
             params,
             return_type,
             body,
+        })
+    }
+
+    fn parse_enum(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'enum'
+        let name = self.expect_ident()?;
+        
+        let underlying_type = if self.peek() == Some(&Token::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.expect(&Token::LBrace)?;
+        let mut variants = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let variant_name = self.expect_ident()?;
+            let variant_value = if self.peek() == Some(&Token::Eq) {
+                self.advance();
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+            variants.push((variant_name, variant_value));
+            if self.peek() == Some(&Token::Comma) {
+                self.advance();
+            }
+        }
+        self.expect(&Token::RBrace)?;
+
+        Ok(Expr::EnumDef {
+            name,
+            underlying_type,
+            variants,
+        })
+    }
+
+    fn parse_union(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'union'
+        let name = self.expect_ident()?;
+        
+        if self.peek() == Some(&Token::LParen) {
+            self.advance();
+            while self.peek() != Some(&Token::RParen) {
+                self.advance();
+            }
+            self.expect(&Token::RParen)?;
+        }
+
+        self.expect(&Token::LBrace)?;
+        let mut variants = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let variant_name = self.expect_ident()?;
+            let variant_type = if self.peek() == Some(&Token::LParen) {
+                self.advance();
+                let ty = self.parse_type()?;
+                self.expect(&Token::RParen)?;
+                Some(ty)
+            } else {
+                None
+            };
+            variants.push((variant_name, variant_type));
+            if self.peek() == Some(&Token::Comma) {
+                self.advance();
+            }
+        }
+        self.expect(&Token::RBrace)?;
+
+        Ok(Expr::UnionDef {
+            name,
+            variants,
         })
     }
 }

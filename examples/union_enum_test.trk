@@ -1,0 +1,49 @@
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Status : u8 {
+    Active,
+    Locked,
+    Spent,
+}
+
+union Value {
+    Int(i32),
+    Float(i64),
+    Bool(bool),
+}
+
+fn test_enums() -> void {
+    let color = Color::Red;
+    match color {
+        Color::Red => print(111),
+        Color::Green => print(222),
+        Color::Blue => print(333),
+    }
+}
+
+fn test_unions() -> void {
+    let val = Value::Int(42);
+    match val {
+        Value::Int(x) => print(x),
+        Value::Float(y) => print(y),
+        Value::Bool(z) => print(z),
+    }
+}
+
+fn test_strings() -> void {
+    let msg = "hello";
+    let buf: [u8; 16] = "world";
+    print(msg);
+    let ptr_to_buf = &buf;
+    print(ptr_to_buf);
+}
+
+fn main() -> void {
+    test_enums();
+    test_unions();
+    test_strings();
+}
