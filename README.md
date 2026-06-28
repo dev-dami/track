@@ -97,6 +97,14 @@ let offset = addr + 8;
 | Parser | Recursive descent | Operator precedence climbing, UFCS resolution |
 | Linear Checker | Custom | Lifecycle tracking, copy/move inference, CFG state merging |
 | Codegen | `inkwell` | LLVM IR emission and object file output |
+## Documentation
+
+Detailed documentation is available in the [/docs](file:///home/dev/track/docs) folder:
+
+- **[Borrows and Escape Analysis](file:///home/dev/track/docs/borrows.md)**: Explains reference types (`&T`), dereferencing (`*`), compile-time active borrow-locking, and escape safety.
+- **[Yard Package Manager](file:///home/dev/track/docs/yard.md)**: Details the Yard package layout, configuration manifest (`Track.toml`), and command-line workflows.
+
+See [CHANGELOG.md](file:///home/dev/track/CHANGELOG.md) for a historical record of all changes.
 
 ## Building
 
