@@ -31,6 +31,12 @@ pub enum Token {
     As,
     #[token("@use")]
     AtUse,
+    #[token("@macro")]
+    AtMacro,
+    #[token("const")]
+    Const,
+    #[token("@")]
+    At,
 
     // Type keywords
     #[token("i32")]
@@ -98,6 +104,8 @@ pub enum Token {
     Dot,
     #[token("&")]
     Amp,
+    #[token("|")]
+    Pipe,
     #[token("*")]
     Star,
     #[token("+")]

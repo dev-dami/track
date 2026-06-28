@@ -212,6 +212,15 @@ impl LinearChecker {
             Expr::Assign { .. } => Some(TrackType::Void),
             Expr::FnDef { .. } => Some(TrackType::Void),
             Expr::Use { .. } => Some(TrackType::Void),
+            Expr::ConstDef { .. } => Some(TrackType::Void),
+            Expr::MacroDef { .. } => Some(TrackType::Void),
+            Expr::MacroCall { name, .. } => {
+                if name == "now" {
+                    Some(TrackType::I64)
+                } else {
+                    self.functions.get(name).cloned().flatten()
+                }
+            }
         }
     }
 
@@ -543,6 +552,72 @@ impl LinearChecker {
                         for (func_name, ret_ty) in &provided {
                             self.functions.insert(format!("{}::{}", default_ns, func_name), ret_ty.clone());
                         }
+                    }
+                }
+                Ok(())
+            }
+
+            Expr::ConstDef { name, value } => {
+                self.check_expr(value)?;
+                self.declare(name.clone());
+                if let Some(ty) = self.infer_type(value) {
+                    self.types.insert(name.clone(), ty);
+                }
+                self.update_borrow_states();
+                Ok(())
+            }
+
+            Expr::MacroDef { name, params, return_type, body } => {
+                self.functions.insert(name.clone(), return_type.clone());
+
+                let saved_registry = self.registry.clone();
+                let saved_types = self.types.clone();
+                let saved_borrows = self.borrows.clone();
+                let saved_lens = self.lens_locked.clone();
+                let saved_params = self.current_params.clone();
+                let saved_ret = self.current_return_type.clone();
+
+                self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
+                self.current_return_type = return_type.clone();
+
+                for (pname, pty) in params {
+                    self.declare(pname.clone());
+                    self.types.insert(pname.clone(), pty.clone());
+                }
+
+                self.update_borrow_states();
+
+                for stmt in body {
+                    self.check_expr(stmt)?;
+                    self.update_borrow_states();
+                }
+
+                self.registry = saved_registry;
+                self.types = saved_types;
+                self.borrows = saved_borrows;
+                self.lens_locked = saved_lens;
+                self.current_params = saved_params;
+                self.current_return_type = saved_ret;
+                Ok(())
+            }
+
+            Expr::MacroCall { name, args, body } => {
+                if name == "compile_error" {
+                    if let Some(Expr::StringLiteral(msg)) = args.first() {
+                        return Err(format!("Compile Error: {}", msg));
+                    } else {
+                        return Err("Compile Error: @compile_error requires a string message".to_string());
+                    }
+                }
+
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+
+                if let Some(ref block_body) = body {
+                    for stmt in block_body {
+                        self.check_expr(stmt)?;
+                        self.update_borrow_states();
                     }
                 }
                 Ok(())

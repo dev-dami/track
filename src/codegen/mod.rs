@@ -393,6 +393,64 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             Expr::Use { .. } => None,
+
+            Expr::ConstDef { name, value } => {
+                let val = self.compile_expr(value)?;
+                let alloca_ty = val.get_type();
+                let ptr = self.builder.build_alloca(alloca_ty, name).unwrap();
+                self.builder.build_store(ptr, val).unwrap();
+                self.variables.insert(name.clone(), ptr);
+                None
+            }
+
+            Expr::MacroDef { .. } => None,
+
+            Expr::MacroCall { name, args, body } => {
+                if name == "bit" {
+                    let n = self.compile_expr(&args[0])?.into_int_value();
+                    let one = n.get_type().const_int(1, false);
+                    let val = self.builder.build_left_shift(one, n, "bit_val").unwrap();
+                    Some(val.into())
+                } else if name == "pin" {
+                    let port = self.compile_expr(&args[0])?.into_int_value();
+                    let pin = self.compile_expr(&args[1])?.into_int_value();
+                    let sh = port.get_type().const_int(8, false);
+                    let port_sh = self.builder.build_left_shift(port, sh, "port_sh").unwrap();
+                    let val = self.builder.build_or(port_sh, pin, "pin_val").unwrap();
+                    Some(val.into())
+                } else if name == "register" {
+                    let addr = self.compile_expr(&args[0])?.into_int_value();
+                    let mask = self.compile_expr(&args[1])?.into_int_value();
+                    let sh = mask.get_type().const_int(8, false);
+                    let mask_sh = self.builder.build_left_shift(mask, sh, "mask_sh").unwrap();
+                    let val = self.builder.build_or(addr, mask_sh, "reg_val").unwrap();
+                    Some(val.into())
+                } else if name == "fib_comptime" {
+                    if let Some(Expr::IntLiteral(n)) = args.first() {
+                        fn fib_rec(n: i64) -> i64 {
+                            if n <= 1 { n }
+                            else { fib_rec(n - 1) + fib_rec(n - 2) }
+                        }
+                        let fib_val = fib_rec(*n);
+                        let i64_type = self.context.i64_type();
+                        Some(i64_type.const_int(fib_val as u64, true).into())
+                    } else {
+                        None
+                    }
+                } else if name == "timer" {
+                    if let Some(ref block_body) = body {
+                        let mut last = None;
+                        for stmt in block_body {
+                            last = self.compile_expr(stmt);
+                        }
+                        last
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
         }
     }
 

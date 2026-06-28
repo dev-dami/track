@@ -12,6 +12,8 @@ impl Parser {
             Some(Token::While) => self.parse_while()?,
             Some(Token::Return) => self.parse_return()?,
             Some(Token::AtUse) => self.parse_use()?,
+            Some(Token::Const) => self.parse_const()?,
+            Some(Token::AtMacro) => self.parse_macro_def()?,
             _ => {
                 let expr = self.parse_expr()?;
                 // Handle assignment: expr = expr
@@ -224,6 +226,59 @@ impl Parser {
             path,
             imports,
             alias,
+        })
+    }
+
+    fn parse_const(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'const'
+        let name = self.expect_ident()?;
+        self.expect(&Token::Eq)?;
+        let value = self.parse_expr()?;
+        Ok(Expr::ConstDef {
+            name,
+            value: Box::new(value),
+        })
+    }
+
+    fn parse_macro_def(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume '@macro'
+        let name = self.expect_ident()?;
+        self.expect(&Token::LParen)?;
+        let mut params = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            let param_name = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let param_ty = self.parse_type()?;
+            params.push((param_name, param_ty));
+            while self.peek() == Some(&Token::Comma) {
+                self.advance();
+                let param_name = self.expect_ident()?;
+                self.expect(&Token::Colon)?;
+                let param_ty = self.parse_type()?;
+                params.push((param_name, param_ty));
+            }
+        }
+        self.expect(&Token::RParen)?;
+
+        let return_type = if self.peek() == Some(&Token::Arrow) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.expect(&Token::LBrace)?;
+        let mut body = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            body.push(self.parse_statement()?);
+        }
+        self.expect(&Token::RBrace)?;
+
+        Ok(Expr::MacroDef {
+            name,
+            params,
+            return_type,
+            body,
         })
     }
 }

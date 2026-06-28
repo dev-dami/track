@@ -1,0 +1,23 @@
+const BUFFER_SIZE = 1024;
+const SAMPLE_RATE = 44100;
+
+@macro bit(n: u32) -> u32 {
+    return 1 << n;
+}
+
+@macro pin(port: u32, pin: u32) -> u32 {
+    return (port << 8) | pin;
+}
+
+@macro register(addr: u32, mask: u32) -> u32 {
+    return addr | (mask << 8);
+}
+
+fn main() -> void {
+    let led_pin = @bit(5);
+    let led = @pin(1, 5);
+    let gpio_base = @register(1073876992, 255);
+    print(led_pin);
+    print(led);
+    print(gpio_base);
+}

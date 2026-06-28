@@ -77,6 +77,24 @@ pub enum Expr {
         imports: Option<Vec<String>>,
         alias: Option<String>,
     },
+
+    ConstDef {
+        name: String,
+        value: Box<Expr>,
+    },
+
+    MacroDef {
+        name: String,
+        params: Vec<(String, TrackType)>,
+        return_type: Option<TrackType>,
+        body: Vec<Expr>,
+    },
+
+    MacroCall {
+        name: String,
+        args: Vec<Expr>,
+        body: Option<Vec<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

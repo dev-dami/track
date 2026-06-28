@@ -9,7 +9,7 @@ impl Parser {
 
     fn parse_or(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_and()?;
-        while self.peek() == Some(&Token::PipePipe) {
+        while self.peek() == Some(&Token::PipePipe) || self.peek() == Some(&Token::Pipe) {
             self.advance();
             let right = self.parse_and()?;
             left = Expr::BinaryOp {
@@ -248,6 +248,7 @@ impl Parser {
                 Ok(Expr::BoolLiteral(false))
             }
             Some(Token::If) => self.parse_if_expr(),
+            Some(Token::At) => self.parse_macro_call(),
             Some(Token::Ident(_)) => {
                 let name = self.parse_namespaced_ident()?;
 
@@ -339,5 +340,41 @@ impl Parser {
             name = format!("{}::{}", name, sub_name);
         }
         Ok(name)
+    }
+
+    fn parse_macro_call(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume '@'
+        let name = self.expect_ident()?;
+        
+        let mut args = Vec::new();
+        let mut body = None;
+
+        if self.peek() == Some(&Token::LParen) {
+            self.advance();
+            if self.peek() != Some(&Token::RParen) {
+                args.push(self.parse_expr()?);
+                while self.peek() == Some(&Token::Comma) {
+                    self.advance();
+                    args.push(self.parse_expr()?);
+                }
+            }
+            self.expect(&Token::RParen)?;
+        }
+
+        if self.peek() == Some(&Token::LBrace) {
+            self.advance();
+            let mut block_body = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                block_body.push(self.parse_statement()?);
+            }
+            self.expect(&Token::RBrace)?;
+            body = Some(block_body);
+        }
+
+        Ok(Expr::MacroCall {
+            name,
+            args,
+            body,
+        })
     }
 }
