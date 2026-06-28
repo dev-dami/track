@@ -116,19 +116,19 @@ Yard is the package manager for Track. It handles dependency resolution, project
 
 ```bash
 # Initialize a new project
-yard init my_project
+track yard init my_project
 
 # Add a dependency
-yard add <package>
+track yard add <package>
 
 # Build the project
-yard build
+track yard build
 
 # Run the project
-yard run
+track yard run
 ```
 
-*Yard is under active development and will be available in v0.6.*
+*Yard is integrated as a subcommand in the `track` binary.*
 
 ## Roadmap
 
@@ -151,22 +151,22 @@ Development is organized into versioned milestones. See [CHANGELOG.md](CHANGELOG
 - UFCS
 - Lexical lens blocks (`with ->`)
 
-### v0.3 - LLVM IR Codegen (In Progress)
+### v0.3 - LLVM IR Codegen (Complete)
 
 - LLVM IR emission via `inkwell`
 - Function, struct, array, and control flow codegen
 - Object file output
 - Conditional debug logging (suppressed in `--release`)
-- Remaining:
-  - Linear type lifecycle operations in codegen
-  - Lens block code generation
-  - Linker integration
+- Linear type lifecycle operations in codegen
+- Lens block code generation
+- Linker integration
+- Yard package manager implementation (scaffolding, build orchestration, dependency routing)
 
-### v0.4 - Borrows and Escape Analysis (Planned)
+### v0.4 - Borrows and Escape Analysis (Complete)
 
 - Borrow references (`fn read(buf: &Buffer)`)
 - Escape analysis for pointer safety
-- Lens bounds checking and optimization
+- Active borrow-locking to prevent moves/mutations of borrowed resources
 - Shared references (`&T`)
 
 ### v0.5 - Standard Library (Planned)
@@ -180,7 +180,6 @@ Development is organized into versioned milestones. See [CHANGELOG.md](CHANGELOG
 ### v0.6 - Tooling (Planned)
 
 - LSP server
-- Yard package manager
 - Test framework
 - Formatter and linter
 - Documentation generator

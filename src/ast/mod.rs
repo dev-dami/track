@@ -81,6 +81,7 @@ pub enum TrackType {
     U64,
     Bool,
     Ptr(Box<TrackType>),
+    Ref(Box<TrackType>),
     Array(Box<TrackType>, usize),
     Void,
     Custom(String),

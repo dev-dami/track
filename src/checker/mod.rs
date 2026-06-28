@@ -13,6 +13,10 @@ pub struct LinearChecker {
     pub registry: HashMap<String, VariableState>,
     pub types: HashMap<String, TrackType>,
     pub functions: HashMap<String, Option<TrackType>>,
+    pub borrows: HashMap<String, Vec<String>>,
+    pub lens_locked: std::collections::HashSet<String>,
+    pub current_params: std::collections::HashSet<String>,
+    pub current_return_type: Option<TrackType>,
 }
 
 fn is_copy_type(ty: &TrackType) -> bool {
@@ -22,7 +26,8 @@ fn is_copy_type(ty: &TrackType) -> bool {
         | TrackType::I64
         | TrackType::U64
         | TrackType::Bool
-        | TrackType::Ptr(_) => true,
+        | TrackType::Ptr(_)
+        | TrackType::Ref(_) => true,
         _ => false,
     }
 }
@@ -33,6 +38,10 @@ impl LinearChecker {
             registry: HashMap::new(),
             types: HashMap::new(),
             functions: HashMap::new(),
+            borrows: HashMap::new(),
+            lens_locked: std::collections::HashSet::new(),
+            current_params: std::collections::HashSet::new(),
+            current_return_type: None,
         }
     }
 
@@ -55,7 +64,7 @@ impl LinearChecker {
                 name
             )),
             Some(VariableState::Locked) => Err(format!(
-                "Compile Error: Resource '{}' is frozen inside a lens block.",
+                "Compile Error: Resource '{}' is frozen (either locked in a lens or borrowed).",
                 name
             )),
             Some(VariableState::Active) => {
@@ -71,8 +80,41 @@ impl LinearChecker {
         }
     }
 
+    pub fn update_borrow_states(&mut self) {
+        // Collect all variables that are borrowed by currently Active reference variables
+        let mut borrowed_vars = std::collections::HashSet::new();
+        for (name, state) in &self.registry {
+            if *state == VariableState::Active {
+                if let Some(ty) = self.types.get(name) {
+                    if matches!(ty, TrackType::Ref(_)) {
+                        if let Some(provs) = self.borrows.get(name) {
+                            for p in provs {
+                                borrowed_vars.insert(p.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update registry states
+        for (name, state) in self.registry.iter_mut() {
+            let is_lens_locked = self.lens_locked.contains(name);
+            let is_borrowed = borrowed_vars.contains(name);
+
+            if is_lens_locked || is_borrowed {
+                if *state == VariableState::Active {
+                    *state = VariableState::Locked;
+                }
+            } else if *state == VariableState::Locked {
+                *state = VariableState::Active;
+            }
+        }
+    }
+
     pub fn enter_lens(&mut self, name: &str) -> Result<(), String> {
         if self.registry.get(name) == Some(&VariableState::Active) {
+            self.lens_locked.insert(name.to_string());
             self.registry.insert(name.to_string(), VariableState::Locked);
             Ok(())
         } else {
@@ -84,9 +126,11 @@ impl LinearChecker {
     }
 
     pub fn exit_lens(&mut self, name: &str) {
+        self.lens_locked.remove(name);
         if self.registry.get(name) == Some(&VariableState::Locked) {
             self.registry.insert(name.to_string(), VariableState::Active);
         }
+        self.update_borrow_states();
     }
 
     pub fn check_program(&mut self, program: &[Expr]) -> Result<(), String> {
@@ -123,10 +167,9 @@ impl LinearChecker {
                     crate::ast::UnaryOp::Not => Some(TrackType::Bool),
                     crate::ast::UnaryOp::Neg => self.infer_type(expr),
                     crate::ast::UnaryOp::Deref => {
-                        if let Some(TrackType::Ptr(inner)) = self.infer_type(expr) {
-                            Some(*inner)
-                        } else {
-                            None
+                        match self.infer_type(expr) {
+                            Some(TrackType::Ptr(inner)) | Some(TrackType::Ref(inner)) => Some(*inner),
+                            _ => None,
                         }
                     }
                 }
@@ -139,11 +182,18 @@ impl LinearChecker {
                 match self.infer_type(target) {
                     Some(TrackType::Array(inner, _)) => Some(*inner),
                     Some(TrackType::Ptr(inner)) => Some(*inner),
+                    Some(TrackType::Ref(inner)) => {
+                        match *inner {
+                            TrackType::Array(elem, _) => Some(*elem),
+                            TrackType::Ptr(elem) => Some(*elem),
+                            other => Some(other),
+                        }
+                    }
                     _ => None,
                 }
             }
             Expr::AddressOf { target } => {
-                self.infer_type(target).map(|t| TrackType::Ptr(Box::new(t)))
+                self.infer_type(target).map(|t| TrackType::Ref(Box::new(t)))
             }
             Expr::StructInitialization { ty_name, .. } => {
                 Some(TrackType::Custom(ty_name.clone()))
@@ -216,9 +266,14 @@ impl LinearChecker {
                         if args.len() > 1 {
                             self.check_expr(&args[1])?;
                             if let Some(ty) = self.infer_type(&args[1]) {
-                                self.types.insert(target.clone(), ty);
+                                self.types.insert(target.clone(), ty.clone());
+                                if matches!(ty, TrackType::Ref(_)) {
+                                    let prov = self.get_provenance(&args[1]);
+                                    self.borrows.insert(target.clone(), prov);
+                                }
                             }
                         }
+                        self.update_borrow_states();
                         Ok(())
                     } else {
                         Err("Compile Error: __assign requires a variable target".to_string())
@@ -258,30 +313,40 @@ impl LinearChecker {
                 // Clone state for each branch
                 let pre_if = self.registry.clone();
                 let pre_if_types = self.types.clone();
+                let pre_if_borrows = self.borrows.clone();
 
                 // Check then branch
                 let mut then_state = pre_if.clone();
                 let mut then_types = pre_if_types.clone();
+                let mut then_borrows = pre_if_borrows.clone();
                 std::mem::swap(&mut self.registry, &mut then_state);
                 std::mem::swap(&mut self.types, &mut then_types);
+                std::mem::swap(&mut self.borrows, &mut then_borrows);
                 for stmt in then_body {
                     self.check_expr(stmt)?;
+                    self.update_borrow_states();
                 }
                 let then_end = self.registry.clone();
+                let then_end_borrows = self.borrows.clone();
 
                 // Check else branch
                 let mut else_state = pre_if.clone();
                 let mut else_types = pre_if_types.clone();
+                let mut else_borrows = pre_if_borrows.clone();
                 std::mem::swap(&mut self.registry, &mut else_state);
                 std::mem::swap(&mut self.types, &mut else_types);
+                std::mem::swap(&mut self.borrows, &mut else_borrows);
                 for stmt in else_body {
                     self.check_expr(stmt)?;
+                    self.update_borrow_states();
                 }
                 let else_end = self.registry.clone();
+                let else_end_borrows = self.borrows.clone();
 
                 // CFG Merge: both branches must leave variables in identical states
                 let mut merged = HashMap::new();
                 let mut merged_types = HashMap::new();
+                let mut merged_borrows = HashMap::new();
                 for (name, _) in &pre_if {
                     let then_s = then_end.get(name).copied().unwrap_or(VariableState::Spent);
                     let else_s = else_end.get(name).copied().unwrap_or(VariableState::Spent);
@@ -297,10 +362,16 @@ impl LinearChecker {
                     if let Some(ty) = pre_if_types.get(name) {
                         merged_types.insert(name.clone(), ty.clone());
                     }
+                    // For borrows, take union or then branch (they must match or merge)
+                    if let Some(b) = then_end_borrows.get(name).or_else(|| else_end_borrows.get(name)) {
+                        merged_borrows.insert(name.clone(), b.clone());
+                    }
                 }
 
                 self.registry = merged;
                 self.types = merged_types;
+                self.borrows = merged_borrows;
+                self.update_borrow_states();
                 Ok(())
             }
 
@@ -311,19 +382,35 @@ impl LinearChecker {
                 // Run body once to check for linear violations
                 let pre_loop = self.registry.clone();
                 let pre_loop_types = self.types.clone();
+                let pre_loop_borrows = self.borrows.clone();
                 for stmt in body {
                     self.check_expr(stmt)?;
+                    self.update_borrow_states();
                 }
 
                 // Restore pre-loop state (loop continues)
                 self.registry = pre_loop;
                 self.types = pre_loop_types;
+                self.borrows = pre_loop_borrows;
+                self.update_borrow_states();
                 Ok(())
             }
 
             Expr::Return { value } => {
                 if let Some(val) = value {
                     self.check_expr(val)?;
+                    // Escape check
+                    if let Some(TrackType::Ref(_)) = self.current_return_type {
+                        let prov = self.get_provenance(val);
+                        for v in &prov {
+                            if !self.current_params.contains(v) {
+                                return Err(format!(
+                                    "Compile Error: Cannot return reference to local variable '{}' (escapes function scope).",
+                                    v
+                                ));
+                            }
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -334,30 +421,73 @@ impl LinearChecker {
                 if let Expr::Variable(name) = target.as_ref() {
                     self.registry.insert(name.clone(), VariableState::Active);
                     if let Some(ty) = self.infer_type(value) {
-                        self.types.insert(name.clone(), ty);
+                        self.types.insert(name.clone(), ty.clone());
+                        if matches!(ty, TrackType::Ref(_)) {
+                            let prov = self.get_provenance(value);
+                            self.borrows.insert(name.clone(), prov);
+                        } else {
+                            self.borrows.remove(name);
+                        }
                     }
                 }
+                self.update_borrow_states();
                 Ok(())
             }
 
             Expr::FnDef {
                 params,
                 body,
+                return_type,
                 ..
             } => {
                 // Enter function scope
                 let saved_registry = self.registry.clone();
                 let saved_types = self.types.clone();
+                let saved_borrows = self.borrows.clone();
+                let saved_lens = self.lens_locked.clone();
+                let saved_params = self.current_params.clone();
+                let saved_ret = self.current_return_type.clone();
+
+                self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
+                self.current_return_type = return_type.clone();
+
                 for (name, ty) in params {
                     self.declare(name.clone());
                     self.types.insert(name.clone(), ty.clone());
                 }
+
+                self.update_borrow_states();
+
                 for stmt in body {
                     self.check_expr(stmt)?;
+                    self.update_borrow_states();
                 }
+
+                // Escape check for implicit return at the end of function body
+                if let Some(TrackType::Ref(_)) = return_type {
+                    let has_explicit_return = body.iter().any(|stmt| matches!(stmt, Expr::Return { .. }));
+                    if !has_explicit_return {
+                        if let Some(last_stmt) = body.last() {
+                            let prov = self.get_provenance(last_stmt);
+                            for v in &prov {
+                                if !self.current_params.contains(v) {
+                                    return Err(format!(
+                                        "Compile Error: Cannot return reference to local variable '{}' (escapes function scope).",
+                                        v
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Restore outer scope
                 self.registry = saved_registry;
                 self.types = saved_types;
+                self.borrows = saved_borrows;
+                self.lens_locked = saved_lens;
+                self.current_params = saved_params;
+                self.current_return_type = saved_ret;
                 Ok(())
             }
         }
@@ -384,6 +514,55 @@ impl LinearChecker {
                 }
             }
             _ => self.check_expr(expr),
+        }
+    }
+    fn get_provenance(&self, expr: &Expr) -> Vec<String> {
+        match expr {
+            Expr::AddressOf { target } => {
+                match target.as_ref() {
+                    Expr::Variable(name) => vec![name.clone()],
+                    Expr::ArrayIndex { target: inner_target, .. } => self.get_provenance(inner_target),
+                    _ => self.get_provenance(target),
+                }
+            }
+            Expr::Variable(name) => {
+                if let Some(targets) = self.borrows.get(name) {
+                    targets.clone()
+                } else if self.types.get(name).map_or(false, |t| matches!(t, TrackType::Ref(_))) {
+                    vec![name.clone()]
+                } else {
+                    Vec::new()
+                }
+            }
+            Expr::FunctionCall { name: _, args } => {
+                let mut prov = Vec::new();
+                for arg in args {
+                    if let Some(ty) = self.infer_type(arg) {
+                        if matches!(ty, TrackType::Ref(_)) {
+                            prov.extend(self.get_provenance(arg));
+                        }
+                    }
+                }
+                prov.sort();
+                prov.dedup();
+                prov
+            }
+            Expr::IfElse { then_body, else_body, .. } => {
+                let mut prov = Vec::new();
+                if let Some(last) = then_body.last() {
+                    prov.extend(self.get_provenance(last));
+                }
+                if let Some(last) = else_body.last() {
+                    prov.extend(self.get_provenance(last));
+                }
+                prov.sort();
+                prov.dedup();
+                prov
+            }
+            Expr::LensBlock { body, .. } => {
+                body.last().map_or(Vec::new(), |last| self.get_provenance(last))
+            }
+            _ => Vec::new(),
         }
     }
 }

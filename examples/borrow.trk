@@ -1,0 +1,9 @@
+fn add_one(val: &i64) -> i64 {
+    return *val + 1;
+}
+
+fn main() -> void {
+    let x = 41;
+    let res = add_one(&x);
+    print(res);
+}

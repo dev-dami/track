@@ -1,0 +1,5 @@
+fn main() -> void {
+    let x = [1, 2, 3];
+    let r = &x;
+    let y = x; // Error: x is locked/borrowed!
+}

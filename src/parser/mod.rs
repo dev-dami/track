@@ -65,6 +65,11 @@ impl Parser {
                 self.expect(&Token::Gt)?;
                 Ok(TrackType::Ptr(Box::new(inner)))
             }
+            Some(Token::Amp) => {
+                self.advance();
+                let inner = self.parse_type()?;
+                Ok(TrackType::Ref(Box::new(inner)))
+            }
             Some(Token::Ident(name)) => {
                 self.advance();
                 Ok(TrackType::Custom(name))
