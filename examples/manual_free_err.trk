@@ -1,0 +1,5 @@
+// Test: manually calling free should be rejected
+fn main() -> void {
+    let buf: ptr<u8> = alloc(64);
+    free(buf);  // This should be a compile error!
+}

@@ -20,6 +20,7 @@ pub struct CodeGen<'ctx> {
     variables: HashMap<String, PointerValue<'ctx>>,
     var_types: HashMap<String, TrackType>,
     current_fn: Option<FunctionValue<'ctx>>,
+    active_linear_vars: std::collections::HashSet<String>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -33,6 +34,7 @@ impl<'ctx> CodeGen<'ctx> {
             variables: HashMap::new(),
             var_types: HashMap::new(),
             current_fn: None,
+            active_linear_vars: std::collections::HashSet::new(),
         }
     }
 
@@ -122,6 +124,7 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     Some(self.context.i64_type().const_int(disc as u64, false).into())
                 } else if let Some(&ptr) = self.variables.get(name.as_str()) {
+                    self.active_linear_vars.remove(name);
                     let pointee = self.pointee_type_for(name);
                     let loaded = self.builder.build_load(pointee, ptr, name).unwrap();
                     Some(loaded)
@@ -277,7 +280,13 @@ impl<'ctx> CodeGen<'ctx> {
                     return self.compile_print(args);
                 }
                 // Regular function call
-                if let Some(func) = self.module.get_function(name) {
+                let func_opt = if let Some(func) = self.module.get_function(name) {
+                    Some(func)
+                } else {
+                    self.get_or_declare_stdlib_func(name)
+                };
+
+                if let Some(func) = func_opt {
                     let compiled_args: Vec<BasicMetadataValueEnum> = args
                         .iter()
                         .filter_map(|a| self.compile_expr(a))
@@ -402,12 +411,15 @@ impl<'ctx> CodeGen<'ctx> {
 
             Expr::Return { value } => {
                 if let Some(val_expr) = value {
-                    if let Some(val) = self.compile_expr(val_expr) {
-                        self.builder.build_return(Some(&val)).unwrap();
+                    let val = self.compile_expr(val_expr);
+                    self.insert_cleanup_calls();
+                    if let Some(v) = val {
+                        self.builder.build_return(Some(&v)).unwrap();
                     } else {
                         self.builder.build_return(None).unwrap();
                     }
                 } else {
+                    self.insert_cleanup_calls();
                     self.builder.build_return(None).unwrap();
                 }
                 None
@@ -417,7 +429,15 @@ impl<'ctx> CodeGen<'ctx> {
                 let val = self.compile_expr(value)?;
                 if let Expr::Variable(name) = target.as_ref() {
                     if let Some(&ptr) = self.variables.get(name.as_str()) {
+                        if self.active_linear_vars.contains(name) {
+                            self.generate_cleanup_for(name);
+                        }
                         self.builder.build_store(ptr, val).unwrap();
+                        if let Some(ty) = self.var_types.get(name) {
+                            if !self.is_copy_type(ty) {
+                                self.active_linear_vars.insert(name.clone());
+                            }
+                        }
                     }
                 }
                 None
@@ -529,7 +549,10 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     self.infer_track_type_from_llvm(alloca_ty)
                 };
-                self.var_types.insert(name.clone(), track_ty);
+                self.var_types.insert(name.clone(), track_ty.clone());
+                if !self.is_copy_type(&track_ty) {
+                    self.active_linear_vars.insert(name.clone());
+                }
 
                 None
             }
@@ -697,7 +720,9 @@ impl<'ctx> CodeGen<'ctx> {
         let saved_vars = self.variables.clone();
         let saved_types = self.var_types.clone();
         let saved_fn = self.current_fn;
+        let saved_linear = self.active_linear_vars.clone();
         self.current_fn = Some(function);
+        self.active_linear_vars.clear();
 
         // Alloca + store params
         for (i, (param_name, param_ty)) in params.iter().enumerate() {
@@ -707,6 +732,9 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_store(alloca, param_val).unwrap();
             self.variables.insert(param_name.clone(), alloca);
             self.var_types.insert(param_name.clone(), param_ty.clone());
+            if !self.is_copy_type(param_ty) {
+                self.active_linear_vars.insert(param_name.clone());
+            }
         }
 
         // Compile body
@@ -717,6 +745,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Add implicit return if no terminator
         let current_block = self.builder.get_insert_block().unwrap();
         if current_block.get_terminator().is_none() {
+            self.insert_cleanup_calls();
             if is_main {
                 let zero = self.context.i32_type().const_int(0, false);
                 self.builder.build_return(Some(&zero)).unwrap();
@@ -729,6 +758,7 @@ impl<'ctx> CodeGen<'ctx> {
         self.variables = saved_vars;
         self.var_types = saved_types;
         self.current_fn = saved_fn;
+        self.active_linear_vars = saved_linear;
     }
 
     // ── compile program ──────────────────────────────────────────────
@@ -846,6 +876,124 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             let ext = self.builder.build_int_s_extend(a, b.get_type(), "ext").unwrap();
             (ext, b)
+        }
+    }
+
+    fn is_copy_type(&self, ty: &TrackType) -> bool {
+        match ty {
+            TrackType::I32
+            | TrackType::U32
+            | TrackType::I64
+            | TrackType::U64
+            | TrackType::Bool
+            | TrackType::Ref(_) => true,
+            _ => false,
+        }
+    }
+
+    fn get_or_declare_stdlib_func(&self, name: &str) -> Option<FunctionValue<'ctx>> {
+        if let Some(f) = self.module.get_function(name) {
+            return Some(f);
+        }
+        let i64_type = self.context.i64_type();
+        let i32_type = self.context.i32_type();
+        let bool_type = self.context.bool_type();
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let str_struct = self.context.struct_type(&[ptr_type.into(), i32_type.into()], false);
+        let vec_struct = self.context.struct_type(&[ptr_type.into(), i32_type.into(), i32_type.into()], false);
+
+        // (params, returns_void, opt_basic_return_type)
+        let sig: Option<(Vec<BasicMetadataTypeEnum<'ctx>>, bool, Option<BasicTypeEnum<'ctx>>)> = match name {
+            "alloc"    => Some((vec![i64_type.into()], false, Some(ptr_type.into()))),
+            "memset"   => Some((vec![ptr_type.into(), i32_type.into(), i64_type.into()], true, None)),
+            "memcpy"   => Some((vec![ptr_type.into(), ptr_type.into(), i64_type.into()], true, None)),
+            "memcmp"   => Some((vec![ptr_type.into(), ptr_type.into(), i64_type.into()], false, Some(i32_type.into()))),
+
+            "str_len"          => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
+            "str_eq"           => Some((vec![ptr_type.into(), ptr_type.into()], false, Some(bool_type.into()))),
+            "str_from_literal" => Some((vec![ptr_type.into()], false, Some(str_struct.into()))),
+            "str_concat"       => Some((vec![ptr_type.into(), ptr_type.into()], false, Some(str_struct.into()))),
+
+            "vec_init" => Some((vec![i32_type.into()], false, Some(vec_struct.into()))),
+            "vec_push" => Some((vec![ptr_type.into(), i32_type.into()], true, None)),
+            "vec_get"  => Some((vec![ptr_type.into(), i32_type.into()], false, Some(i32_type.into()))),
+            "vec_set"  => Some((vec![ptr_type.into(), i32_type.into(), i32_type.into()], true, None)),
+            "vec_pop"  => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
+
+            "print_str"   => Some((vec![ptr_type.into()], true, None)),
+            "print_int"   => Some((vec![i64_type.into()], true, None)),
+            "print_hex"   => Some((vec![i64_type.into()], true, None)),
+            "read_line"   => Some((vec![], false, Some(str_struct.into()))),
+            "file_open"   => Some((vec![ptr_type.into(), i32_type.into()], false, Some(ptr_type.into()))),
+            "file_read_all" => Some((vec![ptr_type.into()], false, Some(str_struct.into()))),
+            "file_write"  => Some((vec![ptr_type.into(), ptr_type.into()], true, None)),
+
+            "math_abs"  => Some((vec![i32_type.into()], false, Some(i32_type.into()))),
+            "math_max"  => Some((vec![i32_type.into(), i32_type.into()], false, Some(i32_type.into()))),
+            "math_min"  => Some((vec![i32_type.into(), i32_type.into()], false, Some(i32_type.into()))),
+            "math_pow"  => Some((vec![i64_type.into(), i64_type.into()], false, Some(i64_type.into()))),
+            "math_sqrt" => Some((vec![i64_type.into()], false, Some(i64_type.into()))),
+
+            "free"       => Some((vec![ptr_type.into()], true, None)),
+            "str_free"   => Some((vec![str_struct.into()], true, None)),
+            "vec_free"   => Some((vec![vec_struct.into()], true, None)),
+            "file_close" => Some((vec![ptr_type.into()], true, None)),
+
+            _ => None,
+        };
+
+        let (params, returns_void, ret_ty) = sig?;
+        let func_type = if returns_void {
+            self.context.void_type().fn_type(&params, false)
+        } else {
+            ret_ty.unwrap().fn_type(&params, false)
+        };
+        Some(self.module.add_function(name, func_type, None))
+    }
+
+    fn insert_cleanup_calls(&mut self) {
+        let active_vars: Vec<String> = self.active_linear_vars.iter().cloned().collect();
+        for name in active_vars {
+            self.generate_cleanup_for(&name);
+        }
+        self.active_linear_vars.clear();
+    }
+
+    fn generate_cleanup_for(&mut self, name: &str) {
+        if let Some(ty) = self.var_types.get(name).cloned() {
+            let ptr = if let Some(&p) = self.variables.get(name) { p } else { return; };
+
+            let func_name = match &ty {
+                TrackType::Custom(custom_name) => {
+                    if custom_name == "Vec" {
+                        Some("vec_free")
+                    } else if custom_name == "Str" {
+                        Some("str_free")
+                    } else {
+                        None
+                    }
+                }
+                TrackType::Ptr(inner_ty) => {
+                    if let TrackType::Custom(custom_name) = &**inner_ty {
+                        if custom_name == "File" {
+                            Some("file_close")
+                        } else {
+                            Some("free")
+                        }
+                    } else {
+                        Some("free")
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(fname) = func_name {
+                if let Some(func) = self.get_or_declare_stdlib_func(fname) {
+                    let pointee = self.track_type_to_llvm(&ty);
+                    let val = self.builder.build_load(pointee, ptr, &format!("{}_val_to_free", name)).unwrap();
+                    self.builder.build_call(func, &[val.into()], "cleanup_call").unwrap();
+                }
+            }
         }
     }
 }

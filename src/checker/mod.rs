@@ -26,7 +26,6 @@ fn is_copy_type(ty: &TrackType) -> bool {
         | TrackType::I64
         | TrackType::U64
         | TrackType::Bool
-        | TrackType::Ptr(_)
         | TrackType::Ref(_) => true,
         _ => false,
     }
@@ -142,6 +141,41 @@ impl LinearChecker {
         }
         // print is built-in and returns Void
         self.functions.insert("print".to_string(), Some(TrackType::Void));
+
+        // Memory functions
+        self.functions.insert("alloc".to_string(), Some(TrackType::Ptr(Box::new(TrackType::Custom("u8".to_string())))));
+        self.functions.insert("memset".to_string(), Some(TrackType::Void));
+        self.functions.insert("memcpy".to_string(), Some(TrackType::Void));
+        self.functions.insert("memcmp".to_string(), Some(TrackType::I32));
+
+        // String functions
+        self.functions.insert("str_len".to_string(), Some(TrackType::U32));
+        self.functions.insert("str_eq".to_string(), Some(TrackType::Bool));
+        self.functions.insert("str_from_literal".to_string(), Some(TrackType::Custom("Str".to_string())));
+        self.functions.insert("str_concat".to_string(), Some(TrackType::Custom("Str".to_string())));
+
+        // Vec functions
+        self.functions.insert("vec_init".to_string(), Some(TrackType::Custom("Vec".to_string())));
+        self.functions.insert("vec_push".to_string(), Some(TrackType::Void));
+        self.functions.insert("vec_get".to_string(), Some(TrackType::I32));
+        self.functions.insert("vec_set".to_string(), Some(TrackType::Void));
+        self.functions.insert("vec_pop".to_string(), Some(TrackType::I32));
+
+        // I/O functions
+        self.functions.insert("print_str".to_string(), Some(TrackType::Void));
+        self.functions.insert("print_int".to_string(), Some(TrackType::Void));
+        self.functions.insert("print_hex".to_string(), Some(TrackType::Void));
+        self.functions.insert("read_line".to_string(), Some(TrackType::Custom("Str".to_string())));
+        self.functions.insert("file_open".to_string(), Some(TrackType::Ptr(Box::new(TrackType::Custom("File".to_string())))));
+        self.functions.insert("file_read_all".to_string(), Some(TrackType::Custom("Str".to_string())));
+        self.functions.insert("file_write".to_string(), Some(TrackType::Void));
+
+        // Math functions
+        self.functions.insert("math_abs".to_string(), Some(TrackType::I32));
+        self.functions.insert("math_max".to_string(), Some(TrackType::I32));
+        self.functions.insert("math_min".to_string(), Some(TrackType::I32));
+        self.functions.insert("math_pow".to_string(), Some(TrackType::I64));
+        self.functions.insert("math_sqrt".to_string(), Some(TrackType::I64));
 
         for stmt in program {
             self.check_expr(stmt)?;
@@ -275,7 +309,16 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::FunctionCall { name: _, args } => {
+            Expr::FunctionCall { name, args } => {
+                // These are compiler-inserted automatically — users cannot call them directly
+                const FORBIDDEN: &[&str] = &["free", "str_free", "vec_free", "file_close"];
+                if FORBIDDEN.contains(&name.as_str()) {
+                    return Err(format!(
+                        "Compile Error: '{}' is managed automatically by the compiler. \
+                         Linear types are freed at their spend points — do not call this directly.",
+                        name
+                    ));
+                }
                 for arg in args {
                     self.check_expr(arg)?;
                 }

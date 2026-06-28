@@ -1,0 +1,14 @@
+// Test: linear types auto-freed at scope exit — no manual free calls
+fn main() -> void {
+    let buf: ptr<u8> = alloc(64);
+    // buf is automatically freed at end of function — no free(buf) needed
+
+    let mut v: Vec = vec_init(8);
+    vec_push(&mut v, 10);
+    vec_push(&mut v, 20);
+    let x = vec_get(&v, 0);
+    print(x);
+    // v is automatically freed at end of function
+
+    print("done");
+}

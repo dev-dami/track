@@ -163,6 +163,10 @@ impl Parser {
             }
             Some(Token::Amp) => {
                 self.advance();
+                // &mut x and &x are both address-of; mut is consumed but not stored
+                if self.peek() == Some(&Token::Mut) {
+                    self.advance();
+                }
                 let expr = self.parse_unary()?;
                 Ok(Expr::AddressOf {
                     target: Box::new(expr),
