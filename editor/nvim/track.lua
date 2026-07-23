@@ -19,10 +19,10 @@ M.lsp_config = {
 M.setup_syntax = function()
   -- Define syntax keywords
   vim.cmd([[
-    syntax keyword trackKeyword fn return if else while let mut with struct enum union match const as true false
+    syntax keyword trackKeyword import fn return if else while let mut with struct enum union match const as true false
     syntax keyword trackType i8 i16 i32 i64 u8 u16 u32 u64 bool void ptr str
-    syntax match trackMacro /@use/
     syntax match trackMacro /@macro/
+
     syntax match trackMacro /@bit/
     syntax match trackMacro /@pin/
     syntax match trackMacro /@register/

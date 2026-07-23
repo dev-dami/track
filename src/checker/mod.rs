@@ -618,11 +618,34 @@ impl LinearChecker {
                 let provided = match norm_path.as_str() {
                     "std/io" => vec![
                         ("print".to_string(), Some(TrackType::Void)),
+                        ("println".to_string(), Some(TrackType::Void)),
                         ("read".to_string(), Some(TrackType::I64)),
+                        ("eprint".to_string(), Some(TrackType::Void)),
+                    ],
+                    "std/fs" => vec![
+                        (
+                            "file_open".to_string(),
+                            Some(TrackType::Ptr(Box::new(TrackType::Void))),
+                        ),
+                        ("file_close".to_string(), Some(TrackType::Void)),
+                        ("file_exists".to_string(), Some(TrackType::I32)),
+                    ],
+                    "std/sys" => vec![
+                        ("exit".to_string(), Some(TrackType::Void)),
+                        ("clock_ms".to_string(), Some(TrackType::I64)),
+                    ],
+                    "std/mem" => vec![
+                        (
+                            "alloc".to_string(),
+                            Some(TrackType::Ptr(Box::new(TrackType::Void))),
+                        ),
+                        ("dealloc".to_string(), Some(TrackType::Void)),
                     ],
                     "math/vec" => vec![
                         ("add".to_string(), Some(TrackType::I64)),
                         ("sub".to_string(), Some(TrackType::I64)),
+                        ("dot".to_string(), Some(TrackType::I64)),
+                        ("cross".to_string(), Some(TrackType::I64)),
                     ],
                     _ => return Err(format!("Compile Error: Unknown module '{}'", path)),
                 };

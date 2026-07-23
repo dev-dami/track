@@ -38,10 +38,9 @@ pub enum Token {
     Match,
     #[token("as")]
     As,
-    #[token("@use")]
-    AtUse,
     #[token("@macro")]
     AtMacro,
+
     #[token("const")]
     Const,
     #[token("@")]

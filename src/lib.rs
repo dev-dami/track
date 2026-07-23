@@ -14,8 +14,12 @@ const RUNTIME_C_SOURCE: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 void* alloc(size_t size) { return malloc(size); }
+void dealloc(void* ptr) { if (ptr) free(ptr); }
+
 typedef struct { int* data; int len; int cap; } Vec;
 Vec vec_init(int cap) {
     Vec v;
@@ -57,10 +61,24 @@ void str_free(Str s) {
         free(s.data);
     }
 }
+void* file_open(const char* path, const char* mode) {
+    return (void*)fopen(path, mode);
+}
 void file_close(void* f) {
     if (f) {
         fclose((FILE*)f);
     }
+}
+int file_exists(const char* path) {
+    return access(path, F_OK) == 0 ? 1 : 0;
+}
+long long clock_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000LL + (long long)ts.tv_nsec / 1000000LL;
+}
+void sys_exit(int code) {
+    exit(code);
 }
 "#;
 

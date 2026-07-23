@@ -265,8 +265,8 @@ impl LanguageServer for TrackLsp {
 
         // Keywords
         let keywords = vec![
-            "let", "mut", "fn", "return", "if", "else", "while", "struct", "enum", "union",
-            "match", "with", "const", "true", "false", "as",
+            "import", "let", "mut", "fn", "return", "if", "else", "while", "struct", "enum",
+            "union", "match", "with", "const", "true", "false", "as",
         ];
 
         for kw in keywords {
@@ -293,7 +293,19 @@ impl LanguageServer for TrackLsp {
         }
 
         // Built-in functions
-        let builtins = vec!["print", "read"];
+        let builtins = vec![
+            "print",
+            "println",
+            "eprint",
+            "read",
+            "file_open",
+            "file_close",
+            "file_exists",
+            "clock_ms",
+            "exit",
+            "alloc",
+            "dealloc",
+        ];
 
         for b in builtins {
             if b.starts_with(word) {

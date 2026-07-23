@@ -177,17 +177,18 @@ fn test_parse_macro_def_and_call() {
 
 #[test]
 fn test_parse_use_and_const() {
-    let source = "@use(\"std::math::{abs, max}\") as m; const PI = 3;";
+    let source = "import \"std/math\" as m :: { abs, max }; const PI = 3;";
     let ast = parse(source);
     assert_eq!(ast.len(), 2);
     assert_eq!(
         ast[0],
         Expr::Use {
-            path: "std::math".to_string(),
+            path: "std/math".to_string(),
             imports: Some(vec!["abs".to_string(), "max".to_string()]),
             alias: Some("m".to_string()),
         }
     );
+
     assert_eq!(
         ast[1],
         Expr::ConstDef {

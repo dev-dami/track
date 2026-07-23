@@ -29,7 +29,7 @@
       "patterns": [
         {
           "name": "keyword.control.track",
-          "match": "\\b(fn|return|if|else|while|let|mut|with|struct|enum|union|match|const|as|true|false)\\b"
+          "match": "\\b(import|fn|return|if|else|while|let|mut|with|struct|enum|union|match|const|as|true|false)\\b"
         }
       ]
     },
@@ -45,8 +45,9 @@
       "patterns": [
         {
           "name": "entity.name.function.macro.track",
-          "match": "@(use|macro|bit|pin|register|compile_error|compile_warning|now|fib_comptime|timer|assert|size_of)"
+          "match": "@(macro|bit|pin|register|compile_error|compile_warning|now|fib_comptime|timer|assert|size_of)"
         },
+
         {
           "name": "keyword.other.macro.track",
           "match": "@macro\\b"
