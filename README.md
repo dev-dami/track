@@ -1,9 +1,11 @@
 # Track
 
+> **Core Research Hypothesis**: *Can deterministic memory safety be made substantially easier to reason about by restricting mutable access to non-escaping lexical lenses rather than general lifetime-based borrows?*
+
 **Track** is an experimental low-level systems programming language designed for deterministic memory management, zero-cost abstractions, and real-time execution.
 
 - **Linear Ownership Model**: Designed to prevent use-after-free, double-free, and memory leaks at compile time.
-- **Lexical Lenses**: A lexical lens is a mutable view valid strictly within a `with` block that cannot be moved, stored, returned, or escape that lexical scope.
+- **Lexical Lenses**: A lexical lens is an exclusive, non-escaping mutable view valid strictly within a `with` block that cannot be moved, stored, returned, or escape that lexical scope.
 - **Direct LLVM Backend**: Compiles directly to optimized native machine code.
 - **Zero Runtime / No Garbage Collector**: Resource lifecycles and deallocations are verified and inserted at compile time.
 
@@ -19,7 +21,7 @@
 | **LLVM IR Backend (Inkwell)** | Implemented ([src/codegen/](file:///home/dev/track/src/codegen/)) |
 | **Package Manager (`yard`)** | Implemented ([src/yard/](file:///home/dev/track/src/yard/)) |
 | **LSP Language Server** | Implemented ([src/lsp/](file:///home/dev/track/src/lsp/)) |
-| **Test Suite** | 48 passing tests across 11 test modules ([tests/](file:///home/dev/track/tests/)) |
+| **Test Suite** | 53 passing tests across 12 test modules including `soundness_tests` ([tests/](file:///home/dev/track/tests/)) |
 | **Language Specification** | Formalized in [SPEC.md](file:///home/dev/track/SPEC.md) |
 
 ---

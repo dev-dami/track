@@ -496,16 +496,27 @@ impl LinearChecker {
                 // Check condition
                 self.check_expr(condition)?;
 
-                // Run body once to check for linear violations
-                let pre_loop = self.registry.clone();
+                // Run body to check for linear violations inside the loop
+                let mut pre_loop = self.registry.clone();
                 let pre_loop_types = self.types.clone();
                 let pre_loop_borrows = self.borrows.clone();
+
                 for stmt in body {
                     self.check_expr(stmt)?;
                     self.update_borrow_states();
                 }
 
-                // Restore pre-loop state (loop continues)
+                // Propagate loop body state: variables consumed inside loop become Spent post-loop
+                for (name, pre_state) in &pre_loop.clone() {
+                    if *pre_state == VariableState::Active {
+                        if let Some(post_state) = self.registry.get(name) {
+                            if *post_state == VariableState::Spent {
+                                pre_loop.insert(name.clone(), VariableState::Spent);
+                            }
+                        }
+                    }
+                }
+
                 self.registry = pre_loop;
                 self.types = pre_loop_types;
                 self.borrows = pre_loop_borrows;

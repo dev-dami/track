@@ -17,7 +17,28 @@ Every value in Track belongs to one of four value categories:
 
 ---
 
-## 2. Move Semantics & Spend Points
+## 2. Ownership State Machine & Transitions
+
+The ownership checker tracks variables using four explicit states:
+
+- **`Active`**: Value is initialized and owned.
+- **`Borrowed`**: One or more read-only references (`&T`) exist.
+- **`Locked`**: An exclusive lexical lens (`with`) is currently active.
+- **`Spent`**: Ownership has been moved or transferred.
+
+### Transition Table
+
+| Operation | Pre-State | Post-State | Validated Constraint |
+| :--- | :--- | :--- | :--- |
+| **Move Value** (`let y = x;`) | `Active` | `Spent` | `x` cannot be used after move |
+| **Create Lens** (`with u -> user`) | `Active` | `Locked` | `u` frozen from moves/borrows |
+| **Exit Lens Block** | `Locked` | `Active` | Restores `u` ownership |
+| **Shared Borrow** (`let r = &x;`) | `Active` | `Borrowed` | `x` frozen from moves |
+| **End Borrow Scope** | `Borrowed` | `Active` | Restores full ownership |
+
+---
+
+## 3. Move Semantics & Spend Points
 
 An **Owned Linear** value has exactly one owner at any point during execution.
 
@@ -27,9 +48,12 @@ A linear resource is consumed (spent) by:
 2. **Function Call Transfer**: Passing an owned value into a function parameter transfers ownership to the callee.
 3. **Implicit Scope Cleanup**: If a linear resource remains `Active` at scope exit, the compiler automatically emits cleanup deallocation code (`vec_free`, `str_free`).
 
+### Struct Ownership & Field Move Policy (v0.1)
+Structs in Track v0.1 are moved as **atomic units**. Moving any field or the struct itself consumes the entire struct instance, preventing use-after-free or partial double-destruction.
+
 ---
 
-## 3. Lexical Lenses & Non-Escaping Guarantee
+## 4. Lexical Lenses & Non-Escaping Guarantee
 
 A **Lexical Lens** provides temporary, exclusive mutable access to a target resource via the `with` construct:
 
@@ -40,6 +64,9 @@ with u -> user {
 }
 ```
 
+### Core Research Hypothesis:
+> *Can deterministic memory safety be made substantially easier to reason about by restricting mutable access to non-escaping lexical lenses rather than general lifetime-based borrows?*
+
 ### Invariants:
 1. **Lexical Exclusivity**: While a lens is active, the underlying target resource (`u`) is in state `Locked`. It cannot be moved, borrowed, or accessed.
 2. **Non-Escaping Guarantee**: A lens reference (`user`) is valid **only** within the lexical boundaries of the `with` block. It cannot be assigned to an outer variable, returned, or stored in a heap structure.
@@ -47,9 +74,10 @@ with u -> user {
 
 ---
 
-## 4. Control-Flow Merge Rules (CFG Inconsistency)
+## 5. Control-Flow Merge Rules & Loop Back-Edge Propagation
 
-When control flow splits (`if / else`), the type-checker evaluates ownership paths independently and verifies consistency at the merge point:
+### Conditional Merge Rule (`if / else`)
+At a CFG merge point, a variable must have the identical state across all incoming execution paths:
 
 ```track
 let v = vec_init(16);
@@ -61,12 +89,12 @@ if cond {
 // ERROR: Resource 'v' has inconsistent state after if/else (Then: Spent, Else: Active)
 ```
 
-### Rule:
-At a CFG merge point, a variable must have the identical state across all incoming execution paths. If one branch consumes a linear resource while another branch preserves it, the compiler emits a compile-time error requiring explicit path reconciliation.
+### Loop Back-Edge Rule (`while`)
+Variables consumed inside a `while` loop body without being re-initialized are marked `Spent` for post-loop execution paths, ensuring that a loop executing 0 or more times cannot leak uninitialized or consumed resources.
 
 ---
 
-## 5. Diagnostics & Error Reporting
+## 6. Diagnostics & Error Reporting
 
 Track compiler diagnostics report span location, root cause, and ownership state transitions:
 
