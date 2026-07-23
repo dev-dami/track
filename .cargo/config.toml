@@ -1,0 +1,2 @@
+[env]
+LLVM_SYS_221_PREFER_STATIC = "1"
