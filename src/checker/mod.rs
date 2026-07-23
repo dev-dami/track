@@ -20,14 +20,20 @@ pub struct LinearChecker {
 }
 
 fn is_copy_type(ty: &TrackType) -> bool {
-    match ty {
+    matches!(
+        ty,
         TrackType::I32
-        | TrackType::U32
-        | TrackType::I64
-        | TrackType::U64
-        | TrackType::Bool
-        | TrackType::Ref(_) => true,
-        _ => false,
+            | TrackType::U32
+            | TrackType::I64
+            | TrackType::U64
+            | TrackType::Bool
+            | TrackType::Ref(_)
+    )
+}
+
+impl Default for LinearChecker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -455,7 +461,7 @@ impl LinearChecker {
                 let mut merged = HashMap::new();
                 let mut merged_types = HashMap::new();
                 let mut merged_borrows = HashMap::new();
-                for (name, _) in &pre_if {
+                for name in pre_if.keys() {
                     let then_s = then_end.get(name).copied().unwrap_or(VariableState::Spent);
                     let else_s = else_end.get(name).copied().unwrap_or(VariableState::Spent);
 
@@ -620,7 +626,7 @@ impl LinearChecker {
                     _ => return Err(format!("Compile Error: Unknown module '{}'", path)),
                 };
 
-                let default_ns = path.split('/').last().unwrap_or(path);
+                let default_ns = path.split('/').next_back().unwrap_or(path);
 
                 if let Some(ref alias_name) = alias {
                     if let Some(ref items) = imports {
@@ -864,7 +870,7 @@ impl LinearChecker {
                 } else if self
                     .types
                     .get(name)
-                    .map_or(false, |t| matches!(t, TrackType::Ref(_)))
+                    .is_some_and(|t| matches!(t, TrackType::Ref(_)))
                 {
                     vec![name.clone()]
                 } else {

@@ -359,15 +359,13 @@ impl LanguageServer for TrackLsp {
                             }
                         }
                     }
-                    crate::ast::Expr::FnDef { name, .. } => {
-                        if name.starts_with(word) {
-                            completions.push(CompletionItem {
-                                label: name.clone(),
-                                kind: Some(CompletionItemKind::FUNCTION),
-                                detail: Some("User-defined function".to_string()),
-                                ..Default::default()
-                            });
-                        }
+                    crate::ast::Expr::FnDef { name, .. } if name.starts_with(word) => {
+                        completions.push(CompletionItem {
+                            label: name.clone(),
+                            kind: Some(CompletionItemKind::FUNCTION),
+                            detail: Some("User-defined function".to_string()),
+                            ..Default::default()
+                        });
                     }
                     _ => {}
                 }
@@ -527,6 +525,6 @@ pub async fn start_server() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, messages) = LspService::new(|client| TrackLsp::new(client));
+    let (service, messages) = LspService::new(TrackLsp::new);
     Server::new(stdin, stdout, messages).serve(service).await;
 }

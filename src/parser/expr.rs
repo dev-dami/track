@@ -66,7 +66,7 @@ impl Parser {
                     if self
                         .tokens
                         .get(self.pos + 1)
-                        .map_or(false, |(t, _)| !matches!(t, Token::Amp)) =>
+                        .is_some_and(|(t, _)| !matches!(t, Token::Amp)) =>
                 {
                     BinOp::BitAnd
                 }

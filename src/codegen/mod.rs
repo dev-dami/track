@@ -1058,15 +1058,15 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn is_copy_type(&self, ty: &TrackType) -> bool {
-        match ty {
+        matches!(
+            ty,
             TrackType::I32
-            | TrackType::U32
-            | TrackType::I64
-            | TrackType::U64
-            | TrackType::Bool
-            | TrackType::Ref(_) => true,
-            _ => false,
-        }
+                | TrackType::U32
+                | TrackType::I64
+                | TrackType::U64
+                | TrackType::Bool
+                | TrackType::Ref(_)
+        )
     }
 
     fn get_or_declare_stdlib_func(&self, name: &str) -> Option<FunctionValue<'ctx>> {
