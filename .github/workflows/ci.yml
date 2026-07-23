@@ -45,8 +45,18 @@ jobs:
         run: |
           for f in examples/*.trk; do
             echo "Checking $f..."
-            ./target/release/track check "$f"
+            if [[ "$f" == *"_err.trk" ]]; then
+              if ./target/release/track check "$f" 2>/dev/null; then
+                echo "Error: Expected rejection for $f but check succeeded!"
+                exit 1
+              else
+                echo "✓ Rejection test passed for $f"
+              fi
+            else
+              ./target/release/track check "$f"
+            fi
           done
+
 
   lint:
     runs-on: ubuntu-latest
