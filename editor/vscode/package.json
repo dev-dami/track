@@ -4,7 +4,9 @@
   "description": "Syntax highlighting and LSP language server support for Track programming language.",
   "version": "0.1.0",
   "publisher": "dev-dami",
+  "icon": "../../assets/track-icon.svg",
   "engines": {
+
     "vscode": "^1.75.0"
   },
   "categories": [

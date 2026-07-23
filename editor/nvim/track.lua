@@ -87,13 +87,14 @@ M.setup_devicons = function()
     devicons.set_icon({
       trk = {
         icon = "T",
-        color = "#3b82f6",
-        cterm_color = "39",
+        color = "#ffffff",
+        cterm_color = "15",
         name = "Track"
       }
     })
   end
 end
+
 
 
 -- Full setup
