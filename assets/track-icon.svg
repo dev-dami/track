@@ -1,9 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <rect width="32" height="32" rx="4" fill="#0f172a"/>
-  <circle cx="16" cy="16" r="8" stroke="#22d3ee" stroke-width="2" fill="none"/>
-  <circle cx="16" cy="16" r="2" fill="#22d3ee"/>
-  <line x1="16" y1="4" x2="16" y2="8" stroke="#22d3ee" stroke-width="2"/>
-  <line x1="16" y1="24" x2="16" y2="28" stroke="#22d3ee" stroke-width="2"/>
-  <line x1="4" y1="16" x2="8" y2="16" stroke="#22d3ee" stroke-width="2"/>
-  <line x1="24" y1="16" x2="28" y2="16" stroke="#22d3ee" stroke-width="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- Flat background -->
+  <rect width="512" height="512" rx="128" fill="#0f172a"/>
+  
+  <!-- C-inspired outer bracket frame (flat blue) -->
+  <path d="M 352 144 L 192 144 C 165.49 144 144 165.49 144 192 L 144 320 C 144 346.51 165.49 368 192 368 L 352 368" 
+        fill="none" 
+        stroke="#3b82f6" 
+        stroke-width="36" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+  
+  <!-- Track 'T' rail mark (flat cyan/white) -->
+  <!-- Top bar of T -->
+  <line x1="200" y1="216" x2="360" y2="216" 
+        stroke="#f8fafc" 
+        stroke-width="32" 
+        stroke-linecap="round"/>
+  
+  <!-- Stem of T -->
+  <line x1="280" y1="216" x2="280" y2="340" 
+        stroke="#f8fafc" 
+        stroke-width="32" 
+        stroke-linecap="round"/>
 </svg>

@@ -80,11 +80,28 @@ M.setup_lsp = function()
   })
 end
 
+-- Filetype devicon registration for Neovim file explorers / statuslines
+M.setup_devicons = function()
+  local ok, devicons = pcall(require, "nvim-web-devicons")
+  if ok then
+    devicons.set_icon({
+      trk = {
+        icon = "󰜎",
+        color = "#3b82f6",
+        cterm_color = "39",
+        name = "Track"
+      }
+    })
+  end
+end
+
 -- Full setup
 M.setup = function()
   M.setup_filetype()
+  M.setup_devicons()
   M.setup_syntax()
   M.setup_lsp()
 end
+
 
 return M
