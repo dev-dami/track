@@ -5,7 +5,7 @@ use track::lsp::TrackLsp;
 
 #[tokio::test]
 async fn test_lsp_initialization() {
-    let (service, _) = tower_lsp::LspService::new(|client| TrackLsp::new(client));
+    let (service, _) = tower_lsp::LspService::new(TrackLsp::new);
     let server = service.inner();
 
     let init_params = InitializeParams::default();
@@ -17,7 +17,7 @@ async fn test_lsp_initialization() {
 
 #[tokio::test]
 async fn test_lsp_completion() {
-    let (service, _) = tower_lsp::LspService::new(|client| TrackLsp::new(client));
+    let (service, _) = tower_lsp::LspService::new(TrackLsp::new);
     let server = service.inner();
 
     let uri = Url::parse("file:///test.trk").unwrap();
@@ -55,7 +55,7 @@ async fn test_lsp_completion() {
 
 #[tokio::test]
 async fn test_lsp_hover() {
-    let (service, _) = tower_lsp::LspService::new(|client| TrackLsp::new(client));
+    let (service, _) = tower_lsp::LspService::new(TrackLsp::new);
     let server = service.inner();
 
     let uri = Url::parse("file:///test.trk").unwrap();

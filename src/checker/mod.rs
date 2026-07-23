@@ -15,6 +15,7 @@ pub struct LinearChecker {
     pub functions: HashMap<String, Option<TrackType>>,
     pub borrows: HashMap<String, Vec<String>>,
     pub lens_locked: std::collections::HashSet<String>,
+    pub lens_aliases: std::collections::HashSet<String>,
     pub current_params: std::collections::HashSet<String>,
     pub current_return_type: Option<TrackType>,
 }
@@ -45,6 +46,7 @@ impl LinearChecker {
             functions: HashMap::new(),
             borrows: HashMap::new(),
             lens_locked: std::collections::HashSet::new(),
+            lens_aliases: std::collections::HashSet::new(),
             current_params: std::collections::HashSet::new(),
             current_return_type: None,
         }
@@ -73,7 +75,7 @@ impl LinearChecker {
                 name
             )),
             Some(VariableState::Active) => {
-                if !self.is_copy_var(name) {
+                if !self.is_copy_var(name) && !self.lens_aliases.contains(name) {
                     self.registry.insert(name.to_string(), VariableState::Spent);
                 }
                 Ok(())
@@ -359,6 +361,7 @@ impl LinearChecker {
 
             Expr::StructInitialization { fields, .. } => {
                 for (_, fval) in fields {
+                    self.reject_lens_escape(fval)?;
                     self.check_expr(fval)?;
                 }
                 Ok(())
@@ -381,6 +384,7 @@ impl LinearChecker {
             }
 
             Expr::LetDef { name, ty, value } => {
+                self.reject_lens_escape(value)?;
                 self.check_expr(value)?;
                 let inferred = self.infer_type(value);
                 let final_ty = if let Some(annotated_ty) = ty {
@@ -407,6 +411,7 @@ impl LinearChecker {
             } => {
                 self.enter_lens(target)?;
                 self.declare(lens_name.clone());
+                self.lens_aliases.insert(lens_name.clone());
                 if let Some(ty) = self.types.get(target).cloned() {
                     self.types.insert(lens_name.clone(), ty);
                 }
@@ -414,6 +419,10 @@ impl LinearChecker {
                     self.check_expr(expr)?;
                 }
                 self.exit_lens(target);
+                self.registry.remove(lens_name);
+                self.types.remove(lens_name);
+                self.borrows.remove(lens_name);
+                self.lens_aliases.remove(lens_name);
                 Ok(())
             }
 
@@ -526,6 +535,7 @@ impl LinearChecker {
 
             Expr::Return { value } => {
                 if let Some(val) = value {
+                    self.reject_lens_escape(val)?;
                     self.check_expr(val)?;
                     // Escape check
                     if let Some(TrackType::Ref(_)) = self.current_return_type {
@@ -544,6 +554,7 @@ impl LinearChecker {
             }
 
             Expr::Assign { target, value } => {
+                self.reject_lens_escape(value)?;
                 self.check_expr(value)?;
                 // For simple variable assignment, re-activate the variable
                 if let Expr::Variable(name) = target.as_ref() {
@@ -573,6 +584,7 @@ impl LinearChecker {
                 let saved_types = self.types.clone();
                 let saved_borrows = self.borrows.clone();
                 let saved_lens = self.lens_locked.clone();
+                let saved_lens_aliases = self.lens_aliases.clone();
                 let saved_params = self.current_params.clone();
                 let saved_ret = self.current_return_type.clone();
 
@@ -615,6 +627,7 @@ impl LinearChecker {
                 self.types = saved_types;
                 self.borrows = saved_borrows;
                 self.lens_locked = saved_lens;
+                self.lens_aliases = saved_lens_aliases;
                 self.current_params = saved_params;
                 self.current_return_type = saved_ret;
                 Ok(())
@@ -744,6 +757,7 @@ impl LinearChecker {
                 let saved_types = self.types.clone();
                 let saved_borrows = self.borrows.clone();
                 let saved_lens = self.lens_locked.clone();
+                let saved_lens_aliases = self.lens_aliases.clone();
                 let saved_params = self.current_params.clone();
                 let saved_ret = self.current_return_type.clone();
 
@@ -766,6 +780,7 @@ impl LinearChecker {
                 self.types = saved_types;
                 self.borrows = saved_borrows;
                 self.lens_locked = saved_lens;
+                self.lens_aliases = saved_lens_aliases;
                 self.current_params = saved_params;
                 self.current_return_type = saved_ret;
                 Ok(())
@@ -834,6 +849,7 @@ impl LinearChecker {
                     let saved_types = self.types.clone();
                     let saved_borrows = self.borrows.clone();
                     let saved_lens = self.lens_locked.clone();
+                    let saved_lens_aliases = self.lens_aliases.clone();
 
                     if let crate::ast::Pattern::Variant {
                         ref enum_or_union,
@@ -863,6 +879,7 @@ impl LinearChecker {
                     self.types = saved_types;
                     self.borrows = saved_borrows;
                     self.lens_locked = saved_lens;
+                    self.lens_aliases = saved_lens_aliases;
                 }
                 Ok(())
             }
@@ -945,6 +962,82 @@ impl LinearChecker {
                 .last()
                 .map_or(Vec::new(), |last| self.get_provenance(last)),
             _ => Vec::new(),
+        }
+    }
+
+    fn reject_lens_escape(&self, expr: &Expr) -> Result<(), String> {
+        if let Some(name) = self.find_lens_alias(expr) {
+            Err(format!(
+                "Compile Error: Lens '{}' cannot be moved, stored, returned, or escape its with block.",
+                name
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn find_lens_alias(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Variable(name) if self.lens_aliases.contains(name) => Some(name.clone()),
+            Expr::BinaryOp { left, right, .. } => self
+                .find_lens_alias(left)
+                .or_else(|| self.find_lens_alias(right)),
+            Expr::UnaryOp { expr, .. } | Expr::AddressOf { target: expr } => {
+                self.find_lens_alias(expr)
+            }
+            Expr::ArrayLiteral { elements } => {
+                elements.iter().find_map(|e| self.find_lens_alias(e))
+            }
+            Expr::ArrayIndex { target, index } => self
+                .find_lens_alias(target)
+                .or_else(|| self.find_lens_alias(index)),
+            Expr::StructInitialization { fields, .. } => fields
+                .iter()
+                .find_map(|(_, value)| self.find_lens_alias(value)),
+            Expr::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => self
+                .find_lens_alias(condition)
+                .or_else(|| then_body.iter().find_map(|e| self.find_lens_alias(e)))
+                .or_else(|| else_body.iter().find_map(|e| self.find_lens_alias(e))),
+            Expr::WhileLoop { condition, body } => self
+                .find_lens_alias(condition)
+                .or_else(|| body.iter().find_map(|e| self.find_lens_alias(e))),
+            Expr::Return { value } => value.as_deref().and_then(|v| self.find_lens_alias(v)),
+            Expr::Assign { target, value } => self
+                .find_lens_alias(target)
+                .or_else(|| self.find_lens_alias(value)),
+            Expr::LetDef { value, .. } | Expr::ConstDef { value, .. } => {
+                self.find_lens_alias(value)
+            }
+            Expr::FunctionCall { .. } => None,
+            Expr::MacroCall { args, body, .. } => args
+                .iter()
+                .find_map(|arg| self.find_lens_alias(arg))
+                .or_else(|| {
+                    body.as_ref()
+                        .and_then(|body| body.iter().find_map(|e| self.find_lens_alias(e)))
+                }),
+            Expr::LensBlock { body, .. } => body.iter().find_map(|e| self.find_lens_alias(e)),
+            Expr::Match { target, arms } => self.find_lens_alias(target).or_else(|| {
+                arms.iter().find_map(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .and_then(|guard| self.find_lens_alias(guard))
+                        .or_else(|| self.find_lens_alias(&arm.body))
+                })
+            }),
+            Expr::IntLiteral(_)
+            | Expr::StringLiteral(_)
+            | Expr::BoolLiteral(_)
+            | Expr::FnDef { .. }
+            | Expr::Use { .. }
+            | Expr::MacroDef { .. }
+            | Expr::EnumDef { .. }
+            | Expr::UnionDef { .. }
+            | Expr::Variable(_) => None,
         }
     }
 }

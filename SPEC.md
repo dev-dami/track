@@ -22,7 +22,7 @@ Every value in Track belongs to one of four value categories:
 The ownership checker tracks variables using four explicit states:
 
 - **`Active`**: Value is initialized and owned.
-- **`Borrowed`**: One or more read-only references (`&T`) exist.
+- **`Borrowed`**: A read-only reference (`&T`) exists. Track v0.1 permits at most one active shared borrow per value; general `Shared(n)` borrow counts are reserved for a later version.
 - **`Locked`**: An exclusive lexical lens (`with`) is currently active.
 - **`Spent`**: Ownership has been moved or transferred.
 
@@ -33,7 +33,7 @@ The ownership checker tracks variables using four explicit states:
 | **Move Value** (`let y = x;`) | `Active` | `Spent` | `x` cannot be used after move |
 | **Create Lens** (`with u -> user`) | `Active` | `Locked` | `u` frozen from moves/borrows |
 | **Exit Lens Block** | `Locked` | `Active` | Restores `u` ownership |
-| **Shared Borrow** (`let r = &x;`) | `Active` | `Borrowed` | `x` frozen from moves |
+| **Shared Borrow** (`let r = &x;`) | `Active` | `Borrowed` | `x` frozen from moves; v0.1 permits at most one active shared borrow per value |
 | **End Borrow Scope** | `Borrowed` | `Active` | Restores full ownership |
 
 ---
@@ -90,7 +90,12 @@ if cond {
 ```
 
 ### Loop Back-Edge Rule (`while`)
-Variables consumed inside a `while` loop body without being re-initialized are marked `Spent` for post-loop execution paths, ensuring that a loop executing 0 or more times cannot leak uninitialized or consumed resources.
+The ownership state after a loop is the merge of:
+
+1. the state on the path where the loop is skipped, and
+2. the fixed-point state reached through the loop body and back-edge.
+
+A variable is usable after the loop only if the merged state is consistent across all possible iteration counts, including zero iterations. If a variable can be `Active` when the loop is skipped but `Spent` after one or more iterations, the post-loop state is rejected unless the loop body restores the variable on every back-edge path.
 
 ---
 

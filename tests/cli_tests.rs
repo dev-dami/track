@@ -26,7 +26,7 @@ fn run_track_cmd(args: &[&str]) -> std::process::Output {
 #[test]
 fn test_cli_help() {
     let output = run_track_cmd(&["--help"]);
-    assert!(output.status.success() || output.stderr.len() > 0);
+    assert!(output.status.success() || !output.stderr.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, stderr);
