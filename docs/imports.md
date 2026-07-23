@@ -1,11 +1,11 @@
 # Imports
 
-Track uses `@use()` for explicit module imports. Resolved at compile time.
+Track uses file-path based imports (`import "path/to/module"`) for explicit, file-level dependency resolution at compile time with zero runtime overhead.
 
 ## Basic Import
 
 ```track
-@use("std::io")
+import "std/io";
 
 fn main() -> void {
     io::print("hello");
@@ -15,7 +15,7 @@ fn main() -> void {
 ## Import Specific Items
 
 ```track
-@use("std::io::{print, read}")
+import "std/io" :: { print, read };
 
 fn main() -> void {
     print("hello");
@@ -25,7 +25,7 @@ fn main() -> void {
 ## Import with Alias
 
 ```track
-@use("std::io") as console
+import "std/io" as console;
 
 fn main() -> void {
     console::print("hello");
@@ -35,34 +35,33 @@ fn main() -> void {
 ## Import Specific Items with Alias
 
 ```track
-@use("math::vec::{add, sum}") as math
+import "math/vec" as math :: { add, sub };
 
 fn main() -> void {
     math::add(1, 2);
 }
 ```
 
-## Syntax
+## Syntax Reference
 
-```
-@use("path::to::module")
-@use("path::to::module::{item1, item2}")
-@use("path::to::module") as alias
-@use("path::to::module::{item1}") as alias
+```track
+import "path/to/module";
+import "path/to/module" :: { item1, item2 };
+import "path/to/module" as alias;
+import "path/to/module" as alias :: { item1 };
 ```
 
 ## Built-in Modules
 
 | Module | Functions | Description |
 |--------|-----------|-------------|
-| `std::io` | `print`, `read` | I/O operations |
-| `math::vec` | `add`, `sub` | Vector math |
+| `std/io` | `print`, `read` | Standard I/O operations |
+| `math/vec` | `add`, `sub` | Vector math functions |
 
 ## Rules
 
-- Explicit paths only—no hidden imports
-- Resolved at compile time—no runtime overhead
-- `::` separates path segments
-- `{}` selects specific items
-- `as` creates an alias
-- Linear types apply to imported resources
+- Explicit file paths—no hidden global imports.
+- Resolved at compile time—zero runtime overhead.
+- `::` separates module scopes and imports specific items.
+- `as` creates a local module alias.
+- Linear type rules and borrow safety apply to all imported resources.

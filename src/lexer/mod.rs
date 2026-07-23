@@ -5,8 +5,11 @@ use logos::Logos;
 #[logos(skip r"//[^\n]*")]
 pub enum Token {
     // Keywords
+    #[token("import")]
+    Import,
     #[token("let")]
     Let,
+
     #[token("mut")]
     Mut,
     #[token("with")]

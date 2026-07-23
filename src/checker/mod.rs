@@ -614,7 +614,8 @@ impl LinearChecker {
                 imports,
                 alias,
             } => {
-                let provided = match path.as_str() {
+                let norm_path = path.replace("::", "/");
+                let provided = match norm_path.as_str() {
                     "std/io" => vec![
                         ("print".to_string(), Some(TrackType::Void)),
                         ("read".to_string(), Some(TrackType::I64)),

@@ -1,12 +1,12 @@
-@use("std/io")
-@use("math/vec")
+import "std/io";
+import "math/vec";
 
 fn test_example1() -> void {
     io::print(111);
 }
 
-@use("std/io::{print, read}")
-@use("math/vec::{add, sub}")
+import "std/io" :: { print, read };
+import "math/vec" :: { add, sub };
 
 fn test_example2() -> void {
     print(222);
@@ -14,8 +14,9 @@ fn test_example2() -> void {
     print(a);
 }
 
-@use("std/io") as console
-@use("math/vec::{add}") as sum
+import "std/io" as console;
+import "math/vec" as sum :: { add };
+
 
 fn test_example3() -> void {
     console::print(333);

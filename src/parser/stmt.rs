@@ -11,7 +11,9 @@ impl Parser {
             Some(Token::If) => self.parse_if()?,
             Some(Token::While) => self.parse_while()?,
             Some(Token::Return) => self.parse_return()?,
+            Some(Token::Import) => self.parse_import()?,
             Some(Token::AtUse) => self.parse_use()?,
+
             Some(Token::Const) => self.parse_const()?,
             Some(Token::AtMacro) => self.parse_macro_def()?,
             Some(Token::Enum) => self.parse_enum()?,
@@ -192,6 +194,51 @@ impl Parser {
             Some(Box::new(self.parse_expr()?))
         };
         Ok(Expr::Return { value })
+    }
+
+    fn parse_import(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'import'
+        let path = match self.advance() {
+            Some((Token::Str(s), _)) => s,
+            other => {
+                return Err(format!(
+                    "Expected string path after import, got {:?}",
+                    other.map(|(t, _)| t)
+                ))
+            }
+        };
+
+        let alias = if self.peek() == Some(&Token::As) {
+            self.advance();
+            Some(self.expect_ident()?)
+        } else {
+            None
+        };
+
+        let imports = if self.peek() == Some(&Token::ColonColon) {
+            self.advance();
+            self.expect(&Token::LBrace)?;
+            let mut items = Vec::new();
+            while self.peek() != Some(&Token::RBrace) && self.peek().is_some() {
+                let item = self.expect_ident()?;
+                items.push(item);
+                if self.peek() == Some(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.expect(&Token::RBrace)?;
+            Some(items)
+        } else {
+            None
+        };
+
+        Ok(Expr::Use {
+            path,
+            imports,
+            alias,
+        })
     }
 
     fn parse_use(&mut self) -> Result<Expr, String> {
