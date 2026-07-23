@@ -1,8 +1,4 @@
-mod ast;
-mod checker;
-mod lexer;
-mod lsp;
-mod parser;
+use track::lsp;
 
 #[tokio::main]
 async fn main() {

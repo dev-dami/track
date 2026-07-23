@@ -113,12 +113,6 @@ impl LanguageServer for TrackLsp {
                     ..Default::default()
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
-                diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
-                    identifier: Some("track".to_string()),
-                    inter_file_dependencies: false,
-                    workspace_diagnostics: false,
-                    ..Default::default()
-                })),
                 ..Default::default()
             },
             ..Default::default()
@@ -353,10 +347,21 @@ impl LanguageServer for TrackLsp {
                             }
                         }
                     }
+                    crate::ast::Expr::FnDef { name, .. } => {
+                        if name.starts_with(word) {
+                            completions.push(CompletionItem {
+                                label: name.clone(),
+                                kind: Some(CompletionItemKind::FUNCTION),
+                                detail: Some("User-defined function".to_string()),
+                                ..Default::default()
+                            });
+                        }
+                    }
                     _ => {}
                 }
             }
         }
+
 
         Ok(Some(CompletionResponse::Array(completions)))
     }

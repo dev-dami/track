@@ -1,9 +1,0 @@
-[package]
-name = "new-yarp"
-version = "0.1.0"
-authors = []
-
-[dependencies]
-
-[build]
-src = "src"

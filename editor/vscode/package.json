@@ -1,0 +1,30 @@
+{
+  "name": "track-vscode",
+  "displayName": "Track Language Support",
+  "description": "Syntax highlighting and LSP language server support for Track programming language.",
+  "version": "0.1.0",
+  "publisher": "dev-dami",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "track",
+        "aliases": ["Track", "track"],
+        "extensions": [".trk"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "track",
+        "scopeName": "source.track",
+        "path": "./syntaxes/track.tmLanguage.json"
+      }
+    ]
+  }
+}

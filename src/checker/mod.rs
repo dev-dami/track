@@ -170,6 +170,15 @@ impl LinearChecker {
         self.functions.insert("file_read_all".to_string(), Some(TrackType::Custom("Str".to_string())));
         self.functions.insert("file_write".to_string(), Some(TrackType::Void));
 
+        // Ring buffer functions
+        self.functions.insert("ring_init".to_string(), Some(TrackType::Custom("Ring".to_string())));
+        self.functions.insert("ring_push".to_string(), Some(TrackType::Bool));
+        self.functions.insert("ring_pop".to_string(), Some(TrackType::I32));
+        self.functions.insert("ring_peek".to_string(), Some(TrackType::I32));
+        self.functions.insert("ring_full".to_string(), Some(TrackType::Bool));
+        self.functions.insert("ring_empty".to_string(), Some(TrackType::Bool));
+        self.functions.insert("ring_count".to_string(), Some(TrackType::U32));
+
         // Math functions
         self.functions.insert("math_abs".to_string(), Some(TrackType::I32));
         self.functions.insert("math_max".to_string(), Some(TrackType::I32));
