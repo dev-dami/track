@@ -1,30 +1,11 @@
 # Track
 
-> **Core Research Hypothesis**: *Can deterministic memory safety be made substantially easier to reason about by restricting mutable access to non-escaping lexical lenses rather than general lifetime-based borrows?*
+**Track** is a low-level systems programming language designed for deterministic memory management, zero-cost abstractions, and real-time execution.
 
-**Track** is an experimental low-level systems programming language designed for deterministic memory management, zero-cost abstractions, and real-time execution.
-
-- **Linear Ownership Model**: Designed to prevent use-after-free, double-free, and memory leaks at compile time.
-- **Lexical Lenses**: A lexical lens is an exclusive, non-escaping mutable view valid strictly within a `with` block that cannot be moved, stored, returned, or escape that lexical scope.
-- **Direct LLVM Backend**: Compiles directly to optimized native machine code.
-- **Zero Runtime / No Garbage Collector**: Resource lifecycles and deallocations are verified and inserted at compile time.
-
----
-
-## Prototype Status
-
-| Subsystem | Status |
-| :--- | :--- |
-| **Lexer (Logos)** | Implemented ([src/lexer/](file:///home/dev/track/src/lexer/)) |
-| **Parser + AST** | Implemented ([src/parser/](file:///home/dev/track/src/parser/)) |
-| **Linear Ownership Checker** | Implemented for moves, lenses, & branch merging ([src/checker/](file:///home/dev/track/src/checker/)) |
-| **LLVM IR Backend (Inkwell)** | Implemented ([src/codegen/](file:///home/dev/track/src/codegen/)) |
-| **Package Manager (`yard`)** | Implemented ([src/yard/](file:///home/dev/track/src/yard/)) |
-| **LSP Language Server** | Implemented ([src/lsp/](file:///home/dev/track/src/lsp/)) |
-| **Test Suite** | 53 passing tests across 12 test modules including `soundness_tests` ([tests/](file:///home/dev/track/tests/)) |
-| **Language Specification** | Formalized in [SPEC.md](file:///home/dev/track/SPEC.md) |
-
----
+- **No Garbage Collector, No Runtime.** Resource lifecycles are verified and freed at compile time.
+- **Linear Ownership.** Eliminates use-after-free, double-free, and memory leaks.
+- **Lexical Lenses.** Scoped mutable access without manual pointer arithmetic or ownership transfer.
+- **Direct LLVM Backend.** Compiles directly to optimized native machine code.
 
 ## Hello World
 
@@ -36,7 +17,7 @@ fn main() -> void {
 }
 ```
 
-## Linear Ownership & Lexical Lenses
+## Linear Ownership & Scoped Access
 
 ```track
 import "std/io";
@@ -45,14 +26,12 @@ import "std/io";
 let mut v: Vec = vec_init(16);
 vec_push(&mut v, 42);
 
-// Lexical lens block for scoped mutation (non-escaping guarantee)
+// Lexical lens block for scoped mutation
 let mut u = User { age: 30 };
 with u -> user {
     user.set_age(31);
 }
 ```
-
----
 
 ## Installation
 
@@ -74,8 +53,6 @@ cargo build --release
 ./scripts/install.sh
 ```
 
----
-
 ## Usage
 
 ```bash
@@ -92,15 +69,11 @@ track yard check
 track yard build
 ```
 
----
-
 ## Testing
 
 ```bash
 cargo test
 ```
-
----
 
 ## License
 
