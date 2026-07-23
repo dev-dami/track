@@ -64,13 +64,24 @@ pub fn build(_args: &[String]) -> Result<(), String> {
     for dep in &deps {
         match &dep.source {
             resolver::DepSource::Local(path) => {
-                println!("  Using dependency: {} v{} (local path: {})", dep.name, dep.version, path.display());
+                println!(
+                    "  Using dependency: {} v{} (local path: {})",
+                    dep.name,
+                    dep.version,
+                    path.display()
+                );
             }
             resolver::DepSource::Git { url, branch } => {
-                println!("  Using dependency: {} v{} (git: {}, branch: {:?})", dep.name, dep.version, url, branch);
+                println!(
+                    "  Using dependency: {} v{} (git: {}, branch: {:?})",
+                    dep.name, dep.version, url, branch
+                );
             }
             resolver::DepSource::Registry(version) => {
-                println!("  Using dependency: {} v{} (registry version: {})", dep.name, dep.version, version);
+                println!(
+                    "  Using dependency: {} v{} (registry version: {})",
+                    dep.name, dep.version, version
+                );
             }
         }
         let _ = &dep.src_dir;
@@ -79,7 +90,10 @@ pub fn build(_args: &[String]) -> Result<(), String> {
     // Find all .trk source files
     let src_dir = project_root.join(&manifest.build.src);
     if !src_dir.exists() {
-        return Err(format!("Source directory '{}' not found", src_dir.display()));
+        return Err(format!(
+            "Source directory '{}' not found",
+            src_dir.display()
+        ));
     }
 
     let trk_files = find_trk_files(&src_dir)?;
@@ -142,15 +156,10 @@ pub fn build(_args: &[String]) -> Result<(), String> {
     }
     cmd.arg("-o").arg(&exe_path).arg("-lm").arg("-no-pie");
 
-    let status = cmd
-        .status()
-        .map_err(|e| format!("Linker failed: {}", e))?;
+    let status = cmd.status().map_err(|e| format!("Linker failed: {}", e))?;
 
     if !status.success() {
-        return Err(format!(
-            "Linker failed with exit code: {:?}",
-            status.code()
-        ));
+        return Err(format!("Linker failed with exit code: {:?}", status.code()));
     }
 
     // Clean up object files
@@ -183,10 +192,7 @@ pub fn run_cmd(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("Failed to run '{}': {}", exe_path.display(), e))?;
 
     if !status.success() {
-        return Err(format!(
-            "Process exited with code: {:?}",
-            status.code()
-        ));
+        return Err(format!("Process exited with code: {:?}", status.code()));
     }
 
     Ok(())
@@ -196,7 +202,10 @@ pub fn run_cmd(args: &[String]) -> Result<(), String> {
 
 pub fn add(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
-        return Err("Usage: track yard add <package> [--version <ver>] [--path <path>] [--git <url>]".to_string());
+        return Err(
+            "Usage: track yard add <package> [--version <ver>] [--path <path>] [--git <url>]"
+                .to_string(),
+        );
     }
 
     let pkg_name = &args[0];
@@ -239,9 +248,7 @@ pub fn add(args: &[String]) -> Result<(), String> {
         Dependency::Simple(version.unwrap_or_else(|| "0.1.0".to_string()))
     };
 
-    manifest
-        .dependencies
-        .insert(pkg_name.clone(), dep);
+    manifest.dependencies.insert(pkg_name.clone(), dep);
     manifest.save(&manifest_path)?;
 
     println!("✓ Added dependency '{}'", pkg_name);
@@ -261,7 +268,10 @@ pub fn check(_args: &[String]) -> Result<(), String> {
 
     let src_dir = project_root.join(&manifest.build.src);
     if !src_dir.exists() {
-        return Err(format!("Source directory '{}' not found", src_dir.display()));
+        return Err(format!(
+            "Source directory '{}' not found",
+            src_dir.display()
+        ));
     }
 
     let trk_files = find_trk_files(&src_dir)?;
@@ -319,8 +329,8 @@ pub fn check(_args: &[String]) -> Result<(), String> {
 // ── helpers ──────────────────────────────────────────────────────────
 
 fn find_project_root() -> Result<PathBuf, String> {
-    let mut dir = env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+    let mut dir =
+        env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
 
     loop {
         if dir.join("Track.toml").exists() {

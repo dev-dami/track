@@ -1,6 +1,6 @@
+use super::Parser;
 use crate::ast::{BinOp, Expr, UnaryOp};
 use crate::lexer::Token;
-use super::Parser;
 
 impl Parser {
     pub fn parse_expr(&mut self) -> Result<Expr, String> {
@@ -62,7 +62,14 @@ impl Parser {
         let mut left = self.parse_shift()?;
         loop {
             let op = match self.peek() {
-                Some(Token::Amp) if self.tokens.get(self.pos + 1).map_or(false, |(t, _)| !matches!(t, Token::Amp)) => BinOp::BitAnd,
+                Some(Token::Amp)
+                    if self
+                        .tokens
+                        .get(self.pos + 1)
+                        .map_or(false, |(t, _)| !matches!(t, Token::Amp)) =>
+                {
+                    BinOp::BitAnd
+                }
                 Some(Token::PipePipe) => break,
                 _ => break,
             };
@@ -195,7 +202,10 @@ impl Parser {
                         }
                     }
                     self.expect(&Token::RParen)?;
-                    expr = Expr::FunctionCall { name: method_name, args };
+                    expr = Expr::FunctionCall {
+                        name: method_name,
+                        args,
+                    };
                 }
                 Some(Token::LBracket) => {
                     // Array index: expr[index]
@@ -271,7 +281,10 @@ impl Parser {
                         }
                     }
                     self.expect(&Token::RBrace)?;
-                    return Ok(Expr::StructInitialization { ty_name: name, fields });
+                    return Ok(Expr::StructInitialization {
+                        ty_name: name,
+                        fields,
+                    });
                 }
 
                 Ok(Expr::Variable(name))
@@ -335,7 +348,7 @@ impl Parser {
             then_body,
             else_body,
         })
-     }
+    }
 
     pub fn parse_namespaced_ident(&mut self) -> Result<String, String> {
         let mut name = self.expect_ident()?;
@@ -350,7 +363,7 @@ impl Parser {
     fn parse_macro_call(&mut self) -> Result<Expr, String> {
         self.advance(); // consume '@'
         let name = self.expect_ident()?;
-        
+
         let mut args = Vec::new();
         let mut body = None;
 
@@ -376,11 +389,7 @@ impl Parser {
             body = Some(block_body);
         }
 
-        Ok(Expr::MacroCall {
-            name,
-            args,
-            body,
-        })
+        Ok(Expr::MacroCall { name, args, body })
     }
 
     fn parse_match(&mut self) -> Result<Expr, String> {
@@ -390,21 +399,21 @@ impl Parser {
         let target = self.parse_expr()?;
         self.allow_struct = saved_allow;
         self.expect(&Token::LBrace)?;
-        
+
         let mut arms = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             let pattern = self.parse_pattern()?;
-            
+
             let guard = if self.peek() == Some(&Token::If) {
                 self.advance();
                 Some(self.parse_expr()?)
             } else {
                 None
             };
-            
+
             self.expect(&Token::FatArrow)?;
             let body = self.parse_statement()?;
-            
+
             arms.push(crate::ast::MatchArm {
                 pattern,
                 guard,
@@ -435,7 +444,7 @@ impl Parser {
                     let parts: Vec<&str> = name.split("::").collect();
                     let enum_or_union = parts[0].to_string();
                     let variant = parts[1].to_string();
-                    
+
                     let binding = if self.peek() == Some(&Token::LParen) {
                         self.advance();
                         let b = self.expect_ident()?;
@@ -444,7 +453,7 @@ impl Parser {
                     } else {
                         None
                     };
-                    
+
                     Ok(crate::ast::Pattern::Variant {
                         enum_or_union,
                         variant,

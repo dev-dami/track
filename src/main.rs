@@ -63,12 +63,10 @@ fn print_usage() {
 }
 
 fn require_file_arg(args: &[String], idx: usize) -> String {
-    args.get(idx)
-        .cloned()
-        .unwrap_or_else(|| {
-            eprintln!("Error: expected a .trk file path");
-            process::exit(1);
-        })
+    args.get(idx).cloned().unwrap_or_else(|| {
+        eprintln!("Error: expected a .trk file path");
+        process::exit(1);
+    })
 }
 
 // ── commands ─────────────────────────────────────────────────────────

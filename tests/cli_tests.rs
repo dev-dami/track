@@ -17,15 +17,9 @@ fn run_track_cmd(args: &[&str]) -> std::process::Output {
     if bin == "cargo" {
         let mut full_args = vec!["run", "--bin", "track", "--"];
         full_args.extend_from_slice(args);
-        Command::new("cargo")
-            .args(&full_args)
-            .output()
-            .unwrap()
+        Command::new("cargo").args(&full_args).output().unwrap()
     } else {
-        Command::new(bin)
-            .args(args)
-            .output()
-            .unwrap()
+        Command::new(bin).args(args).output().unwrap()
     }
 }
 

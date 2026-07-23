@@ -1,7 +1,7 @@
 use std::time::Instant;
+use track::compile_source;
 use track::lexer::Lexer;
 use track::parser::Parser;
-use track::compile_source;
 
 #[test]
 fn test_performance_lexer_throughput() {

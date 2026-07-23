@@ -15,9 +15,10 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
-# Build release binaries with static LLVM linking
-echo "Building release binaries with static LLVM linking..."
-LLVM_SYS_221_PREFER_STATIC=1 cargo build --release
+# Build release binaries
+echo "Building release binaries..."
+cargo build --release
+
 
 # Check if build succeeded
 for binary in "${BINARIES[@]}"; do

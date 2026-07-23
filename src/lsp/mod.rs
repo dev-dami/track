@@ -5,9 +5,9 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+use crate::checker::LinearChecker;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::checker::LinearChecker;
 
 pub struct TrackLsp {
     client: Client,
@@ -161,7 +161,12 @@ impl LanguageServer for TrackLsp {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        let text = params.content_changes.into_iter().next().map(|c| c.text).unwrap_or_default();
+        let text = params
+            .content_changes
+            .into_iter()
+            .next()
+            .map(|c| c.text)
+            .unwrap_or_default();
 
         self.documents
             .lock()
@@ -246,7 +251,8 @@ impl LanguageServer for TrackLsp {
 
         // Get the word being typed
         let before_cursor = &line[..cursor_pos.min(line.len())];
-        let word_start = before_cursor.rfind(|c: char| !c.is_alphanumeric() && c != '_')
+        let word_start = before_cursor
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_')
             .map(|i| i + 1)
             .unwrap_or(0);
         let word = &before_cursor[word_start..];
@@ -259,9 +265,8 @@ impl LanguageServer for TrackLsp {
 
         // Keywords
         let keywords = vec![
-            "let", "mut", "fn", "return", "if", "else", "while",
-            "struct", "enum", "union", "match", "with", "const",
-            "true", "false", "as",
+            "let", "mut", "fn", "return", "if", "else", "while", "struct", "enum", "union",
+            "match", "with", "const", "true", "false", "as",
         ];
 
         for kw in keywords {
@@ -302,7 +307,14 @@ impl LanguageServer for TrackLsp {
         }
 
         // Macros
-        let macros = vec!["bit", "pin", "register", "compile_error", "now", "fib_comptime"];
+        let macros = vec![
+            "bit",
+            "pin",
+            "register",
+            "compile_error",
+            "now",
+            "fib_comptime",
+        ];
 
         for m in macros {
             if m.starts_with(word) {
@@ -362,7 +374,6 @@ impl LanguageServer for TrackLsp {
             }
         }
 
-
         Ok(Some(CompletionResponse::Array(completions)))
     }
 
@@ -388,10 +399,12 @@ impl LanguageServer for TrackLsp {
         // Get the word under cursor
         let before_cursor = &line[..cursor_pos.min(line.len())];
         let after_cursor = &line[cursor_pos..];
-        let word_start = before_cursor.rfind(|c: char| !c.is_alphanumeric() && c != '_')
+        let word_start = before_cursor
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_')
             .map(|i| i + 1)
             .unwrap_or(0);
-        let word_end = after_cursor.find(|c: char| !c.is_alphanumeric() && c != '_')
+        let word_end = after_cursor
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
             .map(|i| cursor_pos + i)
             .unwrap_or(line.len());
         let word = &line[word_start..word_end];
@@ -438,7 +451,10 @@ impl LanguageServer for TrackLsp {
             ("u64", "64-bit unsigned integer (copy type)"),
             ("bool", "Boolean (copy type)"),
             ("void", "Unit type (copy type)"),
-            ("ptr", "Raw pointer (copy type)\n\n```track\nlet p: ptr<i32>;\n```"),
+            (
+                "ptr",
+                "Raw pointer (copy type)\n\n```track\nlet p: ptr<i32>;\n```",
+            ),
         ]);
 
         if let Some(doc) = type_docs.get(word) {
@@ -453,7 +469,10 @@ impl LanguageServer for TrackLsp {
 
         // Check built-ins
         let builtin_docs = HashMap::from([
-            ("print", "Print a value to stdout\n\n```track\nprint(42);\nprint(\"hello\");\n```"),
+            (
+                "print",
+                "Print a value to stdout\n\n```track\nprint(42);\nprint(\"hello\");\n```",
+            ),
             ("read", "Read input\n\n```track\nlet value = read();\n```"),
         ]);
 
@@ -469,9 +488,18 @@ impl LanguageServer for TrackLsp {
 
         // Check macros
         let macro_docs = HashMap::from([
-            ("@bit", "Create a bit mask\n\n```track\nlet pin = @bit(5);  // 1 << 5\n```"),
-            ("@pin", "Create a pin identifier\n\n```track\nlet led = @pin(1, 5);  // (1 << 8) | 5\n```"),
-            ("@register", "Create a register address\n\n```track\nlet reg = @register(0x4000, 0xFF);\n```"),
+            (
+                "@bit",
+                "Create a bit mask\n\n```track\nlet pin = @bit(5);  // 1 << 5\n```",
+            ),
+            (
+                "@pin",
+                "Create a pin identifier\n\n```track\nlet led = @pin(1, 5);  // (1 << 8) | 5\n```",
+            ),
+            (
+                "@register",
+                "Create a register address\n\n```track\nlet reg = @register(0x4000, 0xFF);\n```",
+            ),
             ("@compile_error", "Trigger a compile-time error"),
             ("@now", "Get current timestamp"),
             ("@fib_comptime", "Compute Fibonacci at compile time"),
@@ -500,7 +528,5 @@ pub async fn start_server() {
     let stdout = tokio::io::stdout();
 
     let (service, messages) = LspService::new(|client| TrackLsp::new(client));
-    Server::new(stdin, stdout, messages)
-        .serve(service)
-        .await;
+    Server::new(stdin, stdout, messages).serve(service).await;
 }

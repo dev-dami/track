@@ -76,8 +76,8 @@ pub fn compile_source(source: &str) -> Result<Vec<ast::Expr>, String> {
 
 /// Full build: source -> object file -> linked executable in specified directory.
 pub fn build_file_in_dir(filename: &str, out_dir: &Path) -> Result<PathBuf, String> {
-    let source = fs::read_to_string(filename)
-        .map_err(|e| format!("Error reading '{}': {}", filename, e))?;
+    let source =
+        fs::read_to_string(filename).map_err(|e| format!("Error reading '{}': {}", filename, e))?;
 
     let program = compile_source(&source)?;
 

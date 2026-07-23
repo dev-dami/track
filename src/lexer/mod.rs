@@ -158,7 +158,10 @@ impl Lexer {
                 Some(Err(())) => {
                     let span = lex.span();
                     let ch = input[span.clone()].chars().next().unwrap_or('?');
-                    return Err(format!("Lexer error at {:?}: unexpected character '{}'", span, ch));
+                    return Err(format!(
+                        "Lexer error at {:?}: unexpected character '{}'",
+                        span, ch
+                    ));
                 }
                 None => break,
             }

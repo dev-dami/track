@@ -72,10 +72,7 @@ impl LinearChecker {
                 }
                 Ok(())
             }
-            None => Err(format!(
-                "Compile Error: Undeclared variable '{}'.",
-                name
-            )),
+            None => Err(format!("Compile Error: Undeclared variable '{}'.", name)),
         }
     }
 
@@ -114,7 +111,8 @@ impl LinearChecker {
     pub fn enter_lens(&mut self, name: &str) -> Result<(), String> {
         if self.registry.get(name) == Some(&VariableState::Active) {
             self.lens_locked.insert(name.to_string());
-            self.registry.insert(name.to_string(), VariableState::Locked);
+            self.registry
+                .insert(name.to_string(), VariableState::Locked);
             Ok(())
         } else {
             Err(format!(
@@ -127,7 +125,8 @@ impl LinearChecker {
     pub fn exit_lens(&mut self, name: &str) {
         self.lens_locked.remove(name);
         if self.registry.get(name) == Some(&VariableState::Locked) {
-            self.registry.insert(name.to_string(), VariableState::Active);
+            self.registry
+                .insert(name.to_string(), VariableState::Active);
         }
         self.update_borrow_states();
     }
@@ -135,56 +134,112 @@ impl LinearChecker {
     pub fn check_program(&mut self, program: &[Expr]) -> Result<(), String> {
         // Collect function signatures first
         for stmt in program {
-            if let Expr::FnDef { name, return_type, .. } = stmt {
+            if let Expr::FnDef {
+                name, return_type, ..
+            } = stmt
+            {
                 self.functions.insert(name.clone(), return_type.clone());
             }
         }
         // print is built-in and returns Void
-        self.functions.insert("print".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("print".to_string(), Some(TrackType::Void));
 
         // Memory functions
-        self.functions.insert("alloc".to_string(), Some(TrackType::Ptr(Box::new(TrackType::Custom("u8".to_string())))));
-        self.functions.insert("memset".to_string(), Some(TrackType::Void));
-        self.functions.insert("memcpy".to_string(), Some(TrackType::Void));
-        self.functions.insert("memcmp".to_string(), Some(TrackType::I32));
+        self.functions.insert(
+            "alloc".to_string(),
+            Some(TrackType::Ptr(Box::new(TrackType::Custom(
+                "u8".to_string(),
+            )))),
+        );
+        self.functions
+            .insert("memset".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("memcpy".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("memcmp".to_string(), Some(TrackType::I32));
 
         // String functions
-        self.functions.insert("str_len".to_string(), Some(TrackType::U32));
-        self.functions.insert("str_eq".to_string(), Some(TrackType::Bool));
-        self.functions.insert("str_from_literal".to_string(), Some(TrackType::Custom("Str".to_string())));
-        self.functions.insert("str_concat".to_string(), Some(TrackType::Custom("Str".to_string())));
+        self.functions
+            .insert("str_len".to_string(), Some(TrackType::U32));
+        self.functions
+            .insert("str_eq".to_string(), Some(TrackType::Bool));
+        self.functions.insert(
+            "str_from_literal".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions.insert(
+            "str_concat".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
 
         // Vec functions
-        self.functions.insert("vec_init".to_string(), Some(TrackType::Custom("Vec".to_string())));
-        self.functions.insert("vec_push".to_string(), Some(TrackType::Void));
-        self.functions.insert("vec_get".to_string(), Some(TrackType::I32));
-        self.functions.insert("vec_set".to_string(), Some(TrackType::Void));
-        self.functions.insert("vec_pop".to_string(), Some(TrackType::I32));
+        self.functions.insert(
+            "vec_init".to_string(),
+            Some(TrackType::Custom("Vec".to_string())),
+        );
+        self.functions
+            .insert("vec_push".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("vec_get".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("vec_set".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("vec_pop".to_string(), Some(TrackType::I32));
 
         // I/O functions
-        self.functions.insert("print_str".to_string(), Some(TrackType::Void));
-        self.functions.insert("print_int".to_string(), Some(TrackType::Void));
-        self.functions.insert("print_hex".to_string(), Some(TrackType::Void));
-        self.functions.insert("read_line".to_string(), Some(TrackType::Custom("Str".to_string())));
-        self.functions.insert("file_open".to_string(), Some(TrackType::Ptr(Box::new(TrackType::Custom("File".to_string())))));
-        self.functions.insert("file_read_all".to_string(), Some(TrackType::Custom("Str".to_string())));
-        self.functions.insert("file_write".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("print_str".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("print_int".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("print_hex".to_string(), Some(TrackType::Void));
+        self.functions.insert(
+            "read_line".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions.insert(
+            "file_open".to_string(),
+            Some(TrackType::Ptr(Box::new(TrackType::Custom(
+                "File".to_string(),
+            )))),
+        );
+        self.functions.insert(
+            "file_read_all".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions
+            .insert("file_write".to_string(), Some(TrackType::Void));
 
         // Ring buffer functions
-        self.functions.insert("ring_init".to_string(), Some(TrackType::Custom("Ring".to_string())));
-        self.functions.insert("ring_push".to_string(), Some(TrackType::Bool));
-        self.functions.insert("ring_pop".to_string(), Some(TrackType::I32));
-        self.functions.insert("ring_peek".to_string(), Some(TrackType::I32));
-        self.functions.insert("ring_full".to_string(), Some(TrackType::Bool));
-        self.functions.insert("ring_empty".to_string(), Some(TrackType::Bool));
-        self.functions.insert("ring_count".to_string(), Some(TrackType::U32));
+        self.functions.insert(
+            "ring_init".to_string(),
+            Some(TrackType::Custom("Ring".to_string())),
+        );
+        self.functions
+            .insert("ring_push".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("ring_pop".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("ring_peek".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("ring_full".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("ring_empty".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("ring_count".to_string(), Some(TrackType::U32));
 
         // Math functions
-        self.functions.insert("math_abs".to_string(), Some(TrackType::I32));
-        self.functions.insert("math_max".to_string(), Some(TrackType::I32));
-        self.functions.insert("math_min".to_string(), Some(TrackType::I32));
-        self.functions.insert("math_pow".to_string(), Some(TrackType::I64));
-        self.functions.insert("math_sqrt".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_abs".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("math_max".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("math_min".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("math_pow".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_sqrt".to_string(), Some(TrackType::I64));
 
         for stmt in program {
             self.check_expr(stmt)?;
@@ -205,51 +260,38 @@ impl LinearChecker {
                     self.infer_type(left)
                 }
             }
-            Expr::UnaryOp { op, expr } => {
-                match op {
-                    crate::ast::UnaryOp::Not => Some(TrackType::Bool),
-                    crate::ast::UnaryOp::Neg => self.infer_type(expr),
-                    crate::ast::UnaryOp::Deref => {
-                        match self.infer_type(expr) {
-                            Some(TrackType::Ptr(inner)) | Some(TrackType::Ref(inner)) => Some(*inner),
-                            _ => None,
-                        }
-                    }
-                }
-            }
+            Expr::UnaryOp { op, expr } => match op {
+                crate::ast::UnaryOp::Not => Some(TrackType::Bool),
+                crate::ast::UnaryOp::Neg => self.infer_type(expr),
+                crate::ast::UnaryOp::Deref => match self.infer_type(expr) {
+                    Some(TrackType::Ptr(inner)) | Some(TrackType::Ref(inner)) => Some(*inner),
+                    _ => None,
+                },
+            },
             Expr::ArrayLiteral { elements } => {
-                let elem_type = elements.first().and_then(|e| self.infer_type(e)).unwrap_or(TrackType::I32);
+                let elem_type = elements
+                    .first()
+                    .and_then(|e| self.infer_type(e))
+                    .unwrap_or(TrackType::I32);
                 Some(TrackType::Array(Box::new(elem_type), elements.len()))
             }
-            Expr::ArrayIndex { target, .. } => {
-                match self.infer_type(target) {
-                    Some(TrackType::Array(inner, _)) => Some(*inner),
-                    Some(TrackType::Ptr(inner)) => Some(*inner),
-                    Some(TrackType::Ref(inner)) => {
-                        match *inner {
-                            TrackType::Array(elem, _) => Some(*elem),
-                            TrackType::Ptr(elem) => Some(*elem),
-                            other => Some(other),
-                        }
-                    }
-                    _ => None,
-                }
-            }
+            Expr::ArrayIndex { target, .. } => match self.infer_type(target) {
+                Some(TrackType::Array(inner, _)) => Some(*inner),
+                Some(TrackType::Ptr(inner)) => Some(*inner),
+                Some(TrackType::Ref(inner)) => match *inner {
+                    TrackType::Array(elem, _) => Some(*elem),
+                    TrackType::Ptr(elem) => Some(*elem),
+                    other => Some(other),
+                },
+                _ => None,
+            },
             Expr::AddressOf { target } => {
                 self.infer_type(target).map(|t| TrackType::Ref(Box::new(t)))
             }
-            Expr::StructInitialization { ty_name, .. } => {
-                Some(TrackType::Custom(ty_name.clone()))
-            }
-            Expr::FunctionCall { name, .. } => {
-                self.functions.get(name).cloned().flatten()
-            }
-            Expr::LensBlock { body, .. } => {
-                body.last().and_then(|e| self.infer_type(e))
-            }
-            Expr::IfElse { then_body, .. } => {
-                then_body.last().and_then(|e| self.infer_type(e))
-            }
+            Expr::StructInitialization { ty_name, .. } => Some(TrackType::Custom(ty_name.clone())),
+            Expr::FunctionCall { name, .. } => self.functions.get(name).cloned().flatten(),
+            Expr::LensBlock { body, .. } => body.last().and_then(|e| self.infer_type(e)),
+            Expr::IfElse { then_body, .. } => then_body.last().and_then(|e| self.infer_type(e)),
             Expr::WhileLoop { .. } => Some(TrackType::Void),
             Expr::Return { .. } => Some(TrackType::Void),
             Expr::Assign { .. } => Some(TrackType::Void),
@@ -267,9 +309,7 @@ impl LinearChecker {
             Expr::LetDef { .. } => Some(TrackType::Void),
             Expr::EnumDef { .. } => Some(TrackType::Void),
             Expr::UnionDef { .. } => Some(TrackType::Void),
-            Expr::Match { arms, .. } => {
-                arms.first().and_then(|arm| self.infer_type(&arm.body))
-            }
+            Expr::Match { arms, .. } => arms.first().and_then(|arm| self.infer_type(&arm.body)),
         }
     }
 
@@ -431,7 +471,10 @@ impl LinearChecker {
                         merged_types.insert(name.clone(), ty.clone());
                     }
                     // For borrows, take union or then branch (they must match or merge)
-                    if let Some(b) = then_end_borrows.get(name).or_else(|| else_end_borrows.get(name)) {
+                    if let Some(b) = then_end_borrows
+                        .get(name)
+                        .or_else(|| else_end_borrows.get(name))
+                    {
                         merged_borrows.insert(name.clone(), b.clone());
                     }
                 }
@@ -533,7 +576,8 @@ impl LinearChecker {
 
                 // Escape check for implicit return at the end of function body
                 if let Some(TrackType::Ref(_)) = return_type {
-                    let has_explicit_return = body.iter().any(|stmt| matches!(stmt, Expr::Return { .. }));
+                    let has_explicit_return =
+                        body.iter().any(|stmt| matches!(stmt, Expr::Return { .. }));
                     if !has_explicit_return {
                         if let Some(last_stmt) = body.last() {
                             let prov = self.get_provenance(last_stmt);
@@ -559,7 +603,11 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::Use { path, imports, alias } => {
+            Expr::Use {
+                path,
+                imports,
+                alias,
+            } => {
                 let provided = match path.as_str() {
                     "std/io" => vec![
                         ("print".to_string(), Some(TrackType::Void)),
@@ -578,37 +626,55 @@ impl LinearChecker {
                     if let Some(ref items) = imports {
                         if items.len() == 1 {
                             let item_name = &items[0];
-                            if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name) {
+                            if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name)
+                            {
                                 self.functions.insert(alias_name.clone(), ret_ty.clone());
                             } else {
-                                return Err(format!("Compile Error: Module '{}' does not export '{}'", path, item_name));
+                                return Err(format!(
+                                    "Compile Error: Module '{}' does not export '{}'",
+                                    path, item_name
+                                ));
                             }
                         } else {
                             for item_name in items {
-                                if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name) {
-                                    self.functions.insert(format!("{}::{}", alias_name, item_name), ret_ty.clone());
+                                if let Some((_, ret_ty)) =
+                                    provided.iter().find(|(n, _)| n == item_name)
+                                {
+                                    self.functions.insert(
+                                        format!("{}::{}", alias_name, item_name),
+                                        ret_ty.clone(),
+                                    );
                                 } else {
-                                    return Err(format!("Compile Error: Module '{}' does not export '{}'", path, item_name));
+                                    return Err(format!(
+                                        "Compile Error: Module '{}' does not export '{}'",
+                                        path, item_name
+                                    ));
                                 }
                             }
                         }
                     } else {
                         for (func_name, ret_ty) in &provided {
-                            self.functions.insert(format!("{}::{}", alias_name, func_name), ret_ty.clone());
+                            self.functions
+                                .insert(format!("{}::{}", alias_name, func_name), ret_ty.clone());
                         }
                     }
                 } else {
                     if let Some(ref items) = imports {
                         for item_name in items {
-                            if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name) {
+                            if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name)
+                            {
                                 self.functions.insert(item_name.clone(), ret_ty.clone());
                             } else {
-                                return Err(format!("Compile Error: Module '{}' does not export '{}'", path, item_name));
+                                return Err(format!(
+                                    "Compile Error: Module '{}' does not export '{}'",
+                                    path, item_name
+                                ));
                             }
                         }
                     } else {
                         for (func_name, ret_ty) in &provided {
-                            self.functions.insert(format!("{}::{}", default_ns, func_name), ret_ty.clone());
+                            self.functions
+                                .insert(format!("{}::{}", default_ns, func_name), ret_ty.clone());
                         }
                     }
                 }
@@ -625,7 +691,12 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::MacroDef { name, params, return_type, body } => {
+            Expr::MacroDef {
+                name,
+                params,
+                return_type,
+                body,
+            } => {
                 self.functions.insert(name.clone(), return_type.clone());
 
                 let saved_registry = self.registry.clone();
@@ -664,7 +735,9 @@ impl LinearChecker {
                     if let Some(Expr::StringLiteral(msg)) = args.first() {
                         return Err(format!("Compile Error: {}", msg));
                     } else {
-                        return Err("Compile Error: @compile_error requires a string message".to_string());
+                        return Err(
+                            "Compile Error: @compile_error requires a string message".to_string()
+                        );
                     }
                 }
 
@@ -681,10 +754,15 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::EnumDef { name, underlying_type: _, variants } => {
+            Expr::EnumDef {
+                name,
+                underlying_type: _,
+                variants,
+            } => {
                 for (var_name, val_opt) in variants {
                     let fullname = format!("{}::{}", name, var_name);
-                    self.types.insert(fullname.clone(), TrackType::Custom(name.clone()));
+                    self.types
+                        .insert(fullname.clone(), TrackType::Custom(name.clone()));
                     self.declare(fullname);
                     if let Some(ref val) = val_opt {
                         self.check_expr(val)?;
@@ -697,9 +775,11 @@ impl LinearChecker {
                 for (var_name, ty_opt) in variants {
                     let fullname = format!("{}::{}", name, var_name);
                     if ty_opt.is_some() {
-                        self.functions.insert(fullname, Some(TrackType::Custom(name.clone())));
+                        self.functions
+                            .insert(fullname, Some(TrackType::Custom(name.clone())));
                     } else {
-                        self.types.insert(fullname.clone(), TrackType::Custom(name.clone()));
+                        self.types
+                            .insert(fullname.clone(), TrackType::Custom(name.clone()));
                         self.declare(fullname);
                     }
                 }
@@ -714,7 +794,12 @@ impl LinearChecker {
                     let saved_borrows = self.borrows.clone();
                     let saved_lens = self.lens_locked.clone();
 
-                    if let crate::ast::Pattern::Variant { ref enum_or_union, ref variant, binding: Some(ref bind_var) } = arm.pattern {
+                    if let crate::ast::Pattern::Variant {
+                        ref enum_or_union,
+                        ref variant,
+                        binding: Some(ref bind_var),
+                    } = arm.pattern
+                    {
                         let bind_ty = match (enum_or_union.as_str(), variant.as_str()) {
                             ("Value", "Int") => TrackType::I32,
                             ("Value", "Float") => TrackType::I64,
@@ -757,10 +842,7 @@ impl LinearChecker {
                         name
                     )),
                     Some(VariableState::Active) => Ok(()), // borrow, don't consume
-                    None => Err(format!(
-                        "Compile Error: Undeclared variable '{}'.",
-                        name
-                    )),
+                    None => Err(format!("Compile Error: Undeclared variable '{}'.", name)),
                 }
             }
             _ => self.check_expr(expr),
@@ -768,17 +850,22 @@ impl LinearChecker {
     }
     fn get_provenance(&self, expr: &Expr) -> Vec<String> {
         match expr {
-            Expr::AddressOf { target } => {
-                match target.as_ref() {
-                    Expr::Variable(name) => vec![name.clone()],
-                    Expr::ArrayIndex { target: inner_target, .. } => self.get_provenance(inner_target),
-                    _ => self.get_provenance(target),
-                }
-            }
+            Expr::AddressOf { target } => match target.as_ref() {
+                Expr::Variable(name) => vec![name.clone()],
+                Expr::ArrayIndex {
+                    target: inner_target,
+                    ..
+                } => self.get_provenance(inner_target),
+                _ => self.get_provenance(target),
+            },
             Expr::Variable(name) => {
                 if let Some(targets) = self.borrows.get(name) {
                     targets.clone()
-                } else if self.types.get(name).map_or(false, |t| matches!(t, TrackType::Ref(_))) {
+                } else if self
+                    .types
+                    .get(name)
+                    .map_or(false, |t| matches!(t, TrackType::Ref(_)))
+                {
                     vec![name.clone()]
                 } else {
                     Vec::new()
@@ -797,7 +884,11 @@ impl LinearChecker {
                 prov.dedup();
                 prov
             }
-            Expr::IfElse { then_body, else_body, .. } => {
+            Expr::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
                 let mut prov = Vec::new();
                 if let Some(last) = then_body.last() {
                     prov.extend(self.get_provenance(last));
@@ -809,9 +900,9 @@ impl LinearChecker {
                 prov.dedup();
                 prov
             }
-            Expr::LensBlock { body, .. } => {
-                body.last().map_or(Vec::new(), |last| self.get_provenance(last))
-            }
+            Expr::LensBlock { body, .. } => body
+                .last()
+                .map_or(Vec::new(), |last| self.get_provenance(last)),
             _ => Vec::new(),
         }
     }

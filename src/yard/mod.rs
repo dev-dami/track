@@ -1,5 +1,5 @@
-pub mod manifest;
 pub mod commands;
+pub mod manifest;
 pub mod resolver;
 
 pub fn run(args: &[String]) -> Result<(), String> {
@@ -13,7 +13,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "run" => commands::run_cmd(&args[1..]),
         "add" => commands::add(&args[1..]),
         "check" => commands::check(&args[1..]),
-        "--help" | "-h" | "help" => { print_usage(); Ok(()) },
+        "--help" | "-h" | "help" => {
+            print_usage();
+            Ok(())
+        }
         other => Err(format!("Unknown yard command: '{}'", other)),
     }
 }

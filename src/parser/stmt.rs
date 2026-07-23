@@ -1,6 +1,6 @@
+use super::Parser;
 use crate::ast::Expr;
 use crate::lexer::Token;
-use super::Parser;
 
 impl Parser {
     pub fn parse_statement(&mut self) -> Result<Expr, String> {
@@ -76,7 +76,11 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
 
-        Ok(Expr::LensBlock { target, lens_name, body })
+        Ok(Expr::LensBlock {
+            target,
+            lens_name,
+            body,
+        })
     }
 
     fn parse_fn(&mut self) -> Result<Expr, String> {
@@ -195,7 +199,12 @@ impl Parser {
         self.expect(&Token::LParen)?;
         let full_path = match self.advance() {
             Some((Token::Str(s), _)) => s,
-            other => return Err(format!("Expected string path after @use(, got {:?}", other.map(|(t,_)| t))),
+            other => {
+                return Err(format!(
+                    "Expected string path after @use(, got {:?}",
+                    other.map(|(t, _)| t)
+                ))
+            }
         };
         self.expect(&Token::RParen)?;
 
@@ -287,7 +296,7 @@ impl Parser {
     fn parse_enum(&mut self) -> Result<Expr, String> {
         self.advance(); // consume 'enum'
         let name = self.expect_ident()?;
-        
+
         let underlying_type = if self.peek() == Some(&Token::Colon) {
             self.advance();
             Some(self.parse_type()?)
@@ -322,7 +331,7 @@ impl Parser {
     fn parse_union(&mut self) -> Result<Expr, String> {
         self.advance(); // consume 'union'
         let name = self.expect_ident()?;
-        
+
         if self.peek() == Some(&Token::LParen) {
             self.advance();
             while self.peek() != Some(&Token::RParen) {
@@ -350,9 +359,6 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
 
-        Ok(Expr::UnionDef {
-            name,
-            variants,
-        })
+        Ok(Expr::UnionDef { name, variants })
     }
 }

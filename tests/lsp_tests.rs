@@ -7,7 +7,7 @@ use track::lsp::TrackLsp;
 async fn test_lsp_initialization() {
     let (service, _) = tower_lsp::LspService::new(|client| TrackLsp::new(client));
     let server = service.inner();
-    
+
     let init_params = InitializeParams::default();
     let init_result = server.initialize(init_params).await.unwrap();
 
@@ -23,14 +23,16 @@ async fn test_lsp_completion() {
     let uri = Url::parse("file:///test.trk").unwrap();
     let text = "fn main() -> void {\n    le\n}".to_string();
 
-    server.did_open(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: uri.clone(),
-            language_id: "track".to_string(),
-            version: 1,
-            text,
-        },
-    }).await;
+    server
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "track".to_string(),
+                version: 1,
+                text,
+            },
+        })
+        .await;
 
     let completion_params = CompletionParams {
         text_document_position: TextDocumentPositionParams {
@@ -59,14 +61,16 @@ async fn test_lsp_hover() {
     let uri = Url::parse("file:///test.trk").unwrap();
     let text = "fn main() -> void {\n    print(42);\n}".to_string();
 
-    server.did_open(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: uri.clone(),
-            language_id: "track".to_string(),
-            version: 1,
-            text,
-        },
-    }).await;
+    server
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "track".to_string(),
+                version: 1,
+                text,
+            },
+        })
+        .await;
 
     let hover_params = HoverParams {
         text_document_position_params: TextDocumentPositionParams {

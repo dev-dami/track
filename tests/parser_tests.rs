@@ -75,7 +75,6 @@ fn test_parse_struct_and_lens() {
     );
 }
 
-
 #[test]
 fn test_parse_enum_and_union() {
     let source = "enum Status: i32 { Active = 1, Inactive = 0 } union Value { Int(i32), Empty }";
@@ -209,7 +208,11 @@ fn test_parse_array_type_and_literal() {
             name: "arr".to_string(),
             ty: Some(TrackType::Array(Box::new(TrackType::I32), 3)),
             value: Box::new(Expr::ArrayLiteral {
-                elements: vec![Expr::IntLiteral(1), Expr::IntLiteral(2), Expr::IntLiteral(3)]
+                elements: vec![
+                    Expr::IntLiteral(1),
+                    Expr::IntLiteral(2),
+                    Expr::IntLiteral(3)
+                ]
             })
         }
     );

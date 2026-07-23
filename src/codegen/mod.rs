@@ -48,7 +48,9 @@ impl<'ctx> CodeGen<'ctx> {
             TrackType::U64 => self.context.i64_type().into(),
             TrackType::Bool => self.context.bool_type().into(),
             TrackType::Void => self.context.i8_type().into(), // void has no BasicType; use i8 placeholder
-            TrackType::Ptr(_) | TrackType::Ref(_) => self.context.ptr_type(AddressSpace::default()).into(),
+            TrackType::Ptr(_) | TrackType::Ref(_) => {
+                self.context.ptr_type(AddressSpace::default()).into()
+            }
             TrackType::Array(elem, size) => {
                 let elem_ty = self.track_type_to_llvm(elem);
                 elem_ty.array_type(*size as u32).into()
@@ -57,10 +59,15 @@ impl<'ctx> CodeGen<'ctx> {
                 if name == "u8" || name == "i8" {
                     self.context.i8_type().into()
                 } else {
-                    self.context.struct_type(
-                        &[self.context.i64_type().into(), self.context.i64_type().into()],
-                        false
-                    ).into()
+                    self.context
+                        .struct_type(
+                            &[
+                                self.context.i64_type().into(),
+                                self.context.i64_type().into(),
+                            ],
+                            false,
+                        )
+                        .into()
                 }
             }
         }
@@ -74,7 +81,9 @@ impl<'ctx> CodeGen<'ctx> {
             TrackType::U64 => self.context.i64_type().into(),
             TrackType::Bool => self.context.bool_type().into(),
             TrackType::Void => self.context.i8_type().into(),
-            TrackType::Ptr(_) | TrackType::Ref(_) => self.context.ptr_type(AddressSpace::default()).into(),
+            TrackType::Ptr(_) | TrackType::Ref(_) => {
+                self.context.ptr_type(AddressSpace::default()).into()
+            }
             TrackType::Array(elem, size) => {
                 let elem_ty = self.track_type_to_llvm(elem);
                 elem_ty.array_type(*size as u32).into()
@@ -92,7 +101,11 @@ impl<'ctx> CodeGen<'ctx> {
         let i32_type = self.context.i32_type();
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let printf_type = i32_type.fn_type(&[ptr_type.into()], true);
-        self.module.add_function("printf", printf_type, Some(inkwell::module::Linkage::External))
+        self.module.add_function(
+            "printf",
+            printf_type,
+            Some(inkwell::module::Linkage::External),
+        )
     }
 
     // ── expression compilation ───────────────────────────────────────
@@ -103,9 +116,12 @@ impl<'ctx> CodeGen<'ctx> {
                 Some(self.context.i64_type().const_int(*val as u64, true).into())
             }
 
-            Expr::BoolLiteral(val) => {
-                Some(self.context.bool_type().const_int(*val as u64, false).into())
-            }
+            Expr::BoolLiteral(val) => Some(
+                self.context
+                    .bool_type()
+                    .const_int(*val as u64, false)
+                    .into(),
+            ),
 
             Expr::StringLiteral(s) => {
                 let gv = self.builder.build_global_string_ptr(s, "str").unwrap();
@@ -148,17 +164,38 @@ impl<'ctx> CodeGen<'ctx> {
                     BinOp::Mul => self.builder.build_int_mul(li, ri, "mul").unwrap(),
                     BinOp::Div => self.builder.build_int_signed_div(li, ri, "div").unwrap(),
                     BinOp::Mod => self.builder.build_int_signed_rem(li, ri, "rem").unwrap(),
-                    BinOp::Eq => self.builder.build_int_compare(IntPredicate::EQ, li, ri, "eq").unwrap(),
-                    BinOp::Neq => self.builder.build_int_compare(IntPredicate::NE, li, ri, "neq").unwrap(),
-                    BinOp::Lt => self.builder.build_int_compare(IntPredicate::SLT, li, ri, "lt").unwrap(),
-                    BinOp::Gt => self.builder.build_int_compare(IntPredicate::SGT, li, ri, "gt").unwrap(),
-                    BinOp::Lte => self.builder.build_int_compare(IntPredicate::SLE, li, ri, "lte").unwrap(),
-                    BinOp::Gte => self.builder.build_int_compare(IntPredicate::SGE, li, ri, "gte").unwrap(),
+                    BinOp::Eq => self
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, li, ri, "eq")
+                        .unwrap(),
+                    BinOp::Neq => self
+                        .builder
+                        .build_int_compare(IntPredicate::NE, li, ri, "neq")
+                        .unwrap(),
+                    BinOp::Lt => self
+                        .builder
+                        .build_int_compare(IntPredicate::SLT, li, ri, "lt")
+                        .unwrap(),
+                    BinOp::Gt => self
+                        .builder
+                        .build_int_compare(IntPredicate::SGT, li, ri, "gt")
+                        .unwrap(),
+                    BinOp::Lte => self
+                        .builder
+                        .build_int_compare(IntPredicate::SLE, li, ri, "lte")
+                        .unwrap(),
+                    BinOp::Gte => self
+                        .builder
+                        .build_int_compare(IntPredicate::SGE, li, ri, "gte")
+                        .unwrap(),
                     BinOp::And => self.builder.build_and(li, ri, "and").unwrap(),
                     BinOp::Or => self.builder.build_or(li, ri, "or").unwrap(),
                     BinOp::BitAnd => self.builder.build_and(li, ri, "bitand").unwrap(),
                     BinOp::Shl => self.builder.build_left_shift(li, ri, "shl").unwrap(),
-                    BinOp::Shr => self.builder.build_right_shift(li, ri, false, "shr").unwrap(),
+                    BinOp::Shr => self
+                        .builder
+                        .build_right_shift(li, ri, false, "shr")
+                        .unwrap(),
                 };
                 Some(result.into())
             }
@@ -194,7 +231,9 @@ impl<'ctx> CodeGen<'ctx> {
                         let idx = self.context.i64_type().const_int(i as u64, false);
                         let zero = self.context.i64_type().const_int(0, false);
                         let gep = unsafe {
-                            self.builder.build_gep(arr_type, alloca, &[zero, idx], "arr_elem").unwrap()
+                            self.builder
+                                .build_gep(arr_type, alloca, &[zero, idx], "arr_elem")
+                                .unwrap()
                         };
                         self.builder.build_store(gep, val.into_int_value()).unwrap();
                     }
@@ -212,7 +251,9 @@ impl<'ctx> CodeGen<'ctx> {
                 // Assume array of i64
                 let arr_type = i64_type.array_type(0); // opaque; GEP doesn't need real size
                 let gep = unsafe {
-                    self.builder.build_gep(i64_type.array_type(256), ptr, &[zero, idx], "idx").unwrap()
+                    self.builder
+                        .build_gep(i64_type.array_type(256), ptr, &[zero, idx], "idx")
+                        .unwrap()
                 };
                 let _ = arr_type;
                 let loaded = self.builder.build_load(i64_type, gep, "elem").unwrap();
@@ -233,24 +274,38 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::StructInitialization { ty_name: _, fields } => {
                 // Allocate struct as a sequence of i64 fields
                 let i64_type = self.context.i64_type();
-                let field_types: Vec<BasicTypeEnum> = fields.iter().map(|_| i64_type.into()).collect();
+                let field_types: Vec<BasicTypeEnum> =
+                    fields.iter().map(|_| i64_type.into()).collect();
                 let struct_type = self.context.struct_type(&field_types, false);
-                let alloca = self.builder.build_alloca(struct_type, "struct_init").unwrap();
+                let alloca = self
+                    .builder
+                    .build_alloca(struct_type, "struct_init")
+                    .unwrap();
 
                 for (i, (_fname, fval)) in fields.iter().enumerate() {
                     if let Some(val) = self.compile_expr(fval) {
-                        let gep = self.builder.build_struct_gep(struct_type, alloca, i as u32, "field").unwrap();
+                        let gep = self
+                            .builder
+                            .build_struct_gep(struct_type, alloca, i as u32, "field")
+                            .unwrap();
                         self.builder.build_store(gep, val).unwrap();
                     }
                 }
                 Some(alloca.into())
             }
 
-            Expr::LensBlock { target, lens_name, body } => {
+            Expr::LensBlock {
+                target,
+                lens_name,
+                body,
+            } => {
                 // Lens: copy target into lens_name, execute body, copy back
                 if let Some(&target_ptr) = self.variables.get(target.as_str()) {
                     let pointee = self.pointee_type_for(target);
-                    let val = self.builder.build_load(pointee, target_ptr, "lens_load").unwrap();
+                    let val = self
+                        .builder
+                        .build_load(pointee, target_ptr, "lens_load")
+                        .unwrap();
                     let lens_alloca = self.builder.build_alloca(pointee, lens_name).unwrap();
                     self.builder.build_store(lens_alloca, val).unwrap();
                     self.variables.insert(lens_name.clone(), lens_alloca);
@@ -264,7 +319,10 @@ impl<'ctx> CodeGen<'ctx> {
                     }
 
                     // Copy back
-                    let lens_val = self.builder.build_load(pointee, lens_alloca, "lens_back").unwrap();
+                    let lens_val = self
+                        .builder
+                        .build_load(pointee, lens_alloca, "lens_back")
+                        .unwrap();
                     self.builder.build_store(target_ptr, lens_val).unwrap();
                     self.variables.remove(lens_name);
 
@@ -292,7 +350,10 @@ impl<'ctx> CodeGen<'ctx> {
                         .filter_map(|a| self.compile_expr(a))
                         .map(|v| v.into())
                         .collect();
-                    let call = self.builder.build_call(func, &compiled_args, "call").unwrap();
+                    let call = self
+                        .builder
+                        .build_call(func, &compiled_args, "call")
+                        .unwrap();
                     call.try_as_basic_value().basic()
                 } else if name.contains("::") {
                     let parts: Vec<&str> = name.split("::").collect();
@@ -305,18 +366,32 @@ impl<'ctx> CodeGen<'ctx> {
                         _ => 0u64,
                     };
                     let struct_ty = self.context.struct_type(
-                        &[self.context.i64_type().into(), self.context.i64_type().into()],
-                        false
+                        &[
+                            self.context.i64_type().into(),
+                            self.context.i64_type().into(),
+                        ],
+                        false,
                     );
                     let ptr = self.builder.build_alloca(struct_ty, "union_tmp").unwrap();
-                    let tag_ptr = self.builder.build_struct_gep(struct_ty, ptr, 0, "tag_ptr").unwrap();
-                    self.builder.build_store(tag_ptr, self.context.i64_type().const_int(tag_val, false)).unwrap();
+                    let tag_ptr = self
+                        .builder
+                        .build_struct_gep(struct_ty, ptr, 0, "tag_ptr")
+                        .unwrap();
+                    self.builder
+                        .build_store(tag_ptr, self.context.i64_type().const_int(tag_val, false))
+                        .unwrap();
                     if let Some(arg_expr) = args.first() {
                         let arg_val = self.compile_expr(arg_expr)?;
-                        let payload_ptr = self.builder.build_struct_gep(struct_ty, ptr, 1, "payload_ptr").unwrap();
+                        let payload_ptr = self
+                            .builder
+                            .build_struct_gep(struct_ty, ptr, 1, "payload_ptr")
+                            .unwrap();
                         self.builder.build_store(payload_ptr, arg_val).unwrap();
                     }
-                    let loaded = self.builder.build_load(struct_ty, ptr, "union_val").unwrap();
+                    let loaded = self
+                        .builder
+                        .build_load(struct_ty, ptr, "union_val")
+                        .unwrap();
                     Some(loaded)
                 } else if name.ends_with("::add") || name == "add" || name == "sum" {
                     let left = self.compile_expr(&args[0])?.into_int_value();
@@ -333,13 +408,19 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
 
-            Expr::IfElse { condition, then_body, else_body } => {
+            Expr::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
                 let cond_val = self.compile_expr(condition)?;
                 let cond_int = cond_val.into_int_value();
 
                 // If cond is i64 (from comparison), truncate to i1
                 let cond_bool = if cond_int.get_type().get_bit_width() > 1 {
-                    self.builder.build_int_truncate(cond_int, self.context.bool_type(), "tobool").unwrap()
+                    self.builder
+                        .build_int_truncate(cond_int, self.context.bool_type(), "tobool")
+                        .unwrap()
                 } else {
                     cond_int
                 };
@@ -349,14 +430,22 @@ impl<'ctx> CodeGen<'ctx> {
                 let else_bb = self.context.append_basic_block(func, "else");
                 let merge_bb = self.context.append_basic_block(func, "merge");
 
-                self.builder.build_conditional_branch(cond_bool, then_bb, else_bb).unwrap();
+                self.builder
+                    .build_conditional_branch(cond_bool, then_bb, else_bb)
+                    .unwrap();
 
                 // Then block
                 self.builder.position_at_end(then_bb);
                 for stmt in then_body {
                     self.compile_expr(stmt);
                 }
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
                     self.builder.build_unconditional_branch(merge_bb).unwrap();
                 }
 
@@ -365,7 +454,13 @@ impl<'ctx> CodeGen<'ctx> {
                 for stmt in else_body {
                     self.compile_expr(stmt);
                 }
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
                     self.builder.build_unconditional_branch(merge_bb).unwrap();
                 }
 
@@ -387,11 +482,15 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some(cv) = cond_val {
                     let ci = cv.into_int_value();
                     let cond_bool = if ci.get_type().get_bit_width() > 1 {
-                        self.builder.build_int_truncate(ci, self.context.bool_type(), "tobool").unwrap()
+                        self.builder
+                            .build_int_truncate(ci, self.context.bool_type(), "tobool")
+                            .unwrap()
                     } else {
                         ci
                     };
-                    self.builder.build_conditional_branch(cond_bool, body_bb, exit_bb).unwrap();
+                    self.builder
+                        .build_conditional_branch(cond_bool, body_bb, exit_bb)
+                        .unwrap();
                 } else {
                     self.builder.build_unconditional_branch(exit_bb).unwrap();
                 }
@@ -401,7 +500,13 @@ impl<'ctx> CodeGen<'ctx> {
                 for stmt in body {
                     self.compile_expr(stmt);
                 }
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
                     self.builder.build_unconditional_branch(cond_bb).unwrap();
                 }
 
@@ -443,7 +548,12 @@ impl<'ctx> CodeGen<'ctx> {
                 None
             }
 
-            Expr::FnDef { name, params, return_type, body } => {
+            Expr::FnDef {
+                name,
+                params,
+                return_type,
+                body,
+            } => {
                 self.compile_fn_def(name, params, return_type, body);
                 None
             }
@@ -484,8 +594,11 @@ impl<'ctx> CodeGen<'ctx> {
                 } else if name == "fib_comptime" {
                     if let Some(Expr::IntLiteral(n)) = args.first() {
                         fn fib_rec(n: i64) -> i64 {
-                            if n <= 1 { n }
-                            else { fib_rec(n - 1) + fib_rec(n - 2) }
+                            if n <= 1 {
+                                n
+                            } else {
+                                fib_rec(n - 1) + fib_rec(n - 2)
+                            }
                         }
                         let fib_val = fib_rec(*n);
                         let i64_type = self.context.i64_type();
@@ -510,7 +623,7 @@ impl<'ctx> CodeGen<'ctx> {
 
             Expr::LetDef { name, ty, value } => {
                 let val = self.compile_expr(value);
-                
+
                 let alloca_ty = if let Some(TrackType::Array(ref elem, size)) = ty {
                     let elem_llvm = self.track_type_to_llvm(elem);
                     elem_llvm.array_type(*size as u32).into()
@@ -521,17 +634,25 @@ impl<'ctx> CodeGen<'ctx> {
                 };
 
                 let ptr = self.builder.build_alloca(alloca_ty, name).unwrap();
-                
+
                 if let Some(TrackType::Array(_, size)) = ty {
                     if let Expr::StringLiteral(ref s) = value.as_ref() {
                         let bytes = s.as_bytes();
                         for i in 0..*size {
                             let byte_val = if i < bytes.len() { bytes[i] } else { 0 };
-                            let llvm_byte = self.context.i8_type().const_int(byte_val as u64, false);
+                            let llvm_byte =
+                                self.context.i8_type().const_int(byte_val as u64, false);
                             let zero = self.context.i64_type().const_int(0, false);
                             let index = self.context.i64_type().const_int(i as u64, false);
                             let elem_ptr = unsafe {
-                                self.builder.build_gep(alloca_ty, ptr, &[zero, index], &format!("{}_elem_{}", name, i)).unwrap()
+                                self.builder
+                                    .build_gep(
+                                        alloca_ty,
+                                        ptr,
+                                        &[zero, index],
+                                        &format!("{}_elem_{}", name, i),
+                                    )
+                                    .unwrap()
                             };
                             self.builder.build_store(elem_ptr, llvm_byte).unwrap();
                         }
@@ -543,7 +664,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 self.variables.insert(name.clone(), ptr);
-                
+
                 let track_ty = if let Some(ref annotated_ty) = ty {
                     annotated_ty.clone()
                 } else {
@@ -565,31 +686,52 @@ impl<'ctx> CodeGen<'ctx> {
                 let is_union = target_val.is_struct_value();
                 let (tag_val, payload_val) = if is_union {
                     let struct_val = target_val.into_struct_value();
-                    let tag = self.builder.build_extract_value(struct_val, 0, "tag").unwrap();
-                    let payload = self.builder.build_extract_value(struct_val, 1, "payload").unwrap();
+                    let tag = self
+                        .builder
+                        .build_extract_value(struct_val, 0, "tag")
+                        .unwrap();
+                    let payload = self
+                        .builder
+                        .build_extract_value(struct_val, 1, "payload")
+                        .unwrap();
                     (tag.into_int_value(), Some(payload))
                 } else {
                     (target_val.into_int_value(), None)
                 };
 
-                let current_func = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let current_func = self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
                 let mut arm_blocks = Vec::new();
                 for i in 0..arms.len() {
-                    let block = self.context.append_basic_block(current_func, &format!("match_arm_{}", i));
+                    let block = self
+                        .context
+                        .append_basic_block(current_func, &format!("match_arm_{}", i));
                     arm_blocks.push(block);
                 }
                 let merge_block = self.context.append_basic_block(current_func, "match_merge");
 
                 let prev_insert = self.builder.get_insert_block().unwrap();
-                
-                for (i, arm) in arms.iter().enumerate() {
-                    let next_check_block = if i + 1 < arms.len() {
-                        Some(self.context.append_basic_block(current_func, &format!("match_check_{}", i + 1)))
-                    } else {
-                        None
-                    };
 
-                    self.builder.position_at_end(if i == 0 { prev_insert } else { self.builder.get_insert_block().unwrap() });
+                for (i, arm) in arms.iter().enumerate() {
+                    let next_check_block =
+                        if i + 1 < arms.len() {
+                            Some(self.context.append_basic_block(
+                                current_func,
+                                &format!("match_check_{}", i + 1),
+                            ))
+                        } else {
+                            None
+                        };
+
+                    self.builder.position_at_end(if i == 0 {
+                        prev_insert
+                    } else {
+                        self.builder.get_insert_block().unwrap()
+                    });
 
                     let matches_cond = match &arm.pattern {
                         crate::ast::Pattern::Wildcard => {
@@ -603,7 +745,14 @@ impl<'ctx> CodeGen<'ctx> {
                                 _ => 0u64,
                             };
                             let expected_val = tag_val.get_type().const_int(expected_tag, false);
-                            self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag_val, expected_val, "tag_match").unwrap()
+                            self.builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::EQ,
+                                    tag_val,
+                                    expected_val,
+                                    "tag_match",
+                                )
+                                .unwrap()
                         }
                         crate::ast::Pattern::Ident(_) => {
                             self.context.bool_type().const_int(1, false)
@@ -611,20 +760,31 @@ impl<'ctx> CodeGen<'ctx> {
                     };
 
                     let target_fail = next_check_block.unwrap_or(merge_block);
-                    self.builder.build_conditional_branch(matches_cond, arm_blocks[i], target_fail).unwrap();
+                    self.builder
+                        .build_conditional_branch(matches_cond, arm_blocks[i], target_fail)
+                        .unwrap();
 
                     self.builder.position_at_end(arm_blocks[i]);
 
                     match &arm.pattern {
-                        crate::ast::Pattern::Variant { binding: Some(bind_var), .. } => {
+                        crate::ast::Pattern::Variant {
+                            binding: Some(bind_var),
+                            ..
+                        } => {
                             if let Some(payload) = payload_val {
-                                let ptr = self.builder.build_alloca(payload.get_type(), bind_var).unwrap();
+                                let ptr = self
+                                    .builder
+                                    .build_alloca(payload.get_type(), bind_var)
+                                    .unwrap();
                                 self.builder.build_store(ptr, payload).unwrap();
                                 self.variables.insert(bind_var.clone(), ptr);
                             }
                         }
                         crate::ast::Pattern::Ident(var_name) => {
-                            let ptr = self.builder.build_alloca(target_val.get_type(), var_name).unwrap();
+                            let ptr = self
+                                .builder
+                                .build_alloca(target_val.get_type(), var_name)
+                                .unwrap();
                             self.builder.build_store(ptr, target_val).unwrap();
                             self.variables.insert(var_name.clone(), ptr);
                         }
@@ -632,9 +792,17 @@ impl<'ctx> CodeGen<'ctx> {
                     }
 
                     self.compile_expr(&arm.body);
-                    
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                        self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                    if self
+                        .builder
+                        .get_insert_block()
+                        .unwrap()
+                        .get_terminator()
+                        .is_none()
+                    {
+                        self.builder
+                            .build_unconditional_branch(merge_block)
+                            .unwrap();
                     }
 
                     if let Some(next_chk) = next_check_block {
@@ -661,22 +829,25 @@ impl<'ctx> CodeGen<'ctx> {
                     let bits = iv.get_type().get_bit_width();
                     if bits == 1 {
                         // Bool: extend to i32 for printf
-                        let ext = self.builder.build_int_z_extend(iv, self.context.i32_type(), "bext").unwrap();
+                        let ext = self
+                            .builder
+                            .build_int_z_extend(iv, self.context.i32_type(), "bext")
+                            .unwrap();
                         ("%d\n", vec![ext.into()])
                     } else {
                         ("%lld\n", vec![iv.into()])
                     }
                 }
-                BasicValueEnum::PointerValue(pv) => {
-                    ("%s\n", vec![pv.into()])
-                }
+                BasicValueEnum::PointerValue(pv) => ("%s\n", vec![pv.into()]),
                 _ => ("%lld\n", vec![val.into()]),
             };
 
             let fmt_str = self.builder.build_global_string_ptr(fmt, "fmt").unwrap();
             let mut all_args: Vec<BasicMetadataValueEnum> = vec![fmt_str.as_pointer_value().into()];
             all_args.extend(call_args);
-            self.builder.build_call(printf, &all_args, "printf_call").unwrap();
+            self.builder
+                .build_call(printf, &all_args, "printf_call")
+                .unwrap();
         }
         None
     }
@@ -821,8 +992,6 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("Failed to write object file: {}", e))
     }
 
-
-
     // ── helpers ──────────────────────────────────────────────────────
 
     fn pointee_type_for(&self, name: &str) -> BasicTypeEnum<'ctx> {
@@ -835,7 +1004,9 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn deref_type_for(&self, expr: &Expr) -> BasicTypeEnum<'ctx> {
         if let Expr::Variable(name) = expr {
-            if let Some(TrackType::Ref(inner)) | Some(TrackType::Ptr(inner)) = self.var_types.get(name) {
+            if let Some(TrackType::Ref(inner)) | Some(TrackType::Ptr(inner)) =
+                self.var_types.get(name)
+            {
                 return self.track_type_to_llvm(inner);
             }
         }
@@ -845,15 +1016,13 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn infer_track_type_from_llvm(&self, ty: BasicTypeEnum<'ctx>) -> TrackType {
         match ty {
-            BasicTypeEnum::IntType(it) => {
-                match it.get_bit_width() {
-                    1 => TrackType::Bool,
-                    8 => TrackType::Custom("u8".to_string()),
-                    32 => TrackType::I32,
-                    64 => TrackType::I64,
-                    _ => TrackType::I64,
-                }
-            }
+            BasicTypeEnum::IntType(it) => match it.get_bit_width() {
+                1 => TrackType::Bool,
+                8 => TrackType::Custom("u8".to_string()),
+                32 => TrackType::I32,
+                64 => TrackType::I64,
+                _ => TrackType::I64,
+            },
             BasicTypeEnum::PointerType(_) => TrackType::Ptr(Box::new(TrackType::I64)),
             BasicTypeEnum::ArrayType(_) => TrackType::Array(Box::new(TrackType::I64), 0),
             BasicTypeEnum::StructType(_) => TrackType::Custom("Value".to_string()),
@@ -865,16 +1034,25 @@ impl<'ctx> CodeGen<'ctx> {
         &self,
         a: inkwell::values::IntValue<'ctx>,
         b: inkwell::values::IntValue<'ctx>,
-    ) -> (inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>) {
+    ) -> (
+        inkwell::values::IntValue<'ctx>,
+        inkwell::values::IntValue<'ctx>,
+    ) {
         let aw = a.get_type().get_bit_width();
         let bw = b.get_type().get_bit_width();
         if aw == bw {
             (a, b)
         } else if aw > bw {
-            let ext = self.builder.build_int_s_extend(b, a.get_type(), "ext").unwrap();
+            let ext = self
+                .builder
+                .build_int_s_extend(b, a.get_type(), "ext")
+                .unwrap();
             (a, ext)
         } else {
-            let ext = self.builder.build_int_s_extend(a, b.get_type(), "ext").unwrap();
+            let ext = self
+                .builder
+                .build_int_s_extend(a, b.get_type(), "ext")
+                .unwrap();
             (ext, b)
         }
     }
@@ -899,44 +1077,96 @@ impl<'ctx> CodeGen<'ctx> {
         let i32_type = self.context.i32_type();
         let bool_type = self.context.bool_type();
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-        let str_struct = self.context.struct_type(&[ptr_type.into(), i32_type.into()], false);
-        let vec_struct = self.context.struct_type(&[ptr_type.into(), i32_type.into(), i32_type.into()], false);
+        let str_struct = self
+            .context
+            .struct_type(&[ptr_type.into(), i32_type.into()], false);
+        let vec_struct = self
+            .context
+            .struct_type(&[ptr_type.into(), i32_type.into(), i32_type.into()], false);
 
         // (params, returns_void, opt_basic_return_type)
-        let sig: Option<(Vec<BasicMetadataTypeEnum<'ctx>>, bool, Option<BasicTypeEnum<'ctx>>)> = match name {
-            "alloc"    => Some((vec![i64_type.into()], false, Some(ptr_type.into()))),
-            "memset"   => Some((vec![ptr_type.into(), i32_type.into(), i64_type.into()], true, None)),
-            "memcpy"   => Some((vec![ptr_type.into(), ptr_type.into(), i64_type.into()], true, None)),
-            "memcmp"   => Some((vec![ptr_type.into(), ptr_type.into(), i64_type.into()], false, Some(i32_type.into()))),
+        let sig: Option<(
+            Vec<BasicMetadataTypeEnum<'ctx>>,
+            bool,
+            Option<BasicTypeEnum<'ctx>>,
+        )> = match name {
+            "alloc" => Some((vec![i64_type.into()], false, Some(ptr_type.into()))),
+            "memset" => Some((
+                vec![ptr_type.into(), i32_type.into(), i64_type.into()],
+                true,
+                None,
+            )),
+            "memcpy" => Some((
+                vec![ptr_type.into(), ptr_type.into(), i64_type.into()],
+                true,
+                None,
+            )),
+            "memcmp" => Some((
+                vec![ptr_type.into(), ptr_type.into(), i64_type.into()],
+                false,
+                Some(i32_type.into()),
+            )),
 
-            "str_len"          => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
-            "str_eq"           => Some((vec![ptr_type.into(), ptr_type.into()], false, Some(bool_type.into()))),
+            "str_len" => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
+            "str_eq" => Some((
+                vec![ptr_type.into(), ptr_type.into()],
+                false,
+                Some(bool_type.into()),
+            )),
             "str_from_literal" => Some((vec![ptr_type.into()], false, Some(str_struct.into()))),
-            "str_concat"       => Some((vec![ptr_type.into(), ptr_type.into()], false, Some(str_struct.into()))),
+            "str_concat" => Some((
+                vec![ptr_type.into(), ptr_type.into()],
+                false,
+                Some(str_struct.into()),
+            )),
 
             "vec_init" => Some((vec![i32_type.into()], false, Some(vec_struct.into()))),
             "vec_push" => Some((vec![ptr_type.into(), i32_type.into()], true, None)),
-            "vec_get"  => Some((vec![ptr_type.into(), i32_type.into()], false, Some(i32_type.into()))),
-            "vec_set"  => Some((vec![ptr_type.into(), i32_type.into(), i32_type.into()], true, None)),
-            "vec_pop"  => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
+            "vec_get" => Some((
+                vec![ptr_type.into(), i32_type.into()],
+                false,
+                Some(i32_type.into()),
+            )),
+            "vec_set" => Some((
+                vec![ptr_type.into(), i32_type.into(), i32_type.into()],
+                true,
+                None,
+            )),
+            "vec_pop" => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
 
-            "print_str"   => Some((vec![ptr_type.into()], true, None)),
-            "print_int"   => Some((vec![i64_type.into()], true, None)),
-            "print_hex"   => Some((vec![i64_type.into()], true, None)),
-            "read_line"   => Some((vec![], false, Some(str_struct.into()))),
-            "file_open"   => Some((vec![ptr_type.into(), i32_type.into()], false, Some(ptr_type.into()))),
+            "print_str" => Some((vec![ptr_type.into()], true, None)),
+            "print_int" => Some((vec![i64_type.into()], true, None)),
+            "print_hex" => Some((vec![i64_type.into()], true, None)),
+            "read_line" => Some((vec![], false, Some(str_struct.into()))),
+            "file_open" => Some((
+                vec![ptr_type.into(), i32_type.into()],
+                false,
+                Some(ptr_type.into()),
+            )),
             "file_read_all" => Some((vec![ptr_type.into()], false, Some(str_struct.into()))),
-            "file_write"  => Some((vec![ptr_type.into(), ptr_type.into()], true, None)),
+            "file_write" => Some((vec![ptr_type.into(), ptr_type.into()], true, None)),
 
-            "math_abs"  => Some((vec![i32_type.into()], false, Some(i32_type.into()))),
-            "math_max"  => Some((vec![i32_type.into(), i32_type.into()], false, Some(i32_type.into()))),
-            "math_min"  => Some((vec![i32_type.into(), i32_type.into()], false, Some(i32_type.into()))),
-            "math_pow"  => Some((vec![i64_type.into(), i64_type.into()], false, Some(i64_type.into()))),
+            "math_abs" => Some((vec![i32_type.into()], false, Some(i32_type.into()))),
+            "math_max" => Some((
+                vec![i32_type.into(), i32_type.into()],
+                false,
+                Some(i32_type.into()),
+            )),
+            "math_min" => Some((
+                vec![i32_type.into(), i32_type.into()],
+                false,
+                Some(i32_type.into()),
+            )),
+            "math_pow" => Some((
+                vec![i64_type.into(), i64_type.into()],
+                false,
+                Some(i64_type.into()),
+            )),
             "math_sqrt" => Some((vec![i64_type.into()], false, Some(i64_type.into()))),
 
-            "free"       => Some((vec![ptr_type.into()], true, None)),
-            "str_free"   => Some((vec![str_struct.into()], true, None)),
-            "vec_free"   => Some((vec![vec_struct.into()], true, None)),
+            "free" => Some((vec![ptr_type.into()], true, None)),
+            "str_free" => Some((vec![str_struct.into()], true, None)),
+            "vec_free" => Some((vec![vec_struct.into()], true, None)),
             "file_close" => Some((vec![ptr_type.into()], true, None)),
 
             _ => None,
@@ -961,7 +1191,11 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn generate_cleanup_for(&mut self, name: &str) {
         if let Some(ty) = self.var_types.get(name).cloned() {
-            let ptr = if let Some(&p) = self.variables.get(name) { p } else { return; };
+            let ptr = if let Some(&p) = self.variables.get(name) {
+                p
+            } else {
+                return;
+            };
 
             let func_name = match &ty {
                 TrackType::Custom(custom_name) => {
@@ -990,8 +1224,13 @@ impl<'ctx> CodeGen<'ctx> {
             if let Some(fname) = func_name {
                 if let Some(func) = self.get_or_declare_stdlib_func(fname) {
                     let pointee = self.track_type_to_llvm(&ty);
-                    let val = self.builder.build_load(pointee, ptr, &format!("{}_val_to_free", name)).unwrap();
-                    self.builder.build_call(func, &[val.into()], "cleanup_call").unwrap();
+                    let val = self
+                        .builder
+                        .build_load(pointee, ptr, &format!("{}_val_to_free", name))
+                        .unwrap();
+                    self.builder
+                        .build_call(func, &[val.into()], "cleanup_call")
+                        .unwrap();
                 }
             }
         }

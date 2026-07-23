@@ -9,7 +9,11 @@ fn test_regression_nested_expressions() {
         }
     "#;
     let res = compile_source(source);
-    assert!(res.is_ok(), "Failed to compile nested expression: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "Failed to compile nested expression: {:?}",
+        res.err()
+    );
 }
 
 #[test]
@@ -28,7 +32,11 @@ fn test_regression_nested_if_else_chain() {
         }
     "#;
     let res = compile_source(source);
-    assert!(res.is_ok(), "Failed to compile nested if-else: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "Failed to compile nested if-else: {:?}",
+        res.err()
+    );
 }
 
 #[test]
@@ -69,7 +77,11 @@ fn test_regression_complex_match_guards() {
         }
     "#;
     let res = compile_source(source);
-    assert!(res.is_ok(), "Failed match guards regression test: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "Failed match guards regression test: {:?}",
+        res.err()
+    );
 }
 
 #[test]
@@ -85,7 +97,11 @@ fn test_regression_nested_lens_blocks() {
         }
     "#;
     let res = compile_source(source);
-    assert!(res.is_ok(), "Failed nested lens regression test: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "Failed nested lens regression test: {:?}",
+        res.err()
+    );
 }
 
 #[test]
@@ -101,5 +117,9 @@ fn test_regression_shadowed_variables() {
         }
     "#;
     let res = compile_source(source);
-    assert!(res.is_ok(), "Failed scope shadowing regression test: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "Failed scope shadowing regression test: {:?}",
+        res.err()
+    );
 }

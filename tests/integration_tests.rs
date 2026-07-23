@@ -63,8 +63,6 @@ fn test_invalid_examples_rejection() {
         ("manual_free_err.trk", "managed automatically"),
     ];
 
-
-
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let examples_dir = Path::new(&manifest_dir).join("examples");
 

@@ -59,9 +59,12 @@ fn test_linear_checker_lens_block_valid_and_locked() {
         }
     "#;
     let res = compile_source(source);
-    assert!(res.is_ok(), "Expected lens block valid test to compile, got error: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "Expected lens block valid test to compile, got error: {:?}",
+        res.err()
+    );
 }
-
 
 #[test]
 fn test_linear_checker_lens_block_locked_error() {
@@ -79,7 +82,10 @@ fn test_linear_checker_lens_block_locked_error() {
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert!(
-        err.contains("frozen") || err.contains("locked") || err.contains("Active") || err.contains("Locked"),
+        err.contains("frozen")
+            || err.contains("locked")
+            || err.contains("Active")
+            || err.contains("Locked"),
         "Unexpected error message: {}",
         err
     );

@@ -16,7 +16,6 @@ fn test_yard_manifest_serialization() {
     assert_eq!(loaded.package.version, "1.2.3");
 }
 
-
 #[test]
 fn test_yard_init_add_check_in_temp_dir() {
     let temp_dir = env::temp_dir().join(format!("track_test_yard_{}", std::process::id()));
@@ -38,10 +37,18 @@ fn test_yard_init_add_check_in_temp_dir() {
 
     // Test yard check
     let check_res = commands::check(&[]);
-    assert!(check_res.is_ok(), "yard check failed: {:?}", check_res.err());
+    assert!(
+        check_res.is_ok(),
+        "yard check failed: {:?}",
+        check_res.err()
+    );
 
     // Test yard add
-    let add_res = commands::add(&["some_dep".to_string(), "--version".to_string(), "0.2.0".to_string()]);
+    let add_res = commands::add(&[
+        "some_dep".to_string(),
+        "--version".to_string(),
+        "0.2.0".to_string(),
+    ]);
     assert!(add_res.is_ok(), "yard add failed: {:?}", add_res.err());
 
     let updated_manifest = Manifest::load(&proj_dir.join("Track.toml")).unwrap();
