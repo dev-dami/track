@@ -1,13 +1,11 @@
 # Track
 
-**Track** is a low-level systems programming language designed for deterministic memory safety, zero-cost abstractions, and real-time execution.
+**Track** is a low-level systems programming language designed for deterministic memory management, zero-cost abstractions, and real-time execution.
 
 - **No Garbage Collector, No Runtime.** Resource lifecycles are verified and freed at compile time.
 - **Linear Ownership.** Eliminates use-after-free, double-free, and memory leaks.
 - **Lexical Lenses.** Scoped mutable access without manual pointer arithmetic or ownership transfer.
-- **Standalone Cranelift Compiler Backend.** Fast native code generation without host LLVM dynamic library dependencies.
-
----
+- **Cranelift Standalone Backend.** Fast native code generation without system LLVM dynamic library dependencies.
 
 ## Hello World
 
@@ -35,35 +33,45 @@ with u -> user {
 }
 ```
 
----
+## Installation
+
+### One-line Install (curl)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dev-dami/track/main/scripts/install.sh | bash
+```
+
+### Build from Source
+
+Requires Rust (2021 edition).
+
+```bash
+# Build release binaries
+cargo build --release
+
+# Run installer script
+./scripts/install.sh
+```
 
 ## Usage
 
 ```bash
 # Type-check a source file
-track check main.trk
+track check examples/hello.trk
 
 # Compile to native executable
-track build main.trk
-./main
+track build examples/hello.trk
+./hello
 
-# Compile and run immediately
-track run main.trk
-
-# Package Management with Yard
+# Run via package manager
 track yard init my_app
 track yard check
 track yard build
-track yard run
 ```
 
-## Installation & Testing
+## Testing
 
 ```bash
-# Build compiler release binary
-cargo build --release
-
-# Run full test suite
 cargo test
 ```
 

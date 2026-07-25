@@ -37,6 +37,19 @@ memcpy(dst, src, len);
 let cmp = memcmp(a, b, len);
 ```
 
+## Slices & Byte Primitives
+
+```track
+// Slices ([]T) are fat views { ptr, len }
+let arr: [i64; 5] = [10, 20, 30, 40, 50];
+let slice: []i64 = arr[1..4];
+
+// u8 and i8 byte primitives
+let byte_val: u8 = 255;
+let signed_byte: i8 = -128;
+let buf: ptr<u8> = alloc(1024);
+```
+
 ## Strings
 
 ```track
