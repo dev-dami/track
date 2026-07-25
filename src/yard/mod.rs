@@ -28,7 +28,7 @@ fn print_usage() {
     eprintln!("Yard - Track Package Manager");
     eprintln!();
     eprintln!("USAGE:");
-    eprintln!("    track yard <command> [options]");
+    eprintln!("    yard <command> [options]");
     eprintln!();
     eprintln!("COMMANDS:");
     eprintln!("    init <name>     Create a new Track project");

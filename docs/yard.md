@@ -35,50 +35,50 @@ src = "src"
 
 ## Commands
 
-### `track yard init <name>`
+### `yard init <name>`
 
 Scaffolds a new Track project in a directory matching `<name>`:
 
 ```bash
-track yard init my_project
+yard init my_project
 ```
 
 This creates the default folder layout, configures `Track.toml`, and writes a simple "hello world" program to `src/main.trk`.
 
-### `track yard build`
+### `yard build`
 
 Builds the current project and all of its dependency packages:
 
 ```bash
-track yard build
+yard build
 ```
 
-This compiles each `.trk` file in the source directory to an LLVM object file and links them together to produce a native executable under `target/<project_name>`.
+This compiles each `.trk` file in the source directory and links them together to produce a standalone native executable under `target/<project_name>`.
 
-### `track yard run`
+### `yard run`
 
 Builds and immediately executes the package binary:
 
 ```bash
-track yard run
+yard run
 ```
 
-### `track yard add <package>`
+### `yard add <package>`
 
 Adds a new dependency to the project's `Track.toml` manifest:
 
 ```bash
 # Add a local path dependency
-track yard add my_library --path ../my_library
+yard add my_library --path ../my_library
 
-# Add a Git dependency (resolved in later versions)
-track yard add logger --git https://github.com/example/logger.git
+# Add a Git dependency
+yard add logger --git https://github.com/example/logger.git
 ```
 
-### `track yard check`
+### `yard check`
 
-Runs tokenization, parsing, and type-checking on all source files in the project without performing LLVM codegen:
+Runs tokenization, parsing, and type-checking on all source files in the project without performing codegen:
 
 ```bash
-track yard check
+yard check
 ```

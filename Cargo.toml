@@ -8,6 +8,10 @@ name = "track"
 path = "src/main.rs"
 
 [[bin]]
+name = "yard"
+path = "src/yard_bin.rs"
+
+[[bin]]
 name = "track-lsp"
 path = "src/lsp_bin.rs"
 

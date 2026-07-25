@@ -55,6 +55,8 @@ cargo build --release
 
 ## Usage
 
+### Single-File Compiler (`track`)
+
 ```bash
 # Type-check a source file
 track check examples/hello.trk
@@ -62,11 +64,22 @@ track check examples/hello.trk
 # Compile to native executable
 track build examples/hello.trk
 ./hello
+```
 
-# Run via package manager
-track yard init my_app
-track yard check
-track yard build
+### Package Manager & Build Orchestrator (`yard`)
+
+```bash
+# Create a new Track project
+yard init my_app
+
+# Type-check project
+yard check
+
+# Build project to target/my_app
+yard build
+
+# Build and execute project
+yard run
 ```
 
 ## Testing
