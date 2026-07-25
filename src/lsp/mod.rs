@@ -22,7 +22,32 @@ impl TrackLsp {
         }
     }
 
-    fn analyze_source(&self, source: &str, _uri: &Url) -> Vec<Diagnostic> {
+    async fn analyze_document_async(&self, uri: Url, text: String) -> Vec<Diagnostic> {
+        tokio::task::spawn_blocking(move || {
+            if uri.path().ends_with(".md") || uri.path().ends_with(".markdown") {
+                let mut all_diagnostics = Vec::new();
+                let blocks = Self::extract_track_blocks_static(&text);
+
+                for (range, block_source) in blocks {
+                    let block_diagnostics = Self::analyze_source_static(&block_source);
+                    for mut diag in block_diagnostics {
+                        diag.range.start.line += range.start.line;
+                        diag.range.end.line += range.start.line;
+                        all_diagnostics.push(diag);
+                    }
+                }
+                all_diagnostics
+            } else if uri.path().ends_with(".trk") {
+                Self::analyze_source_static(&text)
+            } else {
+                Vec::new()
+            }
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    fn analyze_source_static(source: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
         // Try to tokenize
@@ -68,7 +93,7 @@ impl TrackLsp {
         diagnostics
     }
 
-    fn extract_track_blocks(&self, markdown: &str) -> Vec<(Range, String)> {
+    fn extract_track_blocks_static(markdown: &str) -> Vec<(Range, String)> {
         let mut blocks = Vec::new();
         let mut in_block = false;
         let mut block_start_line = 0;
@@ -134,25 +159,7 @@ impl LanguageServer for TrackLsp {
             .unwrap()
             .insert(uri.clone(), text.clone());
 
-        let diagnostics = if uri.path().ends_with(".md") || uri.path().ends_with(".markdown") {
-            let mut all_diagnostics = Vec::new();
-            let blocks = self.extract_track_blocks(&text);
-
-            for (range, block_source) in blocks {
-                let block_diagnostics = self.analyze_source(&block_source, &uri);
-                for mut diag in block_diagnostics {
-                    // Offset the range by the block's start line
-                    diag.range.start.line += range.start.line;
-                    diag.range.end.line += range.start.line;
-                    all_diagnostics.push(diag);
-                }
-            }
-            all_diagnostics
-        } else if uri.path().ends_with(".trk") {
-            self.analyze_source(&text, &uri)
-        } else {
-            Vec::new()
-        };
+        let diagnostics = self.analyze_document_async(uri.clone(), text).await;
 
         self.client
             .publish_diagnostics(uri, diagnostics, None)
@@ -173,24 +180,7 @@ impl LanguageServer for TrackLsp {
             .unwrap()
             .insert(uri.clone(), text.clone());
 
-        let diagnostics = if uri.path().ends_with(".md") || uri.path().ends_with(".markdown") {
-            let mut all_diagnostics = Vec::new();
-            let blocks = self.extract_track_blocks(&text);
-
-            for (range, block_source) in blocks {
-                let block_diagnostics = self.analyze_source(&block_source, &uri);
-                for mut diag in block_diagnostics {
-                    diag.range.start.line += range.start.line;
-                    diag.range.end.line += range.start.line;
-                    all_diagnostics.push(diag);
-                }
-            }
-            all_diagnostics
-        } else if uri.path().ends_with(".trk") {
-            self.analyze_source(&text, &uri)
-        } else {
-            Vec::new()
-        };
+        let diagnostics = self.analyze_document_async(uri.clone(), text).await;
 
         self.client
             .publish_diagnostics(uri, diagnostics, None)
@@ -205,24 +195,7 @@ impl LanguageServer for TrackLsp {
                 .unwrap()
                 .insert(uri.clone(), text.clone());
 
-            let diagnostics = if uri.path().ends_with(".md") || uri.path().ends_with(".markdown") {
-                let mut all_diagnostics = Vec::new();
-                let blocks = self.extract_track_blocks(&text);
-
-                for (range, block_source) in blocks {
-                    let block_diagnostics = self.analyze_source(&block_source, &uri);
-                    for mut diag in block_diagnostics {
-                        diag.range.start.line += range.start.line;
-                        diag.range.end.line += range.start.line;
-                        all_diagnostics.push(diag);
-                    }
-                }
-                all_diagnostics
-            } else if uri.path().ends_with(".trk") {
-                self.analyze_source(&text, &uri)
-            } else {
-                Vec::new()
-            };
+            let diagnostics = self.analyze_document_async(uri.clone(), text).await;
 
             self.client
                 .publish_diagnostics(uri, diagnostics, None)

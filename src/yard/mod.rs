@@ -1,4 +1,7 @@
+pub mod builder;
+pub mod cache;
 pub mod commands;
+pub mod linker;
 pub mod manifest;
 pub mod resolver;
 
