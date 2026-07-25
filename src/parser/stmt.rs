@@ -40,7 +40,7 @@ impl Parser {
 
     fn parse_let(&mut self) -> Result<Expr, String> {
         self.advance(); // consume 'let'
-        let _mutable = if self.peek() == Some(&Token::Mut) {
+        let mutable = if self.peek() == Some(&Token::Mut) {
             self.advance();
             true
         } else {
@@ -59,6 +59,7 @@ impl Parser {
         let val = self.parse_expr()?;
         Ok(Expr::LetDef {
             name,
+            mutable,
             ty,
             value: Box::new(val),
         })

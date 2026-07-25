@@ -109,6 +109,7 @@ pub enum Expr {
 
     LetDef {
         name: String,
+        mutable: bool,
         ty: Option<TrackType>,
         value: Box<Expr>,
     },
@@ -163,6 +164,7 @@ pub enum BinOp {
     And,
     Or,
     BitAnd,
+    BitOr,
     Shl,
     Shr,
 }

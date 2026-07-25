@@ -40,6 +40,7 @@ fn test_parse_let_def() {
         ast,
         vec![Expr::LetDef {
             name: "x".to_string(),
+            mutable: true,
             ty: Some(TrackType::I64),
             value: Box::new(Expr::IntLiteral(100)),
         }]
@@ -54,6 +55,7 @@ fn test_parse_slice_type_and_indexing() {
         ast,
         vec![Expr::LetDef {
             name: "s".to_string(),
+            mutable: false,
             ty: Some(TrackType::Slice(Box::new(TrackType::U8))),
             value: Box::new(Expr::SliceIndex {
                 target: Box::new(Expr::Variable("arr".to_string())),
@@ -73,6 +75,7 @@ fn test_parse_struct_and_lens() {
         ast[0],
         Expr::LetDef {
             name: "u".to_string(),
+            mutable: false,
             ty: None,
             value: Box::new(Expr::StructInitialization {
                 ty_name: "User".to_string(),
@@ -183,6 +186,7 @@ fn test_parse_macro_def_and_call() {
         ast[1],
         Expr::LetDef {
             name: "val".to_string(),
+            mutable: false,
             ty: None,
             value: Box::new(Expr::MacroCall {
                 name: "bit".to_string(),
@@ -225,6 +229,7 @@ fn test_parse_array_type_and_literal() {
         ast[0],
         Expr::LetDef {
             name: "arr".to_string(),
+            mutable: false,
             ty: Some(TrackType::Array(Box::new(TrackType::I32), 3)),
             value: Box::new(Expr::ArrayLiteral {
                 elements: vec![
@@ -239,6 +244,7 @@ fn test_parse_array_type_and_literal() {
         ast[1],
         Expr::LetDef {
             name: "x".to_string(),
+            mutable: false,
             ty: None,
             value: Box::new(Expr::ArrayIndex {
                 target: Box::new(Expr::Variable("arr".to_string())),

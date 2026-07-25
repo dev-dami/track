@@ -9,7 +9,7 @@ impl Parser {
 
     fn parse_or(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_and()?;
-        while self.peek() == Some(&Token::PipePipe) || self.peek() == Some(&Token::Pipe) {
+        while self.peek() == Some(&Token::PipePipe) {
             self.advance();
             let right = self.parse_and()?;
             left = Expr::BinaryOp {
@@ -70,7 +70,14 @@ impl Parser {
                 {
                     BinOp::BitAnd
                 }
-                Some(Token::PipePipe) => break,
+                Some(Token::Pipe)
+                    if self
+                        .tokens
+                        .get(self.pos + 1)
+                        .is_some_and(|(t, _)| !matches!(t, Token::Pipe)) =>
+                {
+                    BinOp::BitOr
+                }
                 _ => break,
             };
             self.advance();

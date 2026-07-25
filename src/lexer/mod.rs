@@ -70,9 +70,10 @@ pub enum Token {
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
     Int(i64),
 
-    #[regex(r#""[^"]*""#, |lex| {
+    #[regex(r#""([^"\\]|\\.)*""#, |lex| {
         let s = lex.slice();
-        Some(s[1..s.len()-1].to_string())
+        let raw = &s[1..s.len()-1];
+        Some(raw.replace("\\\"", "\"").replace("\\n", "\n").replace("\\\\", "\\").to_string())
     })]
     Str(String),
 

@@ -83,6 +83,15 @@ void sys_exit(int code) {
 void print(long long val) {
     printf("%lld\n", val);
 }
+long long add(long long a, long long b) {
+    return a + b;
+}
+long long sum(long long a, long long b) {
+    return a + b;
+}
+long long sub(long long a, long long b) {
+    return a - b;
+}
 "#;
 
 /// Compile source string through Lexer -> Parser -> LinearChecker pipeline.

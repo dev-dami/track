@@ -169,11 +169,16 @@ impl ParallelBuilder {
         }
 
         for handle in handles {
-            let _ = handle.join();
+            if handle.join().is_err() {
+                return Err("Parallel builder worker thread panicked during execution".to_string());
+            }
         }
 
         let mut obj_files = Vec::new();
-        let compiled_results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
+        let compiled_results = match Arc::try_unwrap(results) {
+            Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+            Err(arc) => arc.lock().unwrap().clone(),
+        };
 
         for res in compiled_results {
             match res {

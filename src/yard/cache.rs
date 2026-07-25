@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
@@ -33,9 +32,12 @@ impl BuildCache {
     }
 
     pub fn compute_hash(content: &str) -> String {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        content.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in content.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        format!("{:016x}", hash)
     }
 
     pub fn is_cached(&self, rel_path: &str, content_hash: &str, obj_path: &Path) -> bool {

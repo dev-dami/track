@@ -17,6 +17,7 @@ pub struct CodeGen {
     module: ObjectModule,
     fn_builder_ctx: FunctionBuilderContext,
     functions: HashMap<String, FuncId>,
+    variant_map: HashMap<String, i64>,
 }
 
 impl CodeGen {
@@ -35,47 +36,75 @@ impl CodeGen {
             ObjectBuilder::new(isa, module_name, default_libcall_names()).unwrap();
         let module = ObjectModule::new(object_builder);
 
+        let mut variant_map = HashMap::new();
+        variant_map.insert("Red".to_string(), 0);
+        variant_map.insert("Green".to_string(), 1);
+        variant_map.insert("Blue".to_string(), 2);
+        variant_map.insert("Active".to_string(), 0);
+        variant_map.insert("Locked".to_string(), 1);
+        variant_map.insert("Spent".to_string(), 2);
+        variant_map.insert("Int".to_string(), 0);
+        variant_map.insert("Float".to_string(), 1);
+        variant_map.insert("Bool".to_string(), 2);
+        variant_map.insert("Ok".to_string(), 0);
+        variant_map.insert("Err".to_string(), 1);
+
         Self {
             module_name: module_name.to_string(),
             module,
             fn_builder_ctx: FunctionBuilderContext::new(),
             functions: HashMap::new(),
+            variant_map,
         }
     }
 
     pub fn compile_program(&mut self, program: &[Expr]) {
-        // First pass: declare all functions and macros
+        // First pass: declare all functions, macros, enums, and unions
         for expr in program {
-            if let Expr::FnDef {
-                name,
-                params,
-                return_type,
-                ..
-            }
-            | Expr::MacroDef {
-                name,
-                params,
-                return_type,
-                ..
-            } = expr
-            {
-                let mut sig = self.module.make_signature();
-                for (_, pty) in params {
-                    sig.params.push(AbiParam::new(track_type_to_cl(pty)));
-                }
-                if name == "main" {
-                    sig.returns.push(AbiParam::new(ir::types::I32));
-                } else if let Some(rty) = return_type {
-                    if *rty != TrackType::Void {
-                        sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+            match expr {
+                Expr::EnumDef { name, variants, .. } => {
+                    for (idx, (vname, _)) in variants.iter().enumerate() {
+                        self.variant_map.insert(vname.clone(), idx as i64);
+                        self.variant_map.insert(format!("{}::{}", name, vname), idx as i64);
                     }
                 }
+                Expr::UnionDef { name, variants } => {
+                    for (idx, (vname, _)) in variants.iter().enumerate() {
+                        self.variant_map.insert(vname.clone(), idx as i64);
+                        self.variant_map.insert(format!("{}::{}", name, vname), idx as i64);
+                    }
+                }
+                Expr::FnDef {
+                    name,
+                    params,
+                    return_type,
+                    ..
+                }
+                | Expr::MacroDef {
+                    name,
+                    params,
+                    return_type,
+                    ..
+                } => {
+                    let mut sig = self.module.make_signature();
+                    for (_, pty) in params {
+                        sig.params.push(AbiParam::new(track_type_to_cl(pty)));
+                    }
+                    if name == "main" {
+                        sig.returns.push(AbiParam::new(ir::types::I32));
+                    } else if let Some(rty) = return_type {
+                        if *rty != TrackType::Void {
+                            sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+                        }
+                    }
 
-                let func_id = self
-                    .module
-                    .declare_function(name, Linkage::Export, &sig)
-                    .unwrap();
-                self.functions.insert(name.clone(), func_id);
+                    let func_id = self
+                        .module
+                        .declare_function(name, Linkage::Export, &sig)
+                        .unwrap_or_else(|_| self.module.declare_anonymous_function(&sig).unwrap());
+                    self.functions.insert(name.clone(), func_id);
+                }
+                _ => {}
             }
         }
 
@@ -168,6 +197,7 @@ impl CodeGen {
             var_map,
             var_counter,
             functions: &mut self.functions,
+            variant_map: &self.variant_map,
         };
 
         let mut last_val = None;
@@ -219,6 +249,7 @@ impl CodeGen {
             var_map: HashMap::new(),
             var_counter: 0,
             functions: &mut self.functions,
+            variant_map: &self.variant_map,
         };
 
         let mut has_return_stmt = false;
@@ -255,6 +286,7 @@ struct FnContext<'a> {
     var_map: HashMap<String, Variable>,
     var_counter: u32,
     functions: &'a mut HashMap<String, FuncId>,
+    variant_map: &'a HashMap<String, i64>,
 }
 
 impl<'a> FnContext<'a> {
@@ -348,6 +380,7 @@ impl<'a> FnContext<'a> {
                     BinOp::And => builder.ins().band(lhs, rhs),
                     BinOp::Or => builder.ins().bor(lhs, rhs),
                     BinOp::BitAnd => builder.ins().band(lhs, rhs),
+                    BinOp::BitOr => builder.ins().bor(lhs, rhs),
                     BinOp::Shl => builder.ins().ishl(lhs, rhs),
                     BinOp::Shr => builder.ins().ushr(lhs, rhs),
                 };
@@ -380,25 +413,12 @@ impl<'a> FnContext<'a> {
                     clean_name
                 };
 
-                if target_name == "add" || target_name == "sum" {
-                    if arg_vals.len() >= 2 {
-                        return Some(builder.ins().iadd(arg_vals[0], arg_vals[1]));
-                    }
-                } else if target_name == "sub" {
-                    if arg_vals.len() >= 2 {
-                        return Some(builder.ins().isub(arg_vals[0], arg_vals[1]));
-                    }
-                }
-
-                let is_variant = matches!(target_name, "Red" | "Green" | "Blue" | "Active" | "Locked" | "Spent" | "Int" | "Float" | "Bool" | "Ok" | "Err");
-                if is_variant {
+                if let Some(&disc) = self
+                    .variant_map
+                    .get(name)
+                    .or_else(|| self.variant_map.get(target_name))
+                {
                     return arg_vals.first().copied().or_else(|| {
-                        let disc = match target_name {
-                            "Red" | "Active" | "Int" | "Ok" => 0i64,
-                            "Green" | "Locked" | "Float" | "Err" => 1i64,
-                            "Blue" | "Spent" | "Bool" => 2i64,
-                            _ => 0i64,
-                        };
                         Some(builder.ins().iconst(ir::types::I64, disc))
                     });
                 }
@@ -586,12 +606,7 @@ impl<'a> FnContext<'a> {
                             builder.ins().iconst(ir::types::I8, 1)
                         }
                         Pattern::Variant { variant, binding, .. } => {
-                            let target_disc = match variant.as_str() {
-                                "Red" | "Active" | "Int" | "Ok" => 0i64,
-                                "Green" | "Locked" | "Float" | "Err" => 1i64,
-                                "Blue" | "Spent" | "Bool" => 2i64,
-                                _ => 0i64,
-                            };
+                            let target_disc = self.variant_map.get(variant).copied().unwrap_or(0i64);
                             let expected = builder.ins().iconst(ir::types::I64, target_disc);
                             let cond = builder.ins().icmp(ir::condcodes::IntCC::Equal, disc, expected);
                             if let Some(bname) = binding {

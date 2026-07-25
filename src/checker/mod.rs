@@ -16,6 +16,8 @@ pub struct LinearChecker {
     pub borrows: HashMap<String, Vec<String>>,
     pub lens_locked: std::collections::HashSet<String>,
     pub lens_aliases: std::collections::HashSet<String>,
+    pub mutables: std::collections::HashSet<String>,
+    pub unions: HashMap<String, Vec<(String, Option<TrackType>)>>,
     pub current_params: std::collections::HashSet<String>,
     pub current_return_type: Option<TrackType>,
 }
@@ -23,7 +25,9 @@ pub struct LinearChecker {
 fn is_copy_type(ty: &TrackType) -> bool {
     matches!(
         ty,
-        TrackType::I32
+        TrackType::U8
+            | TrackType::I8
+            | TrackType::I32
             | TrackType::U32
             | TrackType::I64
             | TrackType::U64
@@ -47,6 +51,8 @@ impl LinearChecker {
             borrows: HashMap::new(),
             lens_locked: std::collections::HashSet::new(),
             lens_aliases: std::collections::HashSet::new(),
+            mutables: std::collections::HashSet::new(),
+            unions: HashMap::new(),
             current_params: std::collections::HashSet::new(),
             current_return_type: None,
         }
@@ -415,7 +421,12 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::LetDef { name, ty, value } => {
+            Expr::LetDef {
+                name,
+                mutable,
+                ty,
+                value,
+            } => {
                 self.reject_lens_escape(value)?;
                 self.check_expr(value)?;
                 let inferred = self.infer_type(value);
@@ -426,6 +437,9 @@ impl LinearChecker {
                 };
 
                 self.declare(name.clone());
+                if *mutable {
+                    self.mutables.insert(name.clone());
+                }
                 self.types.insert(name.clone(), final_ty.clone());
 
                 if matches!(final_ty, TrackType::Ref(_)) {
@@ -588,8 +602,14 @@ impl LinearChecker {
             Expr::Assign { target, value } => {
                 self.reject_lens_escape(value)?;
                 self.check_expr(value)?;
-                // For simple variable assignment, re-activate the variable
+                // For simple variable assignment, check mutability and re-activate variable
                 if let Expr::Variable(name) = target.as_ref() {
+                    if !self.mutables.contains(name) && self.registry.contains_key(name) {
+                        return Err(format!(
+                            "Compile Error: Cannot mutate immutable variable '{}'. Use 'let mut {}' to declare a mutable variable.",
+                            name, name
+                        ));
+                    }
                     self.registry.insert(name.clone(), VariableState::Active);
                     if let Some(ty) = self.infer_type(value) {
                         self.types.insert(name.clone(), ty.clone());
