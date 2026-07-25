@@ -25,6 +25,17 @@ pub enum Expr {
         index: Box<Expr>,
     },
 
+    SliceIndex {
+        target: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+    },
+
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+    },
+
     AddressOf {
         target: Box<Expr>,
     },
@@ -121,6 +132,8 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackType {
+    U8,
+    I8,
     I32,
     U32,
     I64,
@@ -128,6 +141,7 @@ pub enum TrackType {
     Bool,
     Ptr(Box<TrackType>),
     Ref(Box<TrackType>),
+    Slice(Box<TrackType>),
     Array(Box<TrackType>, usize),
     Void,
     Custom(String),

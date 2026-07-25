@@ -208,14 +208,44 @@ impl Parser {
                     };
                 }
                 Some(Token::LBracket) => {
-                    // Array index: expr[index]
+                    // Array index: expr[index] or Slice index: expr[start..end]
                     self.advance();
-                    let index = self.parse_expr()?;
-                    self.expect(&Token::RBracket)?;
-                    expr = Expr::ArrayIndex {
-                        target: Box::new(expr),
-                        index: Box::new(index),
-                    };
+                    if self.peek() == Some(&Token::DotDot) {
+                        self.advance();
+                        let end = if self.peek() != Some(&Token::RBracket) {
+                            Some(Box::new(self.parse_expr()?))
+                        } else {
+                            None
+                        };
+                        self.expect(&Token::RBracket)?;
+                        expr = Expr::SliceIndex {
+                            target: Box::new(expr),
+                            start: None,
+                            end,
+                        };
+                    } else {
+                        let start_expr = self.parse_expr()?;
+                        if self.peek() == Some(&Token::DotDot) {
+                            self.advance();
+                            let end = if self.peek() != Some(&Token::RBracket) {
+                                Some(Box::new(self.parse_expr()?))
+                            } else {
+                                None
+                            };
+                            self.expect(&Token::RBracket)?;
+                            expr = Expr::SliceIndex {
+                                target: Box::new(expr),
+                                start: Some(Box::new(start_expr)),
+                                end,
+                            };
+                        } else {
+                            self.expect(&Token::RBracket)?;
+                            expr = Expr::ArrayIndex {
+                                target: Box::new(expr),
+                                index: Box::new(start_expr),
+                            };
+                        }
+                    }
                 }
                 Some(Token::LParen) => {
                     // Function call: expr(args)

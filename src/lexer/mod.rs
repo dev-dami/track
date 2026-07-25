@@ -47,6 +47,10 @@ pub enum Token {
     At,
 
     // Type keywords
+    #[token("u8")]
+    TyU8,
+    #[token("i8")]
+    TyI8,
     #[token("i32")]
     TyI32,
     #[token("u32")]
@@ -108,6 +112,8 @@ pub enum Token {
     FatArrow,
     #[token(";")]
     Semicolon,
+    #[token("..")]
+    DotDot,
     #[token(".")]
     Dot,
     #[token("_", priority = 3)]

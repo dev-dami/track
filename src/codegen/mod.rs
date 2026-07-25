@@ -623,6 +623,22 @@ impl<'a> FnContext<'a> {
                 last_val
             }
 
+            Expr::SliceIndex { target, start, .. } => {
+                let ptr = self.compile_expr(builder, module, target)?;
+                if let Some(s) = start {
+                    if let Some(start_val) = self.compile_expr(builder, module, s) {
+                        return Some(builder.ins().iadd(ptr, start_val));
+                    }
+                }
+                Some(ptr)
+            }
+
+            Expr::Range { start, end } => {
+                let s = self.compile_expr(builder, module, start)?;
+                let e = self.compile_expr(builder, module, end)?;
+                Some(builder.ins().isub(e, s))
+            }
+
             _ => None,
         }
     }
@@ -630,11 +646,12 @@ impl<'a> FnContext<'a> {
 
 fn track_type_to_cl(ty: &TrackType) -> ir::Type {
     match ty {
+        TrackType::U8 | TrackType::I8 => ir::types::I8,
         TrackType::I32 | TrackType::U32 => ir::types::I32,
         TrackType::I64 | TrackType::U64 => ir::types::I64,
         TrackType::Bool => ir::types::I8,
         TrackType::Void => ir::types::I32,
-        TrackType::Ptr(_) | TrackType::Ref(_) => ir::types::I64,
+        TrackType::Ptr(_) | TrackType::Ref(_) | TrackType::Slice(_) => ir::types::I64,
         TrackType::Array(_, _) => ir::types::I64,
         TrackType::Custom(_) => ir::types::I64,
     }

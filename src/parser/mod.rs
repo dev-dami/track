@@ -53,6 +53,14 @@ impl Parser {
 
     pub fn parse_type(&mut self) -> Result<TrackType, String> {
         match self.peek().cloned() {
+            Some(Token::TyU8) => {
+                self.advance();
+                Ok(TrackType::U8)
+            }
+            Some(Token::TyI8) => {
+                self.advance();
+                Ok(TrackType::I8)
+            }
             Some(Token::TyI32) => {
                 self.advance();
                 Ok(TrackType::I32)
@@ -95,17 +103,28 @@ impl Parser {
             }
             Some(Token::LBracket) => {
                 self.advance();
-                let elem_type = self.parse_type()?;
-                self.expect(&Token::Semicolon)?;
-                match self.advance() {
-                    Some((Token::Int(n), _)) => {
-                        self.expect(&Token::RBracket)?;
-                        Ok(TrackType::Array(Box::new(elem_type), n as usize))
+                if self.peek() == Some(&Token::RBracket) {
+                    self.advance();
+                    let elem_type = self.parse_type()?;
+                    Ok(TrackType::Slice(Box::new(elem_type)))
+                } else {
+                    let elem_type = self.parse_type()?;
+                    if self.peek() == Some(&Token::RBracket) {
+                        self.advance();
+                        Ok(TrackType::Slice(Box::new(elem_type)))
+                    } else {
+                        self.expect(&Token::Semicolon)?;
+                        match self.advance() {
+                            Some((Token::Int(n), _)) => {
+                                self.expect(&Token::RBracket)?;
+                                Ok(TrackType::Array(Box::new(elem_type), n as usize))
+                            }
+                            other => Err(format!(
+                                "Parser error: expected array size, got {:?}",
+                                other.map(|(t, _)| t)
+                            )),
+                        }
                     }
-                    other => Err(format!(
-                        "Parser error: expected array size, got {:?}",
-                        other.map(|(t, _)| t)
-                    )),
                 }
             }
             other => Err(format!("Parser error: expected type, got {:?}", other)),

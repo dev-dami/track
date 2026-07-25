@@ -47,6 +47,24 @@ fn test_parse_let_def() {
 }
 
 #[test]
+fn test_parse_slice_type_and_indexing() {
+    let source = "let s: []u8 = arr[0..5];";
+    let ast = parse(source);
+    assert_eq!(
+        ast,
+        vec![Expr::LetDef {
+            name: "s".to_string(),
+            ty: Some(TrackType::Slice(Box::new(TrackType::U8))),
+            value: Box::new(Expr::SliceIndex {
+                target: Box::new(Expr::Variable("arr".to_string())),
+                start: Some(Box::new(Expr::IntLiteral(0))),
+                end: Some(Box::new(Expr::IntLiteral(5))),
+            }),
+        }]
+    );
+}
+
+#[test]
 fn test_parse_struct_and_lens() {
     let source = "let u = User { age: 30 }; with u -> user { user.set_age(31); }";
     let ast = parse(source);

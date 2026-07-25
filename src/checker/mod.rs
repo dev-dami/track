@@ -286,13 +286,28 @@ impl LinearChecker {
             Expr::ArrayIndex { target, .. } => match self.infer_type(target) {
                 Some(TrackType::Array(inner, _)) => Some(*inner),
                 Some(TrackType::Ptr(inner)) => Some(*inner),
+                Some(TrackType::Slice(inner)) => Some(*inner),
                 Some(TrackType::Ref(inner)) => match *inner {
                     TrackType::Array(elem, _) => Some(*elem),
                     TrackType::Ptr(elem) => Some(*elem),
+                    TrackType::Slice(elem) => Some(*elem),
                     other => Some(other),
                 },
                 _ => None,
             },
+            Expr::SliceIndex { target, .. } => match self.infer_type(target) {
+                Some(TrackType::Array(inner, _)) => Some(TrackType::Slice(inner)),
+                Some(TrackType::Slice(inner)) => Some(TrackType::Slice(inner)),
+                Some(TrackType::Ptr(inner)) => Some(TrackType::Slice(inner)),
+                Some(TrackType::Ref(inner)) => match *inner {
+                    TrackType::Array(elem, _) => Some(TrackType::Slice(elem)),
+                    TrackType::Slice(elem) => Some(TrackType::Slice(elem)),
+                    TrackType::Ptr(elem) => Some(TrackType::Slice(elem)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            Expr::Range { .. } => Some(TrackType::Void),
             Expr::AddressOf { target } => {
                 self.infer_type(target).map(|t| TrackType::Ref(Box::new(t)))
             }
@@ -350,6 +365,23 @@ impl LinearChecker {
                 // Array index borrows both target and index
                 self.check_borrow(target)?;
                 self.check_borrow(index)?;
+                Ok(())
+            }
+
+            Expr::SliceIndex { target, start, end } => {
+                self.check_borrow(target)?;
+                if let Some(s) = start {
+                    self.check_borrow(s)?;
+                }
+                if let Some(e) = end {
+                    self.check_borrow(e)?;
+                }
+                Ok(())
+            }
+
+            Expr::Range { start, end } => {
+                self.check_borrow(start)?;
+                self.check_borrow(end)?;
                 Ok(())
             }
 
@@ -991,6 +1023,13 @@ impl LinearChecker {
             Expr::ArrayIndex { target, index } => self
                 .find_lens_alias(target)
                 .or_else(|| self.find_lens_alias(index)),
+            Expr::SliceIndex { target, start, end } => self
+                .find_lens_alias(target)
+                .or_else(|| start.as_deref().and_then(|s| self.find_lens_alias(s)))
+                .or_else(|| end.as_deref().and_then(|e| self.find_lens_alias(e))),
+            Expr::Range { start, end } => self
+                .find_lens_alias(start)
+                .or_else(|| self.find_lens_alias(end)),
             Expr::StructInitialization { fields, .. } => fields
                 .iter()
                 .find_map(|(_, value)| self.find_lens_alias(value)),
