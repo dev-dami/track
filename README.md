@@ -1,11 +1,13 @@
-# Track
+# Track (v0.1.6)
 
 **Track** is a low-level systems programming language designed for deterministic memory management, zero-cost abstractions, and real-time execution.
 
 - **No Garbage Collector, No Runtime.** Resource lifecycles are verified and freed at compile time.
 - **Linear Ownership.** Eliminates use-after-free, double-free, and memory leaks.
 - **Lexical Lenses.** Scoped mutable access without manual pointer arithmetic or ownership transfer.
-- **Direct LLVM Backend.** Compiles directly to optimized native machine code.
+- **Cranelift Standalone Backend.** Fast, lightweight compilation producing standalone binaries without requiring system LLVM dynamic libraries.
+- **First-Class Slices (`[]T`).** Native fat views `{ ptr, len }` with sub-slicing `arr[start..end]`.
+- **Parallel Yard Builder.** Multi-threaded build system with SHA-256 incremental caching and fast linker auto-detection (`mold` / `lld`).
 
 ## Hello World
 

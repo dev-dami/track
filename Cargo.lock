@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "track"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",

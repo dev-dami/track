@@ -36,6 +36,9 @@ fn main() {
                 }
             }
         }
+        "--version" | "-v" | "version" => {
+            println!("track 0.1.6");
+        }
         "--help" | "-h" | "help" => {
             print_usage();
         }
@@ -52,13 +55,14 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Track — Systems programming with linear types\n");
+    eprintln!("Track v0.1.6 — Systems programming with linear types\n");
     eprintln!("USAGE:");
     eprintln!("    track build <file.trk>    Compile to native executable");
     eprintln!("    track run <file.trk>      Compile and run");
     eprintln!("    track check <file.trk>    Type-check only (no codegen)");
     eprintln!("    track yard <command>      Package manager");
     eprintln!("    track <file.trk>          Same as 'track build'");
+    eprintln!("    track --version           Show version info");
     eprintln!("    track help                Show this help");
 }
 

@@ -5,7 +5,16 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] — 2026-06-28
+## [0.1.6] — 2026-07-25
+
+### Added
+- **Cranelift Standalone Backend**: Migrated primary compiler backend to Cranelift 0.108 (`ObjectModule`), eliminating system LLVM dynamic library dependencies and generating fast standalone native executables.
+- **First-Class Slices (`[]T`)**: Added native slice type support `{ ptr, len }` for slice types like `[]u8`, `[]i64`.
+- **Sub-slicing Syntax (`a[start..end]`)**: Added range sub-slicing over arrays and slices with `a[0..5]`, `a[start..]`, `a[..end]`, and `a[..]`.
+- **8-Bit Integer Types (`u8`, `i8`)**: Added `u8` and `i8` keywords, AST types, type checking, and Cranelift IR lowering.
+- **Yard Parallel Builder & Cache**: Multi-threaded worker pool (`ParallelBuilder`), SHA-256 fingerprinting cache (`BuildCache`), and fast linker auto-detection (`mold` / `lld`).
+- **CLI Command `--version`**: Added `track --version` / `-v` flag outputting current compiler version.
+- **Example Program**: Added `examples/slice_and_types.trk`.
 
 ### Added
 - **LSP Server**: Added `track-lsp` binary implementing Language Server Protocol for IDE support.
