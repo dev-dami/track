@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-const RUNTIME_C_SOURCE: &str = r#"
+pub const RUNTIME_C_SOURCE: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +80,9 @@ long long clock_ms(void) {
 void sys_exit(int code) {
     exit(code);
 }
+void print(long long val) {
+    printf("%lld\n", val);
+}
 "#;
 
 /// Compile source string through Lexer -> Parser -> LinearChecker pipeline.
@@ -99,8 +102,7 @@ pub fn build_file_in_dir(filename: &str, out_dir: &Path) -> Result<PathBuf, Stri
 
     let program = compile_source(&source)?;
 
-    let context = inkwell::context::Context::create();
-    let mut cg = codegen::CodeGen::new(&context, "track_module");
+    let mut cg = codegen::CodeGen::new("track_module");
     cg.compile_program(&program);
 
     let stem = Path::new(filename)

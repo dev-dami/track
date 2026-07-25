@@ -152,8 +152,8 @@ impl ParallelBuilder {
                             .check_program(&program)
                             .map_err(|e| format!("{}: {}", task.trk_file.display(), e))?;
 
-                        let context = inkwell::context::Context::create();
-                        let mut codegen = crate::codegen::CodeGen::new(&context, "track_module");
+                        let mod_name = task.trk_file.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
+                        let mut codegen = crate::codegen::CodeGen::new(mod_name);
                         codegen.compile_program(&program);
 
                         codegen.write_object_file(&task.obj_path)?;

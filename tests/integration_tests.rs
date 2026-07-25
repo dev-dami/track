@@ -23,6 +23,7 @@ fn test_valid_examples_compilation_and_execution() {
     let examples_dir = Path::new(&manifest_dir).join("examples");
 
     for example in examples {
+        println!("Testing example: {}", example);
         let example_path = examples_dir.join(example);
         assert!(
             example_path.exists(),

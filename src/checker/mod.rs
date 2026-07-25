@@ -676,8 +676,8 @@ impl LinearChecker {
 
                 let default_ns = path.split('/').next_back().unwrap_or(path);
 
-                if let Some(ref alias_name) = alias {
-                    if let Some(ref items) = imports {
+                if let Some(alias_name) = alias {
+                    if let Some(items) = imports {
                         if items.len() == 1 {
                             let item_name = &items[0];
                             if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name)
@@ -713,7 +713,7 @@ impl LinearChecker {
                         }
                     }
                 } else {
-                    if let Some(ref items) = imports {
+                    if let Some(items) = imports {
                         for item_name in items {
                             if let Some((_, ret_ty)) = provided.iter().find(|(n, _)| n == item_name)
                             {
@@ -801,7 +801,7 @@ impl LinearChecker {
                     self.check_expr(arg)?;
                 }
 
-                if let Some(ref block_body) = body {
+                if let Some(block_body) = body {
                     for stmt in block_body {
                         self.check_expr(stmt)?;
                         self.update_borrow_states();
@@ -820,7 +820,7 @@ impl LinearChecker {
                     self.types
                         .insert(fullname.clone(), TrackType::Custom(name.clone()));
                     self.declare(fullname);
-                    if let Some(ref val) = val_opt {
+                    if let Some(val) = val_opt {
                         self.check_expr(val)?;
                     }
                 }

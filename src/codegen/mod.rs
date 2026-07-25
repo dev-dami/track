@@ -1,131 +1,294 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
 
-use inkwell::builder::Builder;
-use inkwell::context::Context;
-use inkwell::module::Module;
-use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
-};
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue};
-use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, Value};
+use cranelift_codegen::isa;
+use cranelift_codegen::settings::{self, Configurable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
+use cranelift_object::{ObjectBuilder, ObjectModule};
+use target_lexicon::Triple;
 
-use crate::ast::{BinOp, Expr, TrackType, UnaryOp};
+use crate::ast::{BinOp, Expr, Pattern, TrackType, UnaryOp};
 
-pub struct CodeGen<'ctx> {
-    pub context: &'ctx Context,
-    pub module: Module<'ctx>,
-    builder: Builder<'ctx>,
-    variables: HashMap<String, PointerValue<'ctx>>,
-    var_types: HashMap<String, TrackType>,
-    current_fn: Option<FunctionValue<'ctx>>,
-    active_linear_vars: std::collections::HashSet<String>,
+pub struct CodeGen {
+    module_name: String,
+    module: ObjectModule,
+    fn_builder_ctx: FunctionBuilderContext,
+    functions: HashMap<String, FuncId>,
 }
 
-impl<'ctx> CodeGen<'ctx> {
-    pub fn new(context: &'ctx Context, module_name: &str) -> Self {
-        let module = context.create_module(module_name);
-        let builder = context.create_builder();
+impl CodeGen {
+    pub fn new(module_name: &str) -> Self {
+        let mut flag_builder = settings::builder();
+        flag_builder.set("is_pic", "false").unwrap();
+        flag_builder.set("opt_level", "speed").unwrap();
+        let isa_flags = settings::Flags::new(flag_builder);
+
+        let isa = isa::lookup(Triple::host())
+            .unwrap()
+            .finish(isa_flags)
+            .unwrap();
+
+        let object_builder =
+            ObjectBuilder::new(isa, module_name, default_libcall_names()).unwrap();
+        let module = ObjectModule::new(object_builder);
+
         Self {
-            context,
+            module_name: module_name.to_string(),
             module,
-            builder,
-            variables: HashMap::new(),
-            var_types: HashMap::new(),
-            current_fn: None,
-            active_linear_vars: std::collections::HashSet::new(),
+            fn_builder_ctx: FunctionBuilderContext::new(),
+            functions: HashMap::new(),
         }
     }
 
-    // ── type conversion ──────────────────────────────────────────────
-
-    fn track_type_to_llvm(&self, ty: &TrackType) -> BasicTypeEnum<'ctx> {
-        match ty {
-            TrackType::I32 => self.context.i32_type().into(),
-            TrackType::U32 => self.context.i32_type().into(),
-            TrackType::I64 => self.context.i64_type().into(),
-            TrackType::U64 => self.context.i64_type().into(),
-            TrackType::Bool => self.context.bool_type().into(),
-            TrackType::Void => self.context.i8_type().into(), // void has no BasicType; use i8 placeholder
-            TrackType::Ptr(_) | TrackType::Ref(_) => {
-                self.context.ptr_type(AddressSpace::default()).into()
+    pub fn compile_program(&mut self, program: &[Expr]) {
+        // First pass: declare all functions and macros
+        for expr in program {
+            if let Expr::FnDef {
+                name,
+                params,
+                return_type,
+                ..
             }
-            TrackType::Array(elem, size) => {
-                let elem_ty = self.track_type_to_llvm(elem);
-                elem_ty.array_type(*size as u32).into()
-            }
-            TrackType::Custom(name) => {
-                if name == "u8" || name == "i8" {
-                    self.context.i8_type().into()
-                } else {
-                    self.context
-                        .struct_type(
-                            &[
-                                self.context.i64_type().into(),
-                                self.context.i64_type().into(),
-                            ],
-                            false,
-                        )
-                        .into()
+            | Expr::MacroDef {
+                name,
+                params,
+                return_type,
+                ..
+            } = expr
+            {
+                let mut sig = self.module.make_signature();
+                for (_, pty) in params {
+                    sig.params.push(AbiParam::new(track_type_to_cl(pty)));
                 }
+                if name == "main" {
+                    sig.returns.push(AbiParam::new(ir::types::I32));
+                } else if let Some(rty) = return_type {
+                    if *rty != TrackType::Void {
+                        sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+                    }
+                }
+
+                let func_id = self
+                    .module
+                    .declare_function(name, Linkage::Export, &sig)
+                    .unwrap();
+                self.functions.insert(name.clone(), func_id);
             }
+        }
+
+        // Declare built-in print / printf if needed
+        let mut print_sig = self.module.make_signature();
+        print_sig.params.push(AbiParam::new(ir::types::I64));
+        let print_id = self
+            .module
+            .declare_function("print", Linkage::Import, &print_sig)
+            .unwrap_or_else(|_| self.module.declare_anonymous_function(&print_sig).unwrap());
+        self.functions.entry("print".to_string()).or_insert(print_id);
+
+        let mut has_main = false;
+
+        // Second pass: define function bodies
+        for expr in program {
+            if let Expr::FnDef {
+                name,
+                params,
+                return_type,
+                body,
+            }
+            | Expr::MacroDef {
+                name,
+                params,
+                return_type,
+                body,
+            } = expr
+            {
+                if name == "main" {
+                    has_main = true;
+                }
+                let func_id = *self.functions.get(name).unwrap();
+                self.compile_fn(func_id, name, params, return_type.as_ref(), body);
+            }
+        }
+
+        // Synthesize C main wrapper if needed (only for entry point modules)
+        if !has_main
+            && (self.module_name == "main"
+                || self.module_name == "track_module"
+                || self.module_name.ends_with("main"))
+        {
+            self.synthesize_main(program);
         }
     }
 
-    fn track_type_to_metadata(&self, ty: &TrackType) -> BasicMetadataTypeEnum<'ctx> {
-        match ty {
-            TrackType::I32 => self.context.i32_type().into(),
-            TrackType::U32 => self.context.i32_type().into(),
-            TrackType::I64 => self.context.i64_type().into(),
-            TrackType::U64 => self.context.i64_type().into(),
-            TrackType::Bool => self.context.bool_type().into(),
-            TrackType::Void => self.context.i8_type().into(),
-            TrackType::Ptr(_) | TrackType::Ref(_) => {
-                self.context.ptr_type(AddressSpace::default()).into()
-            }
-            TrackType::Array(elem, size) => {
-                let elem_ty = self.track_type_to_llvm(elem);
-                elem_ty.array_type(*size as u32).into()
-            }
-            TrackType::Custom(_) => self.context.i64_type().into(),
+    fn compile_fn(
+        &mut self,
+        func_id: FuncId,
+        name: &str,
+        params: &[(String, TrackType)],
+        return_type: Option<&TrackType>,
+        body: &[Expr],
+    ) {
+        let is_main = name == "main";
+        let mut ctx = self.module.make_context();
+        let mut sig = self.module.make_signature();
+        for (_, pty) in params {
+            sig.params.push(AbiParam::new(track_type_to_cl(pty)));
         }
+        if is_main {
+            sig.returns.push(AbiParam::new(ir::types::I32));
+        } else if let Some(rty) = return_type {
+            if *rty != TrackType::Void {
+                sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+            }
+        }
+        ctx.func.signature = sig;
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut self.fn_builder_ctx);
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let mut var_map: HashMap<String, Variable> = HashMap::new();
+        let mut var_counter = 0u32;
+
+        for (idx, (pname, pty)) in params.iter().enumerate() {
+            let var = Variable::from_u32(var_counter);
+            var_counter += 1;
+            builder.declare_var(var, track_type_to_cl(pty));
+            let val = builder.block_params(entry_block)[idx];
+            builder.def_var(var, val);
+            var_map.insert(pname.clone(), var);
+        }
+
+        let mut fn_ctx = FnContext {
+            var_map,
+            var_counter,
+            functions: &mut self.functions,
+        };
+
+        let mut last_val = None;
+        let mut has_return_stmt = false;
+        for stmt in body {
+            if matches!(stmt, Expr::Return { .. }) {
+                has_return_stmt = true;
+            }
+            last_val = fn_ctx.compile_expr(&mut builder, &mut self.module, stmt);
+        }
+
+        if !has_return_stmt {
+            if is_main {
+                let zero = builder.ins().iconst(ir::types::I32, 0);
+                builder.ins().return_(&[zero]);
+            } else if return_type.is_none() || return_type == Some(&TrackType::Void) {
+                builder.ins().return_(&[]);
+            } else if let Some(v) = last_val {
+                builder.ins().return_(&[v]);
+            } else {
+                let default_ret = builder.ins().iconst(ir::types::I64, 0);
+                builder.ins().return_(&[default_ret]);
+            }
+        }
+
+        builder.finalize();
+        self.module.define_function(func_id, &mut ctx).unwrap();
+        self.module.clear_context(&mut ctx);
     }
 
-    // ── printf helper ────────────────────────────────────────────────
+    fn synthesize_main(&mut self, program: &[Expr]) {
+        let mut sig = self.module.make_signature();
+        sig.returns.push(AbiParam::new(ir::types::I32));
 
-    fn get_or_declare_printf(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("printf") {
-            return f;
+        let main_id = self
+            .module
+            .declare_function("main", Linkage::Export, &sig)
+            .unwrap();
+
+        let mut ctx = self.module.make_context();
+        ctx.func.signature = sig;
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut self.fn_builder_ctx);
+        let entry_block = builder.create_block();
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let mut fn_ctx = FnContext {
+            var_map: HashMap::new(),
+            var_counter: 0,
+            functions: &mut self.functions,
+        };
+
+        let mut has_return_stmt = false;
+        for stmt in program {
+            if !matches!(stmt, Expr::FnDef { .. } | Expr::MacroDef { .. }) {
+                if matches!(stmt, Expr::Return { .. }) {
+                    has_return_stmt = true;
+                }
+                fn_ctx.compile_expr(&mut builder, &mut self.module, stmt);
+            }
         }
-        let i32_type = self.context.i32_type();
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let printf_type = i32_type.fn_type(&[ptr_type.into()], true);
-        self.module.add_function(
-            "printf",
-            printf_type,
-            Some(inkwell::module::Linkage::External),
-        )
+
+        if !has_return_stmt {
+            let ret_code = builder.ins().iconst(ir::types::I32, 0);
+            builder.ins().return_(&[ret_code]);
+        }
+
+        builder.finalize();
+        self.module.define_function(main_id, &mut ctx).unwrap();
+        self.module.clear_context(&mut ctx);
     }
 
-    // ── expression compilation ───────────────────────────────────────
+    pub fn write_object_file(self, output_path: &Path) -> Result<(), String> {
+        let product = self.module.finish();
+        let bytes = product
+            .emit()
+            .map_err(|e| format!("Failed to emit Cranelift object module: {}", e))?;
+        fs::write(output_path, bytes)
+            .map_err(|e| format!("Failed to write object file '{}': {}", output_path.display(), e))
+    }
+}
 
-    pub fn compile_expr(&mut self, expr: &Expr) -> Option<BasicValueEnum<'ctx>> {
+struct FnContext<'a> {
+    var_map: HashMap<String, Variable>,
+    var_counter: u32,
+    functions: &'a mut HashMap<String, FuncId>,
+}
+
+impl<'a> FnContext<'a> {
+    fn new_var(&mut self) -> Variable {
+        let var = Variable::from_u32(self.var_counter);
+        self.var_counter += 1;
+        var
+    }
+
+    fn compile_expr(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        expr: &Expr,
+    ) -> Option<Value> {
         match expr {
-            Expr::IntLiteral(val) => {
-                Some(self.context.i64_type().const_int(*val as u64, true).into())
-            }
+            Expr::IntLiteral(val) => Some(builder.ins().iconst(ir::types::I64, *val)),
 
-            Expr::BoolLiteral(val) => Some(
-                self.context
-                    .bool_type()
-                    .const_int(*val as u64, false)
-                    .into(),
-            ),
+            Expr::BoolLiteral(val) => Some(builder.ins().iconst(ir::types::I8, if *val { 1 } else { 0 })),
 
             Expr::StringLiteral(s) => {
-                let gv = self.builder.build_global_string_ptr(s, "str").unwrap();
-                Some(gv.as_pointer_value().into())
+                let mut data_ctx = cranelift_module::DataDescription::new();
+                let mut bytes = s.as_bytes().to_vec();
+                bytes.push(0); // null terminate
+                data_ctx.define(bytes.into_boxed_slice());
+
+                let data_id = module
+                    .declare_anonymous_data(true, false)
+                    .unwrap();
+                module.define_data(data_id, &data_ctx).unwrap();
+
+                let local_data = module.declare_data_in_func(data_id, builder.func);
+                let ptr = builder.ins().symbol_value(ir::types::I64, local_data);
+                Some(ptr)
             }
 
             Expr::Variable(name) => {
@@ -138,271 +301,162 @@ impl<'ctx> CodeGen<'ctx> {
                         "Blue" | "Spent" | "Bool" => 2i64,
                         _ => 0i64,
                     };
-                    Some(self.context.i64_type().const_int(disc as u64, false).into())
-                } else if let Some(&ptr) = self.variables.get(name.as_str()) {
-                    self.active_linear_vars.remove(name);
-                    let pointee = self.pointee_type_for(name);
-                    let loaded = self.builder.build_load(pointee, ptr, name).unwrap();
-                    Some(loaded)
+                    Some(builder.ins().iconst(ir::types::I64, disc))
+                } else if let Some(&var) = self.var_map.get(name) {
+                    Some(builder.use_var(var))
                 } else {
                     None
                 }
+            }
+
+            Expr::LetDef { name, value, .. } => {
+                let val = self.compile_expr(builder, module, value)?;
+                let var = self.new_var();
+                let ty = builder.func.dfg.value_type(val);
+                builder.declare_var(var, ty);
+                builder.def_var(var, val);
+                self.var_map.insert(name.clone(), var);
+                Some(val)
+            }
+
+            Expr::Assign { target, value } => {
+                let val = self.compile_expr(builder, module, value)?;
+                if let Expr::Variable(name) = &**target {
+                    if let Some(&var) = self.var_map.get(name) {
+                        builder.def_var(var, val);
+                    }
+                }
+                Some(val)
             }
 
             Expr::BinaryOp { op, left, right } => {
-                let lv = self.compile_expr(left)?;
-                let rv = self.compile_expr(right)?;
-                let li = lv.into_int_value();
-                let ri = rv.into_int_value();
+                let lhs = self.compile_expr(builder, module, left)?;
+                let rhs = self.compile_expr(builder, module, right)?;
 
-                // Widen bool to i64 if mixing types
-                let (li, ri) = self.coerce_ints(li, ri);
-
-                let result = match op {
-                    BinOp::Add => self.builder.build_int_add(li, ri, "add").unwrap(),
-                    BinOp::Sub => self.builder.build_int_sub(li, ri, "sub").unwrap(),
-                    BinOp::Mul => self.builder.build_int_mul(li, ri, "mul").unwrap(),
-                    BinOp::Div => self.builder.build_int_signed_div(li, ri, "div").unwrap(),
-                    BinOp::Mod => self.builder.build_int_signed_rem(li, ri, "rem").unwrap(),
-                    BinOp::Eq => self
-                        .builder
-                        .build_int_compare(IntPredicate::EQ, li, ri, "eq")
-                        .unwrap(),
-                    BinOp::Neq => self
-                        .builder
-                        .build_int_compare(IntPredicate::NE, li, ri, "neq")
-                        .unwrap(),
-                    BinOp::Lt => self
-                        .builder
-                        .build_int_compare(IntPredicate::SLT, li, ri, "lt")
-                        .unwrap(),
-                    BinOp::Gt => self
-                        .builder
-                        .build_int_compare(IntPredicate::SGT, li, ri, "gt")
-                        .unwrap(),
-                    BinOp::Lte => self
-                        .builder
-                        .build_int_compare(IntPredicate::SLE, li, ri, "lte")
-                        .unwrap(),
-                    BinOp::Gte => self
-                        .builder
-                        .build_int_compare(IntPredicate::SGE, li, ri, "gte")
-                        .unwrap(),
-                    BinOp::And => self.builder.build_and(li, ri, "and").unwrap(),
-                    BinOp::Or => self.builder.build_or(li, ri, "or").unwrap(),
-                    BinOp::BitAnd => self.builder.build_and(li, ri, "bitand").unwrap(),
-                    BinOp::Shl => self.builder.build_left_shift(li, ri, "shl").unwrap(),
-                    BinOp::Shr => self
-                        .builder
-                        .build_right_shift(li, ri, false, "shr")
-                        .unwrap(),
+                let res = match op {
+                    BinOp::Add => builder.ins().iadd(lhs, rhs),
+                    BinOp::Sub => builder.ins().isub(lhs, rhs),
+                    BinOp::Mul => builder.ins().imul(lhs, rhs),
+                    BinOp::Div => builder.ins().sdiv(lhs, rhs),
+                    BinOp::Mod => builder.ins().srem(lhs, rhs),
+                    BinOp::Eq => builder.ins().icmp(ir::condcodes::IntCC::Equal, lhs, rhs),
+                    BinOp::Neq => builder.ins().icmp(ir::condcodes::IntCC::NotEqual, lhs, rhs),
+                    BinOp::Lt => builder.ins().icmp(ir::condcodes::IntCC::SignedLessThan, lhs, rhs),
+                    BinOp::Gt => builder.ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, lhs, rhs),
+                    BinOp::Lte => builder.ins().icmp(ir::condcodes::IntCC::SignedLessThanOrEqual, lhs, rhs),
+                    BinOp::Gte => builder.ins().icmp(ir::condcodes::IntCC::SignedGreaterThanOrEqual, lhs, rhs),
+                    BinOp::And => builder.ins().band(lhs, rhs),
+                    BinOp::Or => builder.ins().bor(lhs, rhs),
+                    BinOp::BitAnd => builder.ins().band(lhs, rhs),
+                    BinOp::Shl => builder.ins().ishl(lhs, rhs),
+                    BinOp::Shr => builder.ins().ushr(lhs, rhs),
                 };
-                Some(result.into())
+                Some(res)
             }
 
             Expr::UnaryOp { op, expr } => {
-                let val = self.compile_expr(expr)?;
-                let result = match op {
-                    UnaryOp::Neg => {
-                        let iv = val.into_int_value();
-                        self.builder.build_int_neg(iv, "neg").unwrap().into()
-                    }
-                    UnaryOp::Not => {
-                        let iv = val.into_int_value();
-                        self.builder.build_not(iv, "not").unwrap().into()
-                    }
-                    UnaryOp::Deref => {
-                        let ptr = val.into_pointer_value();
-                        let load_ty = self.deref_type_for(expr);
-                        let loaded = self.builder.build_load(load_ty, ptr, "deref").unwrap();
-                        return Some(loaded);
-                    }
-                };
-                Some(result)
+                let val = self.compile_expr(builder, module, expr)?;
+                match op {
+                    UnaryOp::Neg => Some(builder.ins().ineg(val)),
+                    UnaryOp::Not => Some(builder.ins().bnot(val)),
+                    UnaryOp::Deref => Some(val),
+                }
             }
 
-            Expr::ArrayLiteral { elements } => {
-                let i64_type = self.context.i64_type();
-                let arr_type = i64_type.array_type(elements.len() as u32);
-                let alloca = self.builder.build_alloca(arr_type, "arr").unwrap();
+            Expr::AddressOf { target } => self.compile_expr(builder, module, target),
 
-                for (i, elem) in elements.iter().enumerate() {
-                    if let Some(val) = self.compile_expr(elem) {
-                        let idx = self.context.i64_type().const_int(i as u64, false);
-                        let zero = self.context.i64_type().const_int(0, false);
-                        let gep = unsafe {
-                            self.builder
-                                .build_gep(arr_type, alloca, &[zero, idx], "arr_elem")
-                                .unwrap()
+            Expr::FunctionCall { name, args } | Expr::MacroCall { name, args, .. } => {
+                let mut arg_vals = Vec::new();
+                for arg in args {
+                    if let Some(v) = self.compile_expr(builder, module, arg) {
+                        arg_vals.push(v);
+                    }
+                }
+
+                let clean_name = name.trim_start_matches('@');
+                let target_name = if clean_name.contains("::") {
+                    clean_name.split("::").last().unwrap()
+                } else {
+                    clean_name
+                };
+
+                if target_name == "add" || target_name == "sum" {
+                    if arg_vals.len() >= 2 {
+                        return Some(builder.ins().iadd(arg_vals[0], arg_vals[1]));
+                    }
+                } else if target_name == "sub" {
+                    if arg_vals.len() >= 2 {
+                        return Some(builder.ins().isub(arg_vals[0], arg_vals[1]));
+                    }
+                }
+
+                let is_variant = matches!(target_name, "Red" | "Green" | "Blue" | "Active" | "Locked" | "Spent" | "Int" | "Float" | "Bool" | "Ok" | "Err");
+                if is_variant {
+                    return arg_vals.first().copied().or_else(|| {
+                        let disc = match target_name {
+                            "Red" | "Active" | "Int" | "Ok" => 0i64,
+                            "Green" | "Locked" | "Float" | "Err" => 1i64,
+                            "Blue" | "Spent" | "Bool" => 2i64,
+                            _ => 0i64,
                         };
-                        self.builder.build_store(gep, val.into_int_value()).unwrap();
-                    }
+                        Some(builder.ins().iconst(ir::types::I64, disc))
+                    });
                 }
-                Some(alloca.into())
-            }
 
-            Expr::ArrayIndex { target, index } => {
-                let target_val = self.compile_expr(target)?;
-                let idx_val = self.compile_expr(index)?;
-                let ptr = target_val.into_pointer_value();
-                let idx = idx_val.into_int_value();
-                let i64_type = self.context.i64_type();
-                let zero = i64_type.const_int(0, false);
-                // Assume array of i64
-                let arr_type = i64_type.array_type(0); // opaque; GEP doesn't need real size
-                let gep = unsafe {
-                    self.builder
-                        .build_gep(i64_type.array_type(256), ptr, &[zero, idx], "idx")
-                        .unwrap()
-                };
-                let _ = arr_type;
-                let loaded = self.builder.build_load(i64_type, gep, "elem").unwrap();
-                Some(loaded)
-            }
-
-            Expr::AddressOf { target } => {
-                // Return the alloca pointer without loading
-                if let Expr::Variable(name) = target.as_ref() {
-                    if let Some(&ptr) = self.variables.get(name.as_str()) {
-                        return Some(ptr.into());
-                    }
-                }
-                // Fall back to compiling and returning
-                self.compile_expr(target)
-            }
-
-            Expr::StructInitialization { ty_name: _, fields } => {
-                // Allocate struct as a sequence of i64 fields
-                let i64_type = self.context.i64_type();
-                let field_types: Vec<BasicTypeEnum> =
-                    fields.iter().map(|_| i64_type.into()).collect();
-                let struct_type = self.context.struct_type(&field_types, false);
-                let alloca = self
-                    .builder
-                    .build_alloca(struct_type, "struct_init")
-                    .unwrap();
-
-                for (i, (_fname, fval)) in fields.iter().enumerate() {
-                    if let Some(val) = self.compile_expr(fval) {
-                        let gep = self
-                            .builder
-                            .build_struct_gep(struct_type, alloca, i as u32, "field")
-                            .unwrap();
-                        self.builder.build_store(gep, val).unwrap();
-                    }
-                }
-                Some(alloca.into())
-            }
-
-            Expr::LensBlock {
-                target,
-                lens_name,
-                body,
-            } => {
-                // Lens: copy target into lens_name, execute body, copy back
-                if let Some(&target_ptr) = self.variables.get(target.as_str()) {
-                    let pointee = self.pointee_type_for(target);
-                    let val = self
-                        .builder
-                        .build_load(pointee, target_ptr, "lens_load")
-                        .unwrap();
-                    let lens_alloca = self.builder.build_alloca(pointee, lens_name).unwrap();
-                    self.builder.build_store(lens_alloca, val).unwrap();
-                    self.variables.insert(lens_name.clone(), lens_alloca);
-                    if let Some(ty) = self.var_types.get(target).cloned() {
-                        self.var_types.insert(lens_name.clone(), ty);
-                    }
-
-                    let mut last = None;
-                    for stmt in body {
-                        last = self.compile_expr(stmt);
-                    }
-
-                    // Copy back
-                    let lens_val = self
-                        .builder
-                        .build_load(pointee, lens_alloca, "lens_back")
-                        .unwrap();
-                    self.builder.build_store(target_ptr, lens_val).unwrap();
-                    self.variables.remove(lens_name);
-
-                    last
+                let func_id = if let Some(&fid) = self.functions.get(name) {
+                    fid
+                } else if let Some(&fid) = self.functions.get(clean_name) {
+                    fid
+                } else if let Some(&fid) = self.functions.get(target_name) {
+                    fid
                 } else {
-                    None
-                }
-            }
-
-            Expr::FunctionCall { name, args } => {
-                let is_print = name == "print" || name.ends_with("::print");
-                if is_print {
-                    return self.compile_print(args);
-                }
-                // Regular function call
-                let func_opt = if let Some(func) = self.module.get_function(name) {
-                    Some(func)
-                } else {
-                    self.get_or_declare_stdlib_func(name)
+                    let mut sig = module.make_signature();
+                    for arg_val in &arg_vals {
+                        let ty = builder.func.dfg.value_type(*arg_val);
+                        sig.params.push(AbiParam::new(ty));
+                    }
+                    sig.returns.push(AbiParam::new(ir::types::I64));
+                    let fid = module
+                        .declare_function(target_name, Linkage::Import, &sig)
+                        .unwrap_or_else(|_| module.declare_anonymous_function(&sig).unwrap());
+                    self.functions.insert(name.clone(), fid);
+                    fid
                 };
 
-                if let Some(func) = func_opt {
-                    let compiled_args: Vec<BasicMetadataValueEnum> = args
-                        .iter()
-                        .filter_map(|a| self.compile_expr(a))
-                        .map(|v| v.into())
-                        .collect();
-                    let call = self
-                        .builder
-                        .build_call(func, &compiled_args, "call")
-                        .unwrap();
-                    call.try_as_basic_value().basic()
-                } else if name.contains("::") {
-                    let parts: Vec<&str> = name.split("::").collect();
-                    let _union_name = parts[0];
-                    let variant_name = parts[1];
-                    let tag_val = match variant_name {
-                        "Int" | "Ok" => 0u64,
-                        "Float" | "Err" => 1u64,
-                        "Bool" => 2u64,
-                        _ => 0u64,
-                    };
-                    let struct_ty = self.context.struct_type(
-                        &[
-                            self.context.i64_type().into(),
-                            self.context.i64_type().into(),
-                        ],
-                        false,
-                    );
-                    let ptr = self.builder.build_alloca(struct_ty, "union_tmp").unwrap();
-                    let tag_ptr = self
-                        .builder
-                        .build_struct_gep(struct_ty, ptr, 0, "tag_ptr")
-                        .unwrap();
-                    self.builder
-                        .build_store(tag_ptr, self.context.i64_type().const_int(tag_val, false))
-                        .unwrap();
-                    if let Some(arg_expr) = args.first() {
-                        let arg_val = self.compile_expr(arg_expr)?;
-                        let payload_ptr = self
-                            .builder
-                            .build_struct_gep(struct_ty, ptr, 1, "payload_ptr")
-                            .unwrap();
-                        self.builder.build_store(payload_ptr, arg_val).unwrap();
+                let local_func = module.declare_func_in_func(func_id, builder.func);
+                let sig_ref = builder.func.dfg.ext_funcs[local_func].signature;
+                let sig_params = builder.func.dfg.signatures[sig_ref].params.clone();
+
+                let mut fixed_args = Vec::new();
+                for (idx, &arg_val) in arg_vals.iter().enumerate() {
+                    if let Some(param) = sig_params.get(idx) {
+                        let expected_ty = param.value_type;
+                        let actual_ty = builder.func.dfg.value_type(arg_val);
+                        if actual_ty != expected_ty {
+                            if actual_ty.bytes() > expected_ty.bytes() {
+                                fixed_args.push(builder.ins().ireduce(expected_ty, arg_val));
+                            } else if actual_ty.bytes() < expected_ty.bytes() {
+                                fixed_args.push(builder.ins().uextend(expected_ty, arg_val));
+                            } else {
+                                fixed_args.push(arg_val);
+                            }
+                        } else {
+                            fixed_args.push(arg_val);
+                        }
+                    } else {
+                        fixed_args.push(arg_val);
                     }
-                    let loaded = self
-                        .builder
-                        .build_load(struct_ty, ptr, "union_val")
-                        .unwrap();
-                    Some(loaded)
-                } else if name.ends_with("::add") || name == "add" || name == "sum" {
-                    let left = self.compile_expr(&args[0])?.into_int_value();
-                    let right = self.compile_expr(&args[1])?.into_int_value();
-                    let sum_val = self.builder.build_int_add(left, right, "add_tmp").unwrap();
-                    Some(sum_val.into())
-                } else if name.ends_with("::sub") || name == "sub" {
-                    let left = self.compile_expr(&args[0])?.into_int_value();
-                    let right = self.compile_expr(&args[1])?.into_int_value();
-                    let sub_val = self.builder.build_int_sub(left, right, "sub_tmp").unwrap();
-                    Some(sub_val.into())
+                }
+
+                let call_inst = builder.ins().call(local_func, &fixed_args);
+                let results = builder.inst_results(call_inst);
+                if let Some(&res) = results.first() {
+                    let res_ty = builder.func.dfg.value_type(res);
+                    if res_ty == ir::types::I32 {
+                        Some(builder.ins().uextend(ir::types::I64, res))
+                    } else {
+                        Some(res)
+                    }
                 } else {
                     None
                 }
@@ -413,826 +467,175 @@ impl<'ctx> CodeGen<'ctx> {
                 then_body,
                 else_body,
             } => {
-                let cond_val = self.compile_expr(condition)?;
-                let cond_int = cond_val.into_int_value();
+                let cond_val = self.compile_expr(builder, module, condition)?;
 
-                // If cond is i64 (from comparison), truncate to i1
-                let cond_bool = if cond_int.get_type().get_bit_width() > 1 {
-                    self.builder
-                        .build_int_truncate(cond_int, self.context.bool_type(), "tobool")
-                        .unwrap()
-                } else {
-                    cond_int
-                };
+                let then_block = builder.create_block();
+                let else_block = builder.create_block();
+                let merge_block = builder.create_block();
 
-                let func = self.current_fn?;
-                let then_bb = self.context.append_basic_block(func, "then");
-                let else_bb = self.context.append_basic_block(func, "else");
-                let merge_bb = self.context.append_basic_block(func, "merge");
+                builder.ins().brif(cond_val, then_block, &[], else_block, &[]);
 
-                self.builder
-                    .build_conditional_branch(cond_bool, then_bb, else_bb)
-                    .unwrap();
-
-                // Then block
-                self.builder.position_at_end(then_bb);
+                // Compile then block
+                builder.switch_to_block(then_block);
+                builder.seal_block(then_block);
+                let mut then_val = None;
                 for stmt in then_body {
-                    self.compile_expr(stmt);
+                    then_val = self.compile_expr(builder, module, stmt);
                 }
-                if self
-                    .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_terminator()
-                    .is_none()
-                {
-                    self.builder.build_unconditional_branch(merge_bb).unwrap();
-                }
+                builder.ins().jump(merge_block, &[]);
 
-                // Else block
-                self.builder.position_at_end(else_bb);
+                // Compile else block
+                builder.switch_to_block(else_block);
+                builder.seal_block(else_block);
+                let mut else_val = None;
                 for stmt in else_body {
-                    self.compile_expr(stmt);
+                    else_val = self.compile_expr(builder, module, stmt);
                 }
-                if self
-                    .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_terminator()
-                    .is_none()
-                {
-                    self.builder.build_unconditional_branch(merge_bb).unwrap();
-                }
+                builder.ins().jump(merge_block, &[]);
 
-                self.builder.position_at_end(merge_bb);
-                None
+                // Merge block
+                builder.switch_to_block(merge_block);
+                builder.seal_block(merge_block);
+
+                then_val.or(else_val)
             }
 
             Expr::WhileLoop { condition, body } => {
-                let func = self.current_fn?;
-                let cond_bb = self.context.append_basic_block(func, "while_cond");
-                let body_bb = self.context.append_basic_block(func, "while_body");
-                let exit_bb = self.context.append_basic_block(func, "while_exit");
+                let header_block = builder.create_block();
+                let body_block = builder.create_block();
+                let exit_block = builder.create_block();
 
-                self.builder.build_unconditional_branch(cond_bb).unwrap();
+                builder.ins().jump(header_block, &[]);
 
-                // Condition
-                self.builder.position_at_end(cond_bb);
-                let cond_val = self.compile_expr(condition);
-                if let Some(cv) = cond_val {
-                    let ci = cv.into_int_value();
-                    let cond_bool = if ci.get_type().get_bit_width() > 1 {
-                        self.builder
-                            .build_int_truncate(ci, self.context.bool_type(), "tobool")
-                            .unwrap()
-                    } else {
-                        ci
-                    };
-                    self.builder
-                        .build_conditional_branch(cond_bool, body_bb, exit_bb)
-                        .unwrap();
-                } else {
-                    self.builder.build_unconditional_branch(exit_bb).unwrap();
-                }
+                // Header block
+                builder.switch_to_block(header_block);
+                let cond_val = self.compile_expr(builder, module, condition)?;
+                builder.ins().brif(cond_val, body_block, &[], exit_block, &[]);
 
-                // Body
-                self.builder.position_at_end(body_bb);
+                // Body block
+                builder.switch_to_block(body_block);
+                builder.seal_block(body_block);
                 for stmt in body {
-                    self.compile_expr(stmt);
+                    self.compile_expr(builder, module, stmt);
                 }
-                if self
-                    .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_terminator()
-                    .is_none()
-                {
-                    self.builder.build_unconditional_branch(cond_bb).unwrap();
-                }
+                builder.ins().jump(header_block, &[]);
 
-                self.builder.position_at_end(exit_bb);
+                builder.seal_block(header_block);
+
+                // Exit block
+                builder.switch_to_block(exit_block);
+                builder.seal_block(exit_block);
+
                 None
             }
 
             Expr::Return { value } => {
-                if let Some(val_expr) = value {
-                    let val = self.compile_expr(val_expr);
-                    self.insert_cleanup_calls();
-                    if let Some(v) = val {
-                        self.builder.build_return(Some(&v)).unwrap();
-                    } else {
-                        self.builder.build_return(None).unwrap();
-                    }
-                } else {
-                    self.insert_cleanup_calls();
-                    self.builder.build_return(None).unwrap();
-                }
-                None
-            }
-
-            Expr::Assign { target, value } => {
-                let val = self.compile_expr(value)?;
-                if let Expr::Variable(name) = target.as_ref() {
-                    if let Some(&ptr) = self.variables.get(name.as_str()) {
-                        if self.active_linear_vars.contains(name) {
-                            self.generate_cleanup_for(name);
-                        }
-                        self.builder.build_store(ptr, val).unwrap();
-                        if let Some(ty) = self.var_types.get(name) {
-                            if !self.is_copy_type(ty) {
-                                self.active_linear_vars.insert(name.clone());
+                if let Some(v_expr) = value {
+                    if let Some(mut v) = self.compile_expr(builder, module, v_expr) {
+                        if let Some(ret_param) = builder.func.signature.returns.first() {
+                            let expected_ty = ret_param.value_type;
+                            let actual_ty = builder.func.dfg.value_type(v);
+                            if actual_ty != expected_ty {
+                                if actual_ty.bytes() > expected_ty.bytes() {
+                                    v = builder.ins().ireduce(expected_ty, v);
+                                } else if actual_ty.bytes() < expected_ty.bytes() {
+                                    v = builder.ins().uextend(expected_ty, v);
+                                }
                             }
                         }
+                        builder.ins().return_(&[v]);
+                    } else {
+                        builder.ins().return_(&[]);
                     }
+                } else {
+                    builder.ins().return_(&[]);
                 }
                 None
             }
 
-            Expr::FnDef {
-                name,
-                params,
-                return_type,
+            Expr::LensBlock {
+                target,
+                lens_name,
                 body,
             } => {
-                self.compile_fn_def(name, params, return_type, body);
-                None
-            }
-
-            Expr::Use { .. } => None,
-
-            Expr::ConstDef { name, value } => {
-                let val = self.compile_expr(value)?;
-                let alloca_ty = val.get_type();
-                let ptr = self.builder.build_alloca(alloca_ty, name).unwrap();
-                self.builder.build_store(ptr, val).unwrap();
-                self.variables.insert(name.clone(), ptr);
-                None
-            }
-
-            Expr::MacroDef { .. } => None,
-
-            Expr::MacroCall { name, args, body } => {
-                if name == "bit" {
-                    let n = self.compile_expr(&args[0])?.into_int_value();
-                    let one = n.get_type().const_int(1, false);
-                    let val = self.builder.build_left_shift(one, n, "bit_val").unwrap();
-                    Some(val.into())
-                } else if name == "pin" {
-                    let port = self.compile_expr(&args[0])?.into_int_value();
-                    let pin = self.compile_expr(&args[1])?.into_int_value();
-                    let sh = port.get_type().const_int(8, false);
-                    let port_sh = self.builder.build_left_shift(port, sh, "port_sh").unwrap();
-                    let val = self.builder.build_or(port_sh, pin, "pin_val").unwrap();
-                    Some(val.into())
-                } else if name == "register" {
-                    let addr = self.compile_expr(&args[0])?.into_int_value();
-                    let mask = self.compile_expr(&args[1])?.into_int_value();
-                    let sh = mask.get_type().const_int(8, false);
-                    let mask_sh = self.builder.build_left_shift(mask, sh, "mask_sh").unwrap();
-                    let val = self.builder.build_or(addr, mask_sh, "reg_val").unwrap();
-                    Some(val.into())
-                } else if name == "fib_comptime" {
-                    if let Some(Expr::IntLiteral(n)) = args.first() {
-                        fn fib_rec(n: i64) -> i64 {
-                            if n <= 1 {
-                                n
-                            } else {
-                                fib_rec(n - 1) + fib_rec(n - 2)
-                            }
-                        }
-                        let fib_val = fib_rec(*n);
-                        let i64_type = self.context.i64_type();
-                        Some(i64_type.const_int(fib_val as u64, true).into())
-                    } else {
-                        None
-                    }
-                } else if name == "timer" {
-                    if let Some(ref block_body) = body {
-                        let mut last = None;
-                        for stmt in block_body {
-                            last = self.compile_expr(stmt);
-                        }
-                        last
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                if let Some(&var) = self.var_map.get(target) {
+                    self.var_map.insert(lens_name.clone(), var);
                 }
-            }
-
-            Expr::LetDef { name, ty, value } => {
-                let val = self.compile_expr(value);
-
-                let alloca_ty = if let Some(TrackType::Array(ref elem, size)) = ty {
-                    let elem_llvm = self.track_type_to_llvm(elem);
-                    elem_llvm.array_type(*size as u32).into()
-                } else if let Some(ref v) = val {
-                    v.get_type()
-                } else {
-                    self.context.i64_type().into()
-                };
-
-                let ptr = self.builder.build_alloca(alloca_ty, name).unwrap();
-
-                if let Some(TrackType::Array(_, size)) = ty {
-                    if let Expr::StringLiteral(ref s) = value.as_ref() {
-                        let bytes = s.as_bytes();
-                        for i in 0..*size {
-                            let byte_val = if i < bytes.len() { bytes[i] } else { 0 };
-                            let llvm_byte =
-                                self.context.i8_type().const_int(byte_val as u64, false);
-                            let zero = self.context.i64_type().const_int(0, false);
-                            let index = self.context.i64_type().const_int(i as u64, false);
-                            let elem_ptr = unsafe {
-                                self.builder
-                                    .build_gep(
-                                        alloca_ty,
-                                        ptr,
-                                        &[zero, index],
-                                        &format!("{}_elem_{}", name, i),
-                                    )
-                                    .unwrap()
-                            };
-                            self.builder.build_store(elem_ptr, llvm_byte).unwrap();
-                        }
-                    } else if let Some(v) = val {
-                        self.builder.build_store(ptr, v).unwrap();
-                    }
-                } else if let Some(v) = val {
-                    self.builder.build_store(ptr, v).unwrap();
+                let mut last = None;
+                for stmt in body {
+                    last = self.compile_expr(builder, module, stmt);
                 }
-
-                self.variables.insert(name.clone(), ptr);
-
-                let track_ty = if let Some(ref annotated_ty) = ty {
-                    annotated_ty.clone()
-                } else {
-                    self.infer_track_type_from_llvm(alloca_ty)
-                };
-                self.var_types.insert(name.clone(), track_ty.clone());
-                if !self.is_copy_type(&track_ty) {
-                    self.active_linear_vars.insert(name.clone());
-                }
-
-                None
+                last
             }
-
-            Expr::EnumDef { .. } => None,
-            Expr::UnionDef { .. } => None,
 
             Expr::Match { target, arms } => {
-                let target_val = self.compile_expr(target)?;
-                let is_union = target_val.is_struct_value();
-                let (tag_val, payload_val) = if is_union {
-                    let struct_val = target_val.into_struct_value();
-                    let tag = self
-                        .builder
-                        .build_extract_value(struct_val, 0, "tag")
-                        .unwrap();
-                    let payload = self
-                        .builder
-                        .build_extract_value(struct_val, 1, "payload")
-                        .unwrap();
-                    (tag.into_int_value(), Some(payload))
-                } else {
-                    (target_val.into_int_value(), None)
-                };
+                let disc = self.compile_expr(builder, module, target)?;
+                let merge_block = builder.create_block();
+                let mut last_val = None;
 
-                let current_func = self
-                    .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_parent()
-                    .unwrap();
-                let mut arm_blocks = Vec::new();
-                for i in 0..arms.len() {
-                    let block = self
-                        .context
-                        .append_basic_block(current_func, &format!("match_arm_{}", i));
-                    arm_blocks.push(block);
-                }
-                let merge_block = self.context.append_basic_block(current_func, "match_merge");
+                for arm in arms {
+                    let arm_block = builder.create_block();
+                    let next_arm_block = builder.create_block();
 
-                let prev_insert = self.builder.get_insert_block().unwrap();
-
-                for (i, arm) in arms.iter().enumerate() {
-                    let next_check_block =
-                        if i + 1 < arms.len() {
-                            Some(self.context.append_basic_block(
-                                current_func,
-                                &format!("match_check_{}", i + 1),
-                            ))
-                        } else {
-                            None
-                        };
-
-                    self.builder.position_at_end(if i == 0 {
-                        prev_insert
-                    } else {
-                        self.builder.get_insert_block().unwrap()
-                    });
-
-                    let matches_cond = match &arm.pattern {
-                        crate::ast::Pattern::Wildcard => {
-                            self.context.bool_type().const_int(1, false)
+                    let matched = match &arm.pattern {
+                        Pattern::Ident(name) => {
+                            let var = self.new_var();
+                            builder.declare_var(var, ir::types::I64);
+                            builder.def_var(var, disc);
+                            self.var_map.insert(name.clone(), var);
+                            builder.ins().iconst(ir::types::I8, 1)
                         }
-                        crate::ast::Pattern::Variant { variant, .. } => {
-                            let expected_tag = match variant.as_str() {
-                                "Red" | "Active" | "Int" | "Ok" => 0u64,
-                                "Green" | "Locked" | "Float" | "Err" => 1u64,
-                                "Blue" | "Spent" | "Bool" => 2u64,
-                                _ => 0u64,
+                        Pattern::Variant { variant, binding, .. } => {
+                            let target_disc = match variant.as_str() {
+                                "Red" | "Active" | "Int" | "Ok" => 0i64,
+                                "Green" | "Locked" | "Float" | "Err" => 1i64,
+                                "Blue" | "Spent" | "Bool" => 2i64,
+                                _ => 0i64,
                             };
-                            let expected_val = tag_val.get_type().const_int(expected_tag, false);
-                            self.builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::EQ,
-                                    tag_val,
-                                    expected_val,
-                                    "tag_match",
-                                )
-                                .unwrap()
+                            let expected = builder.ins().iconst(ir::types::I64, target_disc);
+                            let cond = builder.ins().icmp(ir::condcodes::IntCC::Equal, disc, expected);
+                            if let Some(bname) = binding {
+                                let var = self.new_var();
+                                builder.declare_var(var, ir::types::I64);
+                                builder.def_var(var, disc);
+                                self.var_map.insert(bname.clone(), var);
+                            }
+                            cond
                         }
-                        crate::ast::Pattern::Ident(_) => {
-                            self.context.bool_type().const_int(1, false)
-                        }
+                        Pattern::Wildcard => builder.ins().iconst(ir::types::I8, 1),
                     };
 
-                    let target_fail = next_check_block.unwrap_or(merge_block);
-                    self.builder
-                        .build_conditional_branch(matches_cond, arm_blocks[i], target_fail)
-                        .unwrap();
+                    builder.ins().brif(matched, arm_block, &[], next_arm_block, &[]);
 
-                    self.builder.position_at_end(arm_blocks[i]);
+                    builder.switch_to_block(arm_block);
+                    builder.seal_block(arm_block);
+                    last_val = self.compile_expr(builder, module, &arm.body);
+                    builder.ins().jump(merge_block, &[]);
 
-                    match &arm.pattern {
-                        crate::ast::Pattern::Variant {
-                            binding: Some(bind_var),
-                            ..
-                        } => {
-                            if let Some(payload) = payload_val {
-                                let ptr = self
-                                    .builder
-                                    .build_alloca(payload.get_type(), bind_var)
-                                    .unwrap();
-                                self.builder.build_store(ptr, payload).unwrap();
-                                self.variables.insert(bind_var.clone(), ptr);
-                            }
-                        }
-                        crate::ast::Pattern::Ident(var_name) => {
-                            let ptr = self
-                                .builder
-                                .build_alloca(target_val.get_type(), var_name)
-                                .unwrap();
-                            self.builder.build_store(ptr, target_val).unwrap();
-                            self.variables.insert(var_name.clone(), ptr);
-                        }
-                        _ => {}
-                    }
-
-                    self.compile_expr(&arm.body);
-
-                    if self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_terminator()
-                        .is_none()
-                    {
-                        self.builder
-                            .build_unconditional_branch(merge_block)
-                            .unwrap();
-                    }
-
-                    if let Some(next_chk) = next_check_block {
-                        self.builder.position_at_end(next_chk);
-                    }
+                    builder.switch_to_block(next_arm_block);
+                    builder.seal_block(next_arm_block);
                 }
 
-                self.builder.position_at_end(merge_block);
-                None
+                builder.ins().jump(merge_block, &[]);
+                builder.switch_to_block(merge_block);
+                builder.seal_block(merge_block);
+
+                last_val
             }
-        }
-    }
-
-    // ── print built-in ───────────────────────────────────────────────
-
-    fn compile_print(&mut self, args: &[Expr]) -> Option<BasicValueEnum<'ctx>> {
-        let printf = self.get_or_declare_printf();
-
-        if let Some(arg) = args.first() {
-            let val = self.compile_expr(arg)?;
-
-            let (fmt, call_args): (&str, Vec<BasicMetadataValueEnum>) = match val {
-                BasicValueEnum::IntValue(iv) => {
-                    let bits = iv.get_type().get_bit_width();
-                    if bits == 1 {
-                        // Bool: extend to i32 for printf
-                        let ext = self
-                            .builder
-                            .build_int_z_extend(iv, self.context.i32_type(), "bext")
-                            .unwrap();
-                        ("%d\n", vec![ext.into()])
-                    } else {
-                        ("%lld\n", vec![iv.into()])
-                    }
-                }
-                BasicValueEnum::PointerValue(pv) => ("%s\n", vec![pv.into()]),
-                _ => ("%lld\n", vec![val.into()]),
-            };
-
-            let fmt_str = self.builder.build_global_string_ptr(fmt, "fmt").unwrap();
-            let mut all_args: Vec<BasicMetadataValueEnum> = vec![fmt_str.as_pointer_value().into()];
-            all_args.extend(call_args);
-            self.builder
-                .build_call(printf, &all_args, "printf_call")
-                .unwrap();
-        }
-        None
-    }
-
-    // ── function definition ──────────────────────────────────────────
-
-    fn compile_fn_def(
-        &mut self,
-        name: &str,
-        params: &[(String, TrackType)],
-        return_type: &Option<TrackType>,
-        body: &[Expr],
-    ) {
-        let param_types: Vec<BasicMetadataTypeEnum> = params
-            .iter()
-            .map(|(_, ty)| self.track_type_to_metadata(ty))
-            .collect();
-
-        // For 'main', C ABI requires i32 return type
-        let is_main = name == "main";
-        let fn_type = if is_main {
-            let i32_type = self.context.i32_type();
-            i32_type.fn_type(&param_types, false)
-        } else {
-            match return_type {
-                Some(TrackType::Void) | None => {
-                    self.context.void_type().fn_type(&param_types, false)
-                }
-                Some(ty) => {
-                    let ret_ty = self.track_type_to_llvm(ty);
-                    ret_ty.fn_type(&param_types, false)
-                }
-            }
-        };
-
-        let function = self.module.add_function(name, fn_type, None);
-        let entry = self.context.append_basic_block(function, "entry");
-        self.builder.position_at_end(entry);
-
-        // Save and restore state
-        let saved_vars = self.variables.clone();
-        let saved_types = self.var_types.clone();
-        let saved_fn = self.current_fn;
-        let saved_linear = self.active_linear_vars.clone();
-        self.current_fn = Some(function);
-        self.active_linear_vars.clear();
-
-        // Alloca + store params
-        for (i, (param_name, param_ty)) in params.iter().enumerate() {
-            let llvm_ty = self.track_type_to_llvm(param_ty);
-            let alloca = self.builder.build_alloca(llvm_ty, param_name).unwrap();
-            let param_val = function.get_nth_param(i as u32).unwrap();
-            self.builder.build_store(alloca, param_val).unwrap();
-            self.variables.insert(param_name.clone(), alloca);
-            self.var_types.insert(param_name.clone(), param_ty.clone());
-            if !self.is_copy_type(param_ty) {
-                self.active_linear_vars.insert(param_name.clone());
-            }
-        }
-
-        // Compile body
-        for stmt in body {
-            self.compile_expr(stmt);
-        }
-
-        // Add implicit return if no terminator
-        let current_block = self.builder.get_insert_block().unwrap();
-        if current_block.get_terminator().is_none() {
-            self.insert_cleanup_calls();
-            if is_main {
-                let zero = self.context.i32_type().const_int(0, false);
-                self.builder.build_return(Some(&zero)).unwrap();
-            } else if matches!(return_type, Some(TrackType::Void) | None) {
-                self.builder.build_return(None).unwrap();
-            }
-        }
-
-        // Restore state
-        self.variables = saved_vars;
-        self.var_types = saved_types;
-        self.current_fn = saved_fn;
-        self.active_linear_vars = saved_linear;
-    }
-
-    // ── compile program ──────────────────────────────────────────────
-
-    pub fn compile_program(&mut self, program: &[Expr]) {
-        // First pass: compile all function definitions
-        let mut top_level_stmts = Vec::new();
-        for stmt in program {
-            if let Expr::FnDef { .. } = stmt {
-                self.compile_expr(stmt);
-            } else {
-                top_level_stmts.push(stmt);
-            }
-        }
-
-        // If there are top-level statements and no user-defined main, wrap them
-        if !top_level_stmts.is_empty() && self.module.get_function("main").is_none() {
-            let i32_type = self.context.i32_type();
-            let fn_type = i32_type.fn_type(&[], false);
-            let main_fn = self.module.add_function("main", fn_type, None);
-            let entry = self.context.append_basic_block(main_fn, "entry");
-            self.builder.position_at_end(entry);
-            self.current_fn = Some(main_fn);
-
-            for stmt in &top_level_stmts {
-                self.compile_expr(stmt);
-            }
-
-            let current_block = self.builder.get_insert_block().unwrap();
-            if current_block.get_terminator().is_none() {
-                let zero = i32_type.const_int(0, false);
-                self.builder.build_return(Some(&zero)).unwrap();
-            }
-        }
-    }
-
-    // ── object file emission ─────────────────────────────────────────
-
-    pub fn write_object_file(&self, path: &Path) -> Result<(), String> {
-        Target::initialize_native(&InitializationConfig::default())
-            .map_err(|e| format!("Failed to initialize native target: {}", e))?;
-
-        let triple = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&triple)
-            .map_err(|e| format!("Failed to get target from triple: {}", e))?;
-
-        let machine = target
-            .create_target_machine(
-                &triple,
-                "generic",
-                "",
-                OptimizationLevel::Default,
-                RelocMode::PIC,
-                CodeModel::Default,
-            )
-            .ok_or_else(|| "Failed to create target machine".to_string())?;
-
-        machine
-            .write_to_file(&self.module, FileType::Object, path)
-            .map_err(|e| format!("Failed to write object file: {}", e))
-    }
-
-    // ── helpers ──────────────────────────────────────────────────────
-
-    fn pointee_type_for(&self, name: &str) -> BasicTypeEnum<'ctx> {
-        if let Some(ty) = self.var_types.get(name) {
-            self.track_type_to_llvm(ty)
-        } else {
-            self.context.i64_type().into()
-        }
-    }
-
-    fn deref_type_for(&self, expr: &Expr) -> BasicTypeEnum<'ctx> {
-        if let Expr::Variable(name) = expr {
-            if let Some(TrackType::Ref(inner)) | Some(TrackType::Ptr(inner)) =
-                self.var_types.get(name)
-            {
-                return self.track_type_to_llvm(inner);
-            }
-        }
-        // Default to i64
-        self.context.i64_type().into()
-    }
-
-    fn infer_track_type_from_llvm(&self, ty: BasicTypeEnum<'ctx>) -> TrackType {
-        match ty {
-            BasicTypeEnum::IntType(it) => match it.get_bit_width() {
-                1 => TrackType::Bool,
-                8 => TrackType::Custom("u8".to_string()),
-                32 => TrackType::I32,
-                64 => TrackType::I64,
-                _ => TrackType::I64,
-            },
-            BasicTypeEnum::PointerType(_) => TrackType::Ptr(Box::new(TrackType::I64)),
-            BasicTypeEnum::ArrayType(_) => TrackType::Array(Box::new(TrackType::I64), 0),
-            BasicTypeEnum::StructType(_) => TrackType::Custom("Value".to_string()),
-            _ => TrackType::I64,
-        }
-    }
-
-    fn coerce_ints(
-        &self,
-        a: inkwell::values::IntValue<'ctx>,
-        b: inkwell::values::IntValue<'ctx>,
-    ) -> (
-        inkwell::values::IntValue<'ctx>,
-        inkwell::values::IntValue<'ctx>,
-    ) {
-        let aw = a.get_type().get_bit_width();
-        let bw = b.get_type().get_bit_width();
-        if aw == bw {
-            (a, b)
-        } else if aw > bw {
-            let ext = self
-                .builder
-                .build_int_s_extend(b, a.get_type(), "ext")
-                .unwrap();
-            (a, ext)
-        } else {
-            let ext = self
-                .builder
-                .build_int_s_extend(a, b.get_type(), "ext")
-                .unwrap();
-            (ext, b)
-        }
-    }
-
-    fn is_copy_type(&self, ty: &TrackType) -> bool {
-        matches!(
-            ty,
-            TrackType::I32
-                | TrackType::U32
-                | TrackType::I64
-                | TrackType::U64
-                | TrackType::Bool
-                | TrackType::Ref(_)
-        )
-    }
-
-    fn get_or_declare_stdlib_func(&self, name: &str) -> Option<FunctionValue<'ctx>> {
-        if let Some(f) = self.module.get_function(name) {
-            return Some(f);
-        }
-        let i64_type = self.context.i64_type();
-        let i32_type = self.context.i32_type();
-        let bool_type = self.context.bool_type();
-        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-        let str_struct = self
-            .context
-            .struct_type(&[ptr_type.into(), i32_type.into()], false);
-        let vec_struct = self
-            .context
-            .struct_type(&[ptr_type.into(), i32_type.into(), i32_type.into()], false);
-
-        // (params, returns_void, opt_basic_return_type)
-        let sig: Option<(
-            Vec<BasicMetadataTypeEnum<'ctx>>,
-            bool,
-            Option<BasicTypeEnum<'ctx>>,
-        )> = match name {
-            "alloc" => Some((vec![i64_type.into()], false, Some(ptr_type.into()))),
-            "memset" => Some((
-                vec![ptr_type.into(), i32_type.into(), i64_type.into()],
-                true,
-                None,
-            )),
-            "memcpy" => Some((
-                vec![ptr_type.into(), ptr_type.into(), i64_type.into()],
-                true,
-                None,
-            )),
-            "memcmp" => Some((
-                vec![ptr_type.into(), ptr_type.into(), i64_type.into()],
-                false,
-                Some(i32_type.into()),
-            )),
-
-            "str_len" => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
-            "str_eq" => Some((
-                vec![ptr_type.into(), ptr_type.into()],
-                false,
-                Some(bool_type.into()),
-            )),
-            "str_from_literal" => Some((vec![ptr_type.into()], false, Some(str_struct.into()))),
-            "str_concat" => Some((
-                vec![ptr_type.into(), ptr_type.into()],
-                false,
-                Some(str_struct.into()),
-            )),
-
-            "vec_init" => Some((vec![i32_type.into()], false, Some(vec_struct.into()))),
-            "vec_push" => Some((vec![ptr_type.into(), i32_type.into()], true, None)),
-            "vec_get" => Some((
-                vec![ptr_type.into(), i32_type.into()],
-                false,
-                Some(i32_type.into()),
-            )),
-            "vec_set" => Some((
-                vec![ptr_type.into(), i32_type.into(), i32_type.into()],
-                true,
-                None,
-            )),
-            "vec_pop" => Some((vec![ptr_type.into()], false, Some(i32_type.into()))),
-
-            "print_str" => Some((vec![ptr_type.into()], true, None)),
-            "print_int" => Some((vec![i64_type.into()], true, None)),
-            "print_hex" => Some((vec![i64_type.into()], true, None)),
-            "read_line" => Some((vec![], false, Some(str_struct.into()))),
-            "file_open" => Some((
-                vec![ptr_type.into(), i32_type.into()],
-                false,
-                Some(ptr_type.into()),
-            )),
-            "file_read_all" => Some((vec![ptr_type.into()], false, Some(str_struct.into()))),
-            "file_write" => Some((vec![ptr_type.into(), ptr_type.into()], true, None)),
-
-            "math_abs" => Some((vec![i32_type.into()], false, Some(i32_type.into()))),
-            "math_max" => Some((
-                vec![i32_type.into(), i32_type.into()],
-                false,
-                Some(i32_type.into()),
-            )),
-            "math_min" => Some((
-                vec![i32_type.into(), i32_type.into()],
-                false,
-                Some(i32_type.into()),
-            )),
-            "math_pow" => Some((
-                vec![i64_type.into(), i64_type.into()],
-                false,
-                Some(i64_type.into()),
-            )),
-            "math_sqrt" => Some((vec![i64_type.into()], false, Some(i64_type.into()))),
-
-            "free" => Some((vec![ptr_type.into()], true, None)),
-            "str_free" => Some((vec![str_struct.into()], true, None)),
-            "vec_free" => Some((vec![vec_struct.into()], true, None)),
-            "file_close" => Some((vec![ptr_type.into()], true, None)),
 
             _ => None,
-        };
-
-        let (params, returns_void, ret_ty) = sig?;
-        let func_type = if returns_void {
-            self.context.void_type().fn_type(&params, false)
-        } else {
-            ret_ty.unwrap().fn_type(&params, false)
-        };
-        Some(self.module.add_function(name, func_type, None))
-    }
-
-    fn insert_cleanup_calls(&mut self) {
-        let active_vars: Vec<String> = self.active_linear_vars.iter().cloned().collect();
-        for name in active_vars {
-            self.generate_cleanup_for(&name);
         }
-        self.active_linear_vars.clear();
     }
+}
 
-    fn generate_cleanup_for(&mut self, name: &str) {
-        if let Some(ty) = self.var_types.get(name).cloned() {
-            let ptr = if let Some(&p) = self.variables.get(name) {
-                p
-            } else {
-                return;
-            };
-
-            let func_name = match &ty {
-                TrackType::Custom(custom_name) => {
-                    if custom_name == "Vec" {
-                        Some("vec_free")
-                    } else if custom_name == "Str" {
-                        Some("str_free")
-                    } else {
-                        None
-                    }
-                }
-                TrackType::Ptr(inner_ty) => {
-                    if let TrackType::Custom(custom_name) = &**inner_ty {
-                        if custom_name == "File" {
-                            Some("file_close")
-                        } else {
-                            Some("free")
-                        }
-                    } else {
-                        Some("free")
-                    }
-                }
-                _ => None,
-            };
-
-            if let Some(fname) = func_name {
-                if let Some(func) = self.get_or_declare_stdlib_func(fname) {
-                    let pointee = self.track_type_to_llvm(&ty);
-                    let val = self
-                        .builder
-                        .build_load(pointee, ptr, &format!("{}_val_to_free", name))
-                        .unwrap();
-                    self.builder
-                        .build_call(func, &[val.into()], "cleanup_call")
-                        .unwrap();
-                }
-            }
-        }
+fn track_type_to_cl(ty: &TrackType) -> ir::Type {
+    match ty {
+        TrackType::I32 | TrackType::U32 => ir::types::I32,
+        TrackType::I64 | TrackType::U64 => ir::types::I64,
+        TrackType::Bool => ir::types::I8,
+        TrackType::Void => ir::types::I32,
+        TrackType::Ptr(_) | TrackType::Ref(_) => ir::types::I64,
+        TrackType::Array(_, _) => ir::types::I64,
+        TrackType::Custom(_) => ir::types::I64,
     }
 }
