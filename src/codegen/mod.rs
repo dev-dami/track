@@ -177,7 +177,6 @@ impl CodeGen {
         let entry_block = builder.create_block();
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
-        builder.seal_block(entry_block);
 
         let mut var_map: HashMap<String, Variable> = HashMap::new();
         let mut var_counter = 0u32;
@@ -201,13 +200,16 @@ impl CodeGen {
         let mut last_val = None;
         let mut has_return_stmt = false;
         for stmt in body {
+            if builder.is_unreachable() {
+                break;
+            }
             if matches!(stmt, Expr::Return { .. }) {
                 has_return_stmt = true;
             }
             last_val = fn_ctx.compile_expr(&mut builder, &mut self.module, stmt);
         }
 
-        if !has_return_stmt {
+        if !builder.is_unreachable() && !has_return_stmt {
             if is_main {
                 let zero = builder.ins().iconst(ir::types::I32, 0);
                 builder.ins().return_(&[zero]);
@@ -221,6 +223,7 @@ impl CodeGen {
             }
         }
 
+        builder.seal_all_blocks();
         builder.finalize();
         self.module.define_function(func_id, &mut ctx).unwrap();
         self.module.clear_context(&mut ctx);
@@ -241,7 +244,6 @@ impl CodeGen {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut self.fn_builder_ctx);
         let entry_block = builder.create_block();
         builder.switch_to_block(entry_block);
-        builder.seal_block(entry_block);
 
         let mut fn_ctx = FnContext {
             var_map: HashMap::new(),
@@ -260,11 +262,12 @@ impl CodeGen {
             }
         }
 
-        if !has_return_stmt {
+        if !builder.is_unreachable() && !has_return_stmt {
             let ret_code = builder.ins().iconst(ir::types::I32, 0);
             builder.ins().return_(&[ret_code]);
         }
 
+        builder.seal_all_blocks();
         builder.finalize();
         self.module.define_function(main_id, &mut ctx).unwrap();
         self.module.clear_context(&mut ctx);
@@ -494,21 +497,25 @@ impl<'a> FnContext<'a> {
 
                 // Compile then block
                 builder.switch_to_block(then_block);
-                builder.seal_block(then_block);
                 let mut then_val = None;
+                let then_returns = then_body.iter().any(|s| matches!(s, Expr::Return { .. }));
                 for stmt in then_body {
                     then_val = self.compile_expr(builder, module, stmt);
                 }
-                builder.ins().jump(merge_block, &[]);
+                if !then_returns {
+                    builder.ins().jump(merge_block, &[]);
+                }
 
                 // Compile else block
                 builder.switch_to_block(else_block);
-                builder.seal_block(else_block);
                 let mut else_val = None;
+                let else_returns = else_body.iter().any(|s| matches!(s, Expr::Return { .. }));
                 for stmt in else_body {
                     else_val = self.compile_expr(builder, module, stmt);
                 }
-                builder.ins().jump(merge_block, &[]);
+                if !else_returns {
+                    builder.ins().jump(merge_block, &[]);
+                }
 
                 // Merge block
                 builder.switch_to_block(merge_block);

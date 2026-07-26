@@ -1,0 +1,10 @@
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    let mut sum: i64 = 0;
+    while i < 100000000 {
+        sum = sum + (i & 7);
+        i = i + 1;
+    }
+    print(sum);
+}
