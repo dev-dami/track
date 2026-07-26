@@ -1,0 +1,18 @@
+fn test_math_and_str() -> void {
+    let a = 150;
+    let clamped = math_clamp(a, 0, 100);
+    print(clamped);
+
+    let rng = math_random();
+    print(1111);
+
+    let idx = str_find("hello track", "track");
+    print(idx);
+
+    let parsed = str_to_int("4242");
+    print(parsed);
+}
+
+fn main() -> void {
+    test_math_and_str();
+}

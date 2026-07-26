@@ -153,14 +153,42 @@ file_write(f, &content);
 // f is automatically closed when spent
 ```
 
-## Math
+// Substring find (index or -1)
+let idx = str_find("hello world", "world"); // 6
+
+// Parse string to int
+let val = str_to_int("42"); // 42
+
+// Format int to owned Str
+let s = int_to_str(1337);
+
+// Environment variables
+let path = env_get("PATH");
+```
+
+## Extended File System & OS
+
+```track
+// File size
+let bytes = file_size("data.txt");
+
+// File remove / delete
+file_remove("temp.txt");
+
+// Execute system command
+let exit_code = sys_exec("echo Hello from Track");
+```
+
+## Extended Math & Utilities
 
 ```track
 let x = math_abs(-5);
 let y = math_max(10, 20);
 let z = math_min(10, 20);
 let pow = math_pow(2, 8);
-let sqrt_val = math_sqrt(16.0);
+let sqrt_val = math_sqrt(16);
+let clamped = math_clamp(150, 0, 100); // 100
+let rng = math_random(); // PRNG u64
 ```
 
 ## Example: Dynamic Buffer

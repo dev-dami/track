@@ -92,6 +92,68 @@ long long sum(long long a, long long b) {
 long long sub(long long a, long long b) {
     return a - b;
 }
+long long str_find(const char* s, const char* sub_str) {
+    if (!s || !sub_str) return -1;
+    const char* p = strstr(s, sub_str);
+    return p ? (long long)(p - s) : -1;
+}
+long long str_to_int(const char* s) {
+    if (!s) return 0;
+    return atoll(s);
+}
+Str int_to_str(long long val) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%lld", val);
+    Str s;
+    s.len = (int)strlen(buf);
+    s.data = (char*)malloc(s.len + 1);
+    memcpy(s.data, buf, s.len + 1);
+    return s;
+}
+int file_remove(const char* path) {
+    if (!path) return -1;
+    return unlink(path) == 0 ? 0 : -1;
+}
+long long file_size(const char* path) {
+    if (!path) return -1;
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long long sz = ftell(f);
+    fclose(f);
+    return sz;
+}
+long long math_clamp(long long val, long long min_val, long long max_val) {
+    if (val < min_val) return min_val;
+    if (val > max_val) return max_val;
+    return val;
+}
+static unsigned long long g_rng_state = 0x853c49e65d8dbb29ULL;
+unsigned long long math_random(void) {
+    unsigned long long x = g_rng_state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    g_rng_state = x;
+    return x;
+}
+int sys_exec(const char* cmd) {
+    if (!cmd) return -1;
+    return system(cmd);
+}
+Str env_get(const char* key) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    if (!key) return s;
+    const char* val = getenv(key);
+    if (val) {
+        s.len = (int)strlen(val);
+        s.data = (char*)malloc((size_t)s.len + 1);
+        memcpy(s.data, val, (size_t)s.len + 1);
+    }
+    return s;
+}
 "#;
 
 /// Compile source string through Lexer -> Parser -> LinearChecker pipeline.

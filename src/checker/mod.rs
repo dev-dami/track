@@ -254,6 +254,30 @@ impl LinearChecker {
             .insert("math_pow".to_string(), Some(TrackType::I64));
         self.functions
             .insert("math_sqrt".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_clamp".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_random".to_string(), Some(TrackType::U64));
+
+        // Extended String & File & Sys functions
+        self.functions
+            .insert("str_find".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("str_to_int".to_string(), Some(TrackType::I64));
+        self.functions.insert(
+            "int_to_str".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions
+            .insert("file_remove".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("file_size".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("sys_exec".to_string(), Some(TrackType::I32));
+        self.functions.insert(
+            "env_get".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
 
         for stmt in program {
             self.check_expr(stmt)?;
