@@ -92,11 +92,10 @@ impl CodeGen {
                     }
                     if name == "main" {
                         sig.returns.push(AbiParam::new(ir::types::I32));
-                    } else if let Some(rty) = return_type {
-                        if *rty != TrackType::Void {
+                    } else if let Some(rty) = return_type
+                        && *rty != TrackType::Void {
                             sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
                         }
-                    }
 
                     let func_id = self
                         .module
@@ -168,11 +167,10 @@ impl CodeGen {
         }
         if is_main {
             sig.returns.push(AbiParam::new(ir::types::I32));
-        } else if let Some(rty) = return_type {
-            if *rty != TrackType::Void {
+        } else if let Some(rty) = return_type
+            && *rty != TrackType::Void {
                 sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
             }
-        }
         ctx.func.signature = sig;
 
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut self.fn_builder_ctx);
@@ -353,11 +351,10 @@ impl<'a> FnContext<'a> {
 
             Expr::Assign { target, value } => {
                 let val = self.compile_expr(builder, module, value)?;
-                if let Expr::Variable(name) = &**target {
-                    if let Some(&var) = self.var_map.get(name) {
+                if let Expr::Variable(name) = &**target
+                    && let Some(&var) = self.var_map.get(name) {
                         builder.def_var(var, val);
                     }
-                }
                 Some(val)
             }
 
@@ -640,11 +637,10 @@ impl<'a> FnContext<'a> {
 
             Expr::SliceIndex { target, start, .. } => {
                 let ptr = self.compile_expr(builder, module, target)?;
-                if let Some(s) = start {
-                    if let Some(start_val) = self.compile_expr(builder, module, s) {
+                if let Some(s) = start
+                    && let Some(start_val) = self.compile_expr(builder, module, s) {
                         return Some(builder.ins().iadd(ptr, start_val));
                     }
-                }
                 Some(ptr)
             }
 

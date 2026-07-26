@@ -94,17 +94,14 @@ impl LinearChecker {
         // Collect all variables that are borrowed by currently Active reference variables
         let mut borrowed_vars = std::collections::HashSet::new();
         for (name, state) in &self.registry {
-            if *state == VariableState::Active {
-                if let Some(ty) = self.types.get(name) {
-                    if matches!(ty, TrackType::Ref(_)) {
-                        if let Some(provs) = self.borrows.get(name) {
+            if *state == VariableState::Active
+                && let Some(ty) = self.types.get(name)
+                    && matches!(ty, TrackType::Ref(_))
+                        && let Some(provs) = self.borrows.get(name) {
                             for p in provs {
                                 borrowed_vars.insert(p.clone());
                             }
                         }
-                    }
-                }
-            }
         }
 
         // Update registry states
@@ -278,6 +275,20 @@ impl LinearChecker {
             "env_get".to_string(),
             Some(TrackType::Custom("Str".to_string())),
         );
+
+        // TCP Socket Net API
+        self.functions
+            .insert("net_socket_tcp_listen".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("net_socket_accept".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("net_socket_connect".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("net_socket_send".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("net_socket_recv".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("net_socket_close".to_string(), Some(TrackType::Void));
 
         for stmt in program {
             self.check_expr(stmt)?;
@@ -587,13 +598,11 @@ impl LinearChecker {
 
                 // Propagate loop body state: variables consumed inside loop become Spent post-loop
                 for (name, pre_state) in &pre_loop.clone() {
-                    if *pre_state == VariableState::Active {
-                        if let Some(post_state) = self.registry.get(name) {
-                            if *post_state == VariableState::Spent {
+                    if *pre_state == VariableState::Active
+                        && let Some(post_state) = self.registry.get(name)
+                            && *post_state == VariableState::Spent {
                                 pre_loop.insert(name.clone(), VariableState::Spent);
                             }
-                        }
-                    }
                 }
 
                 self.registry = pre_loop;
@@ -683,8 +692,8 @@ impl LinearChecker {
                 if let Some(TrackType::Ref(_)) = return_type {
                     let has_explicit_return =
                         body.iter().any(|stmt| matches!(stmt, Expr::Return { .. }));
-                    if !has_explicit_return {
-                        if let Some(last_stmt) = body.last() {
+                    if !has_explicit_return
+                        && let Some(last_stmt) = body.last() {
                             let prov = self.get_provenance(last_stmt);
                             for v in &prov {
                                 if !self.current_params.contains(v) {
@@ -695,7 +704,6 @@ impl LinearChecker {
                                 }
                             }
                         }
-                    }
                 }
 
                 // Restore outer scope
@@ -1008,11 +1016,10 @@ impl LinearChecker {
             Expr::FunctionCall { name: _, args } => {
                 let mut prov = Vec::new();
                 for arg in args {
-                    if let Some(ty) = self.infer_type(arg) {
-                        if matches!(ty, TrackType::Ref(_)) {
+                    if let Some(ty) = self.infer_type(arg)
+                        && matches!(ty, TrackType::Ref(_)) {
                             prov.extend(self.get_provenance(arg));
                         }
-                    }
                 }
                 prov.sort();
                 prov.dedup();

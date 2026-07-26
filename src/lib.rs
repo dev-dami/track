@@ -16,6 +16,10 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
 
 void* alloc(size_t size) { return malloc(size); }
 void dealloc(void* ptr) { if (ptr) free(ptr); }
@@ -153,6 +157,61 @@ Str env_get(const char* key) {
         memcpy(s.data, val, (size_t)s.len + 1);
     }
     return s;
+}
+int net_socket_tcp_listen(int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons((uint16_t)port);
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 128) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+int net_socket_accept(int server_fd) {
+    if (server_fd < 0) return -1;
+    struct sockaddr_in client_addr;
+    socklen_t addrlen = sizeof(client_addr);
+    return accept(server_fd, (struct sockaddr*)&client_addr, &addrlen);
+}
+int net_socket_connect(const char* host, int port) {
+    if (!host) return -1;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+        close(fd);
+        return -1;
+    }
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+long long net_socket_send(int fd, const void* data, size_t len) {
+    if (fd < 0 || !data) return -1;
+    return (long long)send(fd, data, len, 0);
+}
+long long net_socket_recv(int fd, void* buf, size_t max_len) {
+    if (fd < 0 || !buf) return -1;
+    return (long long)recv(fd, buf, max_len, 0);
+}
+void net_socket_close(int fd) {
+    if (fd >= 0) close(fd);
 }
 "#;
 

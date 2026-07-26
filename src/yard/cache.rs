@@ -14,11 +14,10 @@ impl BuildCache {
 
     pub fn load(target_dir: &Path) -> Self {
         let cache_path = Self::cache_file_path(target_dir);
-        if let Ok(data) = fs::read_to_string(&cache_path) {
-            if let Ok(cache) = serde_json::from_str(&data) {
+        if let Ok(data) = fs::read_to_string(&cache_path)
+            && let Ok(cache) = serde_json::from_str(&data) {
                 return cache;
             }
-        }
         Self::default()
     }
 

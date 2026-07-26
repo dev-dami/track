@@ -1,0 +1,13 @@
+fn test_socket_creation() -> void {
+    let server_fd = net_socket_tcp_listen(19876);
+    if server_fd > 0 {
+        print(1);
+        net_socket_close(server_fd);
+    } else {
+        print(0);
+    }
+}
+
+fn main() -> void {
+    test_socket_creation();
+}

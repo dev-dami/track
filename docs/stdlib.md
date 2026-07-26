@@ -191,6 +191,28 @@ let clamped = math_clamp(150, 0, 100); // 100
 let rng = math_random(); // PRNG u64
 ```
 
+## Network Socket API (`std/net`)
+
+```track
+// Create a TCP server listening on port 8080
+let server_fd = net_socket_tcp_listen(8080);
+
+// Connect a TCP client to 127.0.0.1:8080
+let client_fd = net_socket_connect("127.0.0.1", 8080);
+
+// Accept incoming client connection
+let conn_fd = net_socket_accept(server_fd);
+
+// Send & receive raw bytes
+let bytes_sent = net_socket_send(client_fd, buf, len);
+let bytes_read = net_socket_recv(conn_fd, buf, max_len);
+
+// Close sockets
+net_socket_close(conn_fd);
+net_socket_close(server_fd);
+net_socket_close(client_fd);
+```
+
 ## Example: Dynamic Buffer
 
 ```track
