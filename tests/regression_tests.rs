@@ -123,3 +123,22 @@ fn test_regression_shadowed_variables() {
         res.err()
     );
 }
+
+#[test]
+fn test_regression_top_level_variables_and_deref() {
+    let source = r#"
+        let x = 1;
+        let r = &x;
+
+        fn main() -> void {
+            print("Hello, Track!");
+            print(*r);
+        }
+    "#;
+    let res = compile_source(source);
+    assert!(
+        res.is_ok(),
+        "Failed top-level variables regression test: {:?}",
+        res.err()
+    );
+}

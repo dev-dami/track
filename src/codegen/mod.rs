@@ -137,7 +137,7 @@ impl CodeGen {
                     has_main = true;
                 }
                 let func_id = *self.functions.get(name).unwrap();
-                self.compile_fn(func_id, name, params, return_type.as_ref(), body);
+                self.compile_fn(func_id, name, params, return_type.as_ref(), body, program);
             }
         }
 
@@ -158,6 +158,7 @@ impl CodeGen {
         params: &[(String, TrackType)],
         return_type: Option<&TrackType>,
         body: &[Expr],
+        program: &[Expr],
     ) {
         let is_main = name == "main";
         let mut ctx = self.module.make_context();
@@ -196,6 +197,15 @@ impl CodeGen {
             functions: &mut self.functions,
             variant_map: &self.variant_map,
         };
+
+        // If compiling main, compile top-level statements (global variables/consts) into entry block first
+        if is_main {
+            for top_stmt in program {
+                if !matches!(top_stmt, Expr::FnDef { .. } | Expr::MacroDef { .. }) {
+                    fn_ctx.compile_expr(&mut builder, &mut self.module, top_stmt);
+                }
+            }
+        }
 
         let mut last_val = None;
         let mut has_return_stmt = false;
@@ -401,9 +411,10 @@ impl<'a> FnContext<'a> {
             Expr::FunctionCall { name, args } | Expr::MacroCall { name, args, .. } => {
                 let mut arg_vals = Vec::new();
                 for arg in args {
-                    if let Some(v) = self.compile_expr(builder, module, arg) {
-                        arg_vals.push(v);
-                    }
+                    let v = self.compile_expr(builder, module, arg).unwrap_or_else(|| {
+                        builder.ins().iconst(ir::types::I64, 0)
+                    });
+                    arg_vals.push(v);
                 }
 
                 let clean_name = name.trim_start_matches('@');
