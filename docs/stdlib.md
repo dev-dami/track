@@ -166,17 +166,22 @@ let s = int_to_str(1337);
 let path = env_get("PATH");
 ```
 
-## Extended File System & OS
+## Extended File System & OS (`std/fs`, `std/os`, `std/process`)
 
 ```track
-// File size
-let bytes = file_size("data.txt");
+// Command-line arguments
+let count: i32 = os_args_count();             // argc
+let arg0: Str = os_arg(0);                    // argv[0]
 
-// File remove / delete
+// Directory & File utilities
+let exists: bool = dir_exists("src");          // true if directory exists
+let copied: i32 = file_copy("src.txt", "dst.txt"); // 0 on success
+let bytes: i64 = file_size("data.txt");
 file_remove("temp.txt");
 
-// Execute system command
-let exit_code = sys_exec("echo Hello from Track");
+// Process execution
+let exit_code: i32 = process_spawn("echo Hello from Track");
+let old_exec: i32 = sys_exec("ls -la");
 ```
 
 ## Extended Math & Utilities
@@ -191,7 +196,7 @@ let clamped = math_clamp(150, 0, 100); // 100
 let rng = math_random(); // PRNG u64
 ```
 
-## Network Socket API (`std/net`)
+## POSIX Network Socket API (`std/net`)
 
 ```track
 // Create a TCP server listening on port 8080
@@ -204,8 +209,8 @@ let client_fd = net_socket_connect("127.0.0.1", 8080);
 let conn_fd = net_socket_accept(server_fd);
 
 // Send & receive raw bytes
-let bytes_sent = net_socket_send(client_fd, buf, len);
-let bytes_read = net_socket_recv(conn_fd, buf, max_len);
+let bytes_sent: i64 = net_socket_send(client_fd, buf, len);
+let bytes_read: i64 = net_socket_recv(conn_fd, buf, max_len);
 
 // Close sockets
 net_socket_close(conn_fd);
@@ -213,58 +218,34 @@ net_socket_close(server_fd);
 net_socket_close(client_fd);
 ```
 
-## Character, Path & String Extensions (v0.3.0)
+## Character, Path & String Extensions (`std/char`, `std/str`, `std/path`)
 
 ```track
 // Char & Byte Operations
-let is_d: bool = char_is_digit(0x35);       // true ('5')
-let is_a: bool = char_is_alpha(0x41);       // true ('A')
-let upper: u8 = char_to_upper(0x61);         // 'A'
+let is_d: bool = char_is_digit(0x35);          // true ('5')
+let is_a: bool = char_is_alpha(0x41);          // true ('A')
+let is_al: bool = char_is_alphanumeric(0x35);   // true
+let is_s: bool = char_is_space(0x20);          // true (' ')
+let upper: u8 = char_to_upper(0x61);            // 'A'
+let lower: u8 = char_to_lower(0x41);            // 'a'
 
 // String Search & Slicing
 let starts: bool = str_starts_with("track_compiler", "track"); // true
-let sub: Str = str_substr("hello world", 0, 5);              // "hello"
-let trimmed: Str = str_trim("   content   ");                 // "content"
-let ch: u8 = str_char_at("track", 0);                        // 't'
+let ends: bool = str_ends_with("main.trk", ".trk");             // true
+let sub: Str = str_substr("hello world", 0, 5);                 // "hello"
+let trimmed: Str = str_trim("   content   ");                    // "content"
+let ch: u8 = str_char_at("track", 0);                           // 't'
+
+// Memory & Vector Extensions
+let new_buf: ptr<u8> = mem_realloc(buf, 2048);
+vec_reserve(&mut v, 64);
+vec_clear(&mut v);
+let count: i32 = vec_len(&v);
 
 // Path Utilities
-let name: Str = path_basename("/usr/bin/track");            // "track"
-let ext: Str = path_ext("main.trk");                         // "trk"
-let joined: Str = path_join("compiler", "lexer.trk");       // "compiler/lexer.trk"
-```
-
-
-## Example: Dynamic Buffer
-
-```track
-struct Buffer {
-    data: ptr<u8>,
-    len: u32,
-    cap: u32,
-}
-
-@macro buffer_init(cap: u32) -> Buffer {
-    return Buffer {
-        data: alloc(cap),
-        len: 0,
-        cap: cap,
-    };
-}
-
-@macro buffer_append(b: ptr<Buffer>, byte: u8) -> void {
-    if (b->len < b->cap) {
-        b->data[b->len] = byte;
-        b->len = b->len + 1;
-    }
-}
-
-fn main() -> void {
-    let mut buf = buffer_init(256);
-    buffer_append(&mut buf, 0x48);  // 'H'
-    buffer_append(&mut buf, 0x69);  // 'i'
-    print_int(buf.len);  // 2
-    // buf is automatically freed when spent
-}
+let name: Str = path_basename("/usr/bin/track");               // "track"
+let ext: Str = path_ext("main.trk");                            // "trk"
+let joined: Str = path_join("compiler", "lexer.trk");          // "compiler/lexer.trk"
 ```
 
 ## Rules
@@ -273,5 +254,6 @@ fn main() -> void {
 - No garbage collector
 - Linear types handle freeing automatically
 - No manual free calls — compiler inserts them at spend points
-- Stdlib functions are just wrappers around LLVM intrinsics
+- Stdlib functions are just wrappers around C runtime / native OS calls
 - All functions are comptime-resolved when possible
+

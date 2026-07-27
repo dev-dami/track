@@ -51,11 +51,18 @@ import "path/to/module" as alias;
 import "path/to/module" as alias :: { item1 };
 ```
 
-## Built-in Modules
+## Built-in Standard Library Modules
 
-| Module | Functions | Description |
+| Module | Core Functions | Description |
 |--------|-----------|-------------|
-| `std/io` | `print`, `read` | Standard I/O operations |
+| `std/io` | `print`, `print_int`, `read_line` | Standard I/O operations |
+| `std/os` | `os_args_count`, `os_arg`, `env_get` | Command line & OS environment |
+| `std/fs` | `dir_exists`, `file_copy`, `file_size`, `file_remove` | File system & directory operations |
+| `std/process` | `process_spawn`, `sys_exec` | Subprocess creation and command execution |
+| `std/path` | `path_basename`, `path_ext`, `path_join` | Path string manipulation |
+| `std/char` | `char_is_digit`, `char_is_alpha`, `char_to_upper` | ASCII character classification & conversion |
+| `std/str` | `str_starts_with`, `str_substr`, `str_trim`, `str_char_at` | High-performance string operations |
+| `std/net` | `net_socket_tcp_listen`, `connect`, `send`, `recv` | POSIX TCP socket networking |
 | `math/vec` | `add`, `sub` | Vector math functions |
 
 ## Rules

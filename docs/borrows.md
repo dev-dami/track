@@ -66,3 +66,39 @@ fn choose_first(a: &i64, b: &i64) -> &i64 {
     return a;
 }
 ```
+
+---
+
+## Variable Mutability (`let mut` vs `let`)
+
+Track enforces compile-time variable immutability by default:
+
+```track
+// Immutable variable (default)
+let x = 10;
+x = 20; // Compile Error: Cannot mutate immutable variable 'x'. Use 'let mut x'.
+
+// Mutable variable declaration
+let mut y = 10;
+y = 20; // Allowed
+```
+
+---
+
+## Loop Linear Move Enforcement
+
+To prevent double-free and use-after-free logic bugs, linear resources declared *outside* a loop body **cannot be consumed inside** the loop body unless re-initialized:
+
+```track
+struct Resource { id: i32 }
+
+fn main() -> void {
+    let r = Resource { id: 1 };
+    let mut i = 0;
+    while i < 5 {
+        let consumed = r; // Compile Error: Cannot consume linear resource 'r' inside a loop.
+        i = i + 1;
+    }
+}
+```
+

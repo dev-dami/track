@@ -35,6 +35,15 @@ src = "src"
 
 ## Commands
 
+### `yard --version` / `yard -v`
+
+Displays current Yard toolchain and compiler version:
+
+```bash
+yard -v
+# Output: yard 0.3.0
+```
+
 ### `yard init <name>`
 
 Scaffolds a new Track project in a directory matching `<name>`:

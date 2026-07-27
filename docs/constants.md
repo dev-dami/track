@@ -10,10 +10,25 @@ const SAMPLE_RATE = 44100;
 const PI = 3.14159;
 ```
 
+## Type Aliases (`type Alias = TargetType;`)
+
+Track supports type aliases for domain clarity and clean code organization:
+
+```track
+type ByteBuf = []u8;
+type FilePath = Str;
+type DeviceId = u64;
+
+fn process_buffer(buf: ByteBuf, path: FilePath) -> void {
+    print_str(path.data);
+}
+```
+
 ## Syntax
 
 ```
 const NAME = expression;
+type ALIAS_NAME = TargetType;
 ```
 
 ## Rules
