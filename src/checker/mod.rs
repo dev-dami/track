@@ -502,6 +502,7 @@ impl LinearChecker {
             Expr::EnumDef { .. } => Some(TrackType::Void),
             Expr::UnionDef { .. } => Some(TrackType::Void),
             Expr::TypeAlias { .. } => Some(TrackType::Void),
+            Expr::ForIn { .. } => Some(TrackType::Void),
             Expr::Match { arms, .. } => arms.first().and_then(|arm| self.infer_type(&arm.body)),
         }
     }
@@ -757,6 +758,46 @@ impl LinearChecker {
                     {
                         return Err(format!(
                             "Compile Error: Cannot consume linear resource '{}' inside a loop. It was declared outside the loop and would be double-freed/moved on subsequent iterations.",
+                            name
+                        ));
+                    }
+                }
+
+                self.registry = pre_loop;
+                self.types = pre_loop_types;
+                self.borrows = pre_loop_borrows;
+                self.update_borrow_states();
+                Ok(())
+            }
+
+            Expr::ForIn { var, iter, body } => {
+                self.check_expr(iter)?;
+                let elem_ty = self.infer_type(iter).map_or(TrackType::I32, |ty| match ty {
+                    TrackType::Slice(inner) => *inner,
+                    TrackType::Array(inner, _) => *inner,
+                    _ => TrackType::I32,
+                });
+
+                let pre_loop = self.registry.clone();
+                let pre_loop_types = self.types.clone();
+                let pre_loop_borrows = self.borrows.clone();
+
+                self.declare(var.clone());
+                self.types.insert(var.clone(), elem_ty);
+
+                for stmt in body {
+                    self.check_expr(stmt)?;
+                    self.update_borrow_states();
+                }
+
+                for (name, pre_state) in &pre_loop {
+                    if *pre_state == VariableState::Active
+                        && !self.is_copy_var(name)
+                        && let Some(post_state) = self.registry.get(name)
+                        && *post_state == VariableState::Spent
+                    {
+                        return Err(format!(
+                            "Compile Error: Cannot consume linear resource '{}' inside a loop.",
                             name
                         ));
                     }
@@ -1292,6 +1333,7 @@ impl LinearChecker {
             | Expr::EnumDef { .. }
             | Expr::UnionDef { .. }
             | Expr::TypeAlias { .. }
+            | Expr::ForIn { .. }
             | Expr::Variable(_) => None,
         }
     }

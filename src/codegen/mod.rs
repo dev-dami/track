@@ -570,6 +570,66 @@ impl<'a> FnContext<'a> {
                 None
             }
 
+            Expr::ForIn { var, iter, body } => {
+                let (start_val, end_val) = match iter.as_ref() {
+                    Expr::Range { start, end } => {
+                        let s = self.compile_expr(builder, module, start).unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
+                        let e = self.compile_expr(builder, module, end).unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
+                        (s, e)
+                    }
+                    _ => {
+                        let s = builder.ins().iconst(ir::types::I32, 0);
+                        let e = self.compile_expr(builder, module, iter).unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
+                        (s, e)
+                    }
+                };
+
+                let loop_ty = builder.func.dfg.value_type(start_val);
+                let end_ty = builder.func.dfg.value_type(end_val);
+                let fixed_end_val = if end_ty != loop_ty {
+                    if end_ty.bytes() > loop_ty.bytes() {
+                        builder.ins().ireduce(loop_ty, end_val)
+                    } else if end_ty.bytes() < loop_ty.bytes() {
+                        builder.ins().uextend(loop_ty, end_val)
+                    } else {
+                        end_val
+                    }
+                } else {
+                    end_val
+                };
+
+                let loop_var = self.new_var();
+                builder.declare_var(loop_var, loop_ty);
+                builder.def_var(loop_var, start_val);
+                self.var_map.insert(var.clone(), loop_var);
+
+                let header_block = builder.create_block();
+                let body_block = builder.create_block();
+                let exit_block = builder.create_block();
+
+                builder.ins().jump(header_block, &[]);
+
+                builder.switch_to_block(header_block);
+                let cur_val = builder.use_var(loop_var);
+                let cond_val = builder.ins().icmp(ir::condcodes::IntCC::SignedLessThan, cur_val, fixed_end_val);
+                builder.ins().brif(cond_val, body_block, &[], exit_block, &[]);
+
+                builder.switch_to_block(body_block);
+                builder.seal_block(body_block);
+                for stmt in body {
+                    self.compile_expr(builder, module, stmt);
+                }
+                let next_val = builder.ins().iadd_imm(cur_val, 1);
+                builder.def_var(loop_var, next_val);
+                builder.ins().jump(header_block, &[]);
+
+                builder.seal_block(header_block);
+                builder.switch_to_block(exit_block);
+                builder.seal_block(exit_block);
+
+                None
+            }
+
             Expr::Return { value } => {
                 let ret_ty = builder.func.signature.returns.first().map(|p| p.value_type);
                 if let Some(v_expr) = value {

@@ -4,7 +4,17 @@ use crate::lexer::Token;
 
 impl Parser {
     pub fn parse_expr(&mut self) -> Result<Expr, String> {
-        self.parse_or()
+        let left = self.parse_or()?;
+        if self.peek() == Some(&Token::DotDot) {
+            self.advance();
+            let right = self.parse_or()?;
+            Ok(Expr::Range {
+                start: Box::new(left),
+                end: Box::new(right),
+            })
+        } else {
+            Ok(left)
+        }
     }
 
     fn parse_or(&mut self) -> Result<Expr, String> {
@@ -232,7 +242,14 @@ impl Parser {
                         };
                     } else {
                         let start_expr = self.parse_expr()?;
-                        if self.peek() == Some(&Token::DotDot) {
+                        if let Expr::Range { start, end } = start_expr {
+                            self.expect(&Token::RBracket)?;
+                            expr = Expr::SliceIndex {
+                                target: Box::new(expr),
+                                start: Some(start),
+                                end: Some(end),
+                            };
+                        } else if self.peek() == Some(&Token::DotDot) {
                             self.advance();
                             let end = if self.peek() != Some(&Token::RBracket) {
                                 Some(Box::new(self.parse_expr()?))

@@ -7,6 +7,8 @@ pub enum Token {
     // Keywords
     #[token("import")]
     Import,
+    #[token("use")]
+    Use,
     #[token("let")]
     Let,
 
@@ -24,6 +26,10 @@ pub enum Token {
     Else,
     #[token("while")]
     While,
+    #[token("for")]
+    For,
+    #[token("in")]
+    In,
     #[token("true")]
     True,
     #[token("false")]

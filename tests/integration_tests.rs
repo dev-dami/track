@@ -115,3 +115,25 @@ fn test_invalid_examples_rejection() {
         );
     }
 }
+
+#[test]
+fn test_for_in_loop_execution() {
+    let source = r#"
+        import "std/io";
+        fn main() -> void {
+            for i in 0..3 {
+                print(i);
+            }
+        }
+    "#;
+    let temp_dir = env::temp_dir().join(format!("track_for_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let src_file = temp_dir.join("for_test.trk");
+    fs::write(&src_file, source).unwrap();
+
+    let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe_path).output().unwrap();
+
+    assert!(output.status.success(), "For loop execution failed");
+    let _ = fs::remove_dir_all(&temp_dir);
+}

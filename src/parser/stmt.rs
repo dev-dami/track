@@ -10,8 +10,9 @@ impl Parser {
             Some(Token::Fn) => self.parse_fn()?,
             Some(Token::If) => self.parse_if()?,
             Some(Token::While) => self.parse_while()?,
+            Some(Token::For) => self.parse_for()?,
             Some(Token::Return) => self.parse_return()?,
-            Some(Token::Import) => self.parse_import()?,
+            Some(Token::Import) | Some(Token::Use) => self.parse_import()?,
 
             Some(Token::Const) => self.parse_const()?,
             Some(Token::TypeDef) => self.parse_type_alias()?,
@@ -184,6 +185,28 @@ impl Parser {
 
         Ok(Expr::WhileLoop {
             condition: Box::new(condition),
+            body,
+        })
+    }
+
+    fn parse_for(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'for'
+        let var = self.expect_ident()?;
+        self.expect(&Token::In)?;
+        self.allow_struct = false;
+        let iter = self.parse_expr();
+        self.allow_struct = true;
+        let iter = iter?;
+        self.expect(&Token::LBrace)?;
+        let mut body = Vec::new();
+        while self.peek() != Some(&Token::RBrace) && self.peek().is_some() {
+            body.push(self.parse_statement()?);
+        }
+        self.expect(&Token::RBrace)?;
+
+        Ok(Expr::ForIn {
+            var,
+            iter: Box::new(iter),
             body,
         })
     }

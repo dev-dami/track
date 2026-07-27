@@ -67,6 +67,12 @@ pub enum Expr {
         body: Vec<Expr>,
     },
 
+    ForIn {
+        var: String,
+        iter: Box<Expr>,
+        body: Vec<Expr>,
+    },
+
     Return {
         value: Option<Box<Expr>>,
     },

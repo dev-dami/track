@@ -266,3 +266,19 @@ fn test_parse_type_alias() {
         }]
     );
 }
+
+#[test]
+fn test_parse_for_in_loop() {
+    let source = "for i in 0..10 { print(i); }";
+    let ast = parse(source);
+    assert_eq!(ast.len(), 1);
+    assert!(matches!(ast[0], Expr::ForIn { .. }));
+}
+
+#[test]
+fn test_parse_use_statement() {
+    let source = "use \"std/io\" as io::{print, read_line};";
+    let ast = parse(source);
+    assert_eq!(ast.len(), 1);
+    assert!(matches!(ast[0], Expr::Use { .. }));
+}
