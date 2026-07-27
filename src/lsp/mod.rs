@@ -12,6 +12,7 @@ use crate::parser::Parser;
 pub struct TrackLsp {
     client: Client,
     documents: Mutex<HashMap<Url, String>>,
+    ast_cache: Mutex<HashMap<Url, Vec<crate::ast::Expr>>>,
 }
 
 impl TrackLsp {
@@ -19,35 +20,43 @@ impl TrackLsp {
         Self {
             client,
             documents: Mutex::new(HashMap::new()),
+            ast_cache: Mutex::new(HashMap::new()),
         }
     }
 
     async fn analyze_document_async(&self, uri: Url, text: String) -> Vec<Diagnostic> {
-        tokio::task::spawn_blocking(move || {
-            if uri.path().ends_with(".md") || uri.path().ends_with(".markdown") {
+        let uri_clone = uri.clone();
+        let (ast_opt, diagnostics) = tokio::task::spawn_blocking(move || {
+            if uri_clone.path().ends_with(".md") || uri_clone.path().ends_with(".markdown") {
                 let mut all_diagnostics = Vec::new();
                 let blocks = Self::extract_track_blocks_static(&text);
 
                 for (range, block_source) in blocks {
-                    let block_diagnostics = Self::analyze_source_static(&block_source);
+                    let (_, block_diagnostics) = Self::analyze_source_static(&block_source);
                     for mut diag in block_diagnostics {
                         diag.range.start.line += range.start.line;
                         diag.range.end.line += range.start.line;
                         all_diagnostics.push(diag);
                     }
                 }
-                all_diagnostics
-            } else if uri.path().ends_with(".trk") {
+                (None, all_diagnostics)
+            } else if uri_clone.path().ends_with(".trk") {
                 Self::analyze_source_static(&text)
             } else {
-                Vec::new()
+                (None, Vec::new())
             }
         })
         .await
-        .unwrap_or_default()
+        .unwrap_or((None, Vec::new()));
+
+        if let Some(ast) = ast_opt {
+            self.ast_cache.lock().unwrap().insert(uri, ast);
+        }
+
+        diagnostics
     }
 
-    fn analyze_source_static(source: &str) -> Vec<Diagnostic> {
+    fn analyze_source_static(source: &str) -> (Option<Vec<crate::ast::Expr>>, Vec<Diagnostic>) {
         let mut diagnostics = Vec::new();
 
         // Try to tokenize
@@ -60,7 +69,7 @@ impl TrackLsp {
                     message: e,
                     ..Default::default()
                 });
-                return diagnostics;
+                return (None, diagnostics);
             }
         };
 
@@ -75,7 +84,7 @@ impl TrackLsp {
                     message: e,
                     ..Default::default()
                 });
-                return diagnostics;
+                return (None, diagnostics);
             }
         };
 
@@ -90,7 +99,7 @@ impl TrackLsp {
             });
         }
 
-        diagnostics
+        (Some(program), diagnostics)
     }
 
     fn extract_track_blocks_static(markdown: &str) -> Vec<(Range, String)> {
@@ -312,11 +321,18 @@ impl LanguageServer for TrackLsp {
             }
         }
 
-        // Enum/Union variants from source
-        let tokens = Lexer::tokenize(&text).unwrap_or_default();
-        let mut parser = Parser::new(tokens, text.clone());
-        if let Ok(program) = parser.parse_program() {
-            for stmt in &program {
+        // Enum/Union variants from cached AST
+        let cached_program = self.ast_cache.lock().unwrap().get(uri).cloned();
+        let program = match cached_program {
+            Some(p) => p,
+            None => {
+                let tokens = Lexer::tokenize(&text).unwrap_or_default();
+                let mut parser = Parser::new(tokens, text.clone());
+                parser.parse_program().unwrap_or_default()
+            }
+        };
+
+        for stmt in &program {
                 match stmt {
                     crate::ast::Expr::EnumDef { name, variants, .. } => {
                         for (variant, _) in variants {
@@ -355,7 +371,6 @@ impl LanguageServer for TrackLsp {
                     _ => {}
                 }
             }
-        }
 
         Ok(Some(CompletionResponse::Array(completions)))
     }

@@ -84,7 +84,6 @@ impl ParallelBuilder {
             let source = fs::read_to_string(&trk_file)
                 .map_err(|e| format!("Failed to read '{}': {}", trk_file.display(), e))?;
 
-            let hash = BuildCache::compute_hash(&source);
             let stem = trk_file
                 .file_stem()
                 .unwrap_or_default()
@@ -92,7 +91,14 @@ impl ParallelBuilder {
                 .to_string();
             let obj_path = target_dir.join(format!("{}.o", stem));
 
-            let is_cached = cache.is_cached(&rel_path, &hash, &obj_path);
+            let (hash, is_cached) = if !obj_path.exists() {
+                let hash = BuildCache::compute_hash(&source);
+                (hash, false)
+            } else {
+                let hash = BuildCache::compute_hash(&source);
+                let cached = cache.is_cached(&rel_path, &hash, &obj_path);
+                (hash, cached)
+            };
 
             tasks.push(BuildTask {
                 trk_file,

@@ -93,29 +93,31 @@ impl LinearChecker {
     }
 
     pub fn update_borrow_states(&mut self) {
+        if self.borrows.is_empty() && self.lens_locked.is_empty() {
+            for state in self.registry.values_mut() {
+                if *state == VariableState::Locked {
+                    *state = VariableState::Active;
+                }
+            }
+            return;
+        }
+
         // Collect all variables that are borrowed by currently Active reference variables
         let mut borrowed_vars = std::collections::HashSet::new();
-        for (name, state) in &self.registry {
-            if *state == VariableState::Active
-                && let Some(ty) = self.types.get(name)
-                    && matches!(ty, TrackType::Ref(_))
-                        && let Some(provs) = self.borrows.get(name) {
-                            for p in provs {
-                                borrowed_vars.insert(p.clone());
-                            }
-                        }
+        for (ref_name, provs) in &self.borrows {
+            if self.registry.get(ref_name) == Some(&VariableState::Active) {
+                for p in provs {
+                    borrowed_vars.insert(p.clone());
+                }
+            }
         }
 
         // Update registry states
         for (name, state) in self.registry.iter_mut() {
-            let is_lens_locked = self.lens_locked.contains(name);
-            let is_borrowed = borrowed_vars.contains(name);
-
-            if is_lens_locked || is_borrowed {
-                if *state == VariableState::Active {
-                    *state = VariableState::Locked;
-                }
-            } else if *state == VariableState::Locked {
+            let is_locked = self.lens_locked.contains(name) || borrowed_vars.contains(name);
+            if is_locked && *state == VariableState::Active {
+                *state = VariableState::Locked;
+            } else if !is_locked && *state == VariableState::Locked {
                 *state = VariableState::Active;
             }
         }
@@ -1175,8 +1177,10 @@ impl LinearChecker {
                             prov.extend(self.get_provenance(arg));
                         }
                 }
-                prov.sort();
-                prov.dedup();
+                if prov.len() > 1 {
+                    prov.sort();
+                    prov.dedup();
+                }
                 prov
             }
             Expr::IfElse {
@@ -1191,8 +1195,10 @@ impl LinearChecker {
                 if let Some(last) = else_body.last() {
                     prov.extend(self.get_provenance(last));
                 }
-                prov.sort();
-                prov.dedup();
+                if prov.len() > 1 {
+                    prov.sort();
+                    prov.dedup();
+                }
                 prov
             }
             Expr::LensBlock { body, .. } => body
@@ -1214,6 +1220,9 @@ impl LinearChecker {
     }
 
     fn find_lens_alias(&self, expr: &Expr) -> Option<String> {
+        if self.lens_aliases.is_empty() {
+            return None;
+        }
         match expr {
             Expr::Variable(name) if self.lens_aliases.contains(name) => Some(name.clone()),
             Expr::BinaryOp { left, right, .. } => self
