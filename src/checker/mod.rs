@@ -282,6 +282,32 @@ impl LinearChecker {
             Some(TrackType::Custom("Str".to_string())),
         );
 
+        // Math Extensions
+        self.functions
+            .insert("math_abs".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_min".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_max".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_pow".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_sqrt".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_floor".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_ceil".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("math_round".to_string(), Some(TrackType::I64));
+
+        // Extra String & IO Extensions
+        self.functions
+            .insert("print_err".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("eprint".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("str_contains".to_string(), Some(TrackType::I64));
+
         // TCP Socket Net API
         self.functions
             .insert("net_socket_tcp_listen".to_string(), Some(TrackType::I32));
@@ -544,6 +570,35 @@ impl LinearChecker {
                         name
                     ));
                 }
+
+                let clean_name = name.trim_start_matches('@');
+                let target_name = if clean_name.contains("::") {
+                    clean_name.split("::").last().unwrap()
+                } else {
+                    clean_name
+                };
+
+                if !self.functions.contains_key(name)
+                    && !self.functions.contains_key(clean_name)
+                    && !self.functions.contains_key(target_name)
+                {
+                    let mut best_match = None;
+                    let mut min_dist = usize::MAX;
+                    for candidate in self.functions.keys() {
+                        let dist = levenshtein_distance(target_name, candidate);
+                        if dist <= 2 && dist < min_dist {
+                            min_dist = dist;
+                            best_match = Some(candidate.clone());
+                        }
+                    }
+                    if let Some(suggestion) = best_match {
+                        return Err(format!(
+                            "Compile Error: Undefined function '{}'. Did you mean '{}'?",
+                            name, suggestion
+                        ));
+                    }
+                }
+
                 for arg in args {
                     self.check_expr(arg)?;
                 }
@@ -1237,4 +1292,29 @@ fn is_comparison(op: &BinOp) -> bool {
         op,
         BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
     )
+}
+
+#[allow(clippy::needless_range_loop)]
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut distances = vec![vec![0; b_chars.len() + 1]; a_chars.len() + 1];
+
+    for i in 0..=a_chars.len() {
+        distances[i][0] = i;
+    }
+    for j in 0..=b_chars.len() {
+        distances[0][j] = j;
+    }
+
+    for i in 1..=a_chars.len() {
+        for j in 1..=b_chars.len() {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            distances[i][j] = (distances[i - 1][j] + 1)
+                .min(distances[i][j - 1] + 1)
+                .min(distances[i - 1][j - 1] + cost);
+        }
+    }
+
+    distances[a_chars.len()][b_chars.len()]
 }

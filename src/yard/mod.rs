@@ -16,6 +16,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "run" => commands::run_cmd(&args[1..]),
         "add" => commands::add(&args[1..]),
         "check" => commands::check(&args[1..]),
+        "clean" => commands::clean(&args[1..]),
         "--version" | "-v" | "version" => {
             println!("yard 0.3.0");
             Ok(())
@@ -40,5 +41,6 @@ fn print_usage() {
     eprintln!("    run             Build and run the current project");
     eprintln!("    add <pkg>       Add a dependency");
     eprintln!("    check           Check the project for errors");
+    eprintln!("    clean           Clean target build directory");
     eprintln!("    help            Show this help");
 }

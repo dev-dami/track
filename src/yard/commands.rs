@@ -46,8 +46,8 @@ pub fn init(args: &[String]) -> Result<(), String> {
     println!("  {}/src/main.trk", name);
     println!("\nGet started:");
     println!("  cd {}", name);
-    println!("  track yard build");
-    println!("  track yard run");
+    println!("  yard build");
+    println!("  yard run");
 
     Ok(())
 }
@@ -98,7 +98,7 @@ pub fn add(args: &[String]) -> Result<(), String> {
 pub fn add_at(project_root: &Path, args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         return Err(
-            "Usage: track yard add <package> [--version <ver>] [--path <path>] [--git <url>]"
+            "Usage: yard add <package> [--version <ver>] [--path <path>] [--git <url>]"
                 .to_string(),
         );
     }
@@ -161,6 +161,23 @@ pub fn check_at(project_root: &Path, _args: &[String]) -> Result<(), String> {
     ParallelBuilder::check(project_root, &manifest)
 }
 
+// ── yard clean ───────────────────────────────────────────────────────
+
+pub fn clean(_args: &[String]) -> Result<(), String> {
+    let project_root = find_project_root()?;
+    clean_at(&project_root)
+}
+
+pub fn clean_at(project_root: &Path) -> Result<(), String> {
+    let target_dir = project_root.join("target");
+    if target_dir.exists() {
+        fs::remove_dir_all(&target_dir)
+            .map_err(|e| format!("Failed to clean target directory: {}", e))?;
+    }
+    println!("✓ Cleaned build target directory");
+    Ok(())
+}
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 fn find_project_root() -> Result<PathBuf, String> {
@@ -173,7 +190,7 @@ fn find_project_root() -> Result<PathBuf, String> {
         }
         if !dir.pop() {
             return Err(
-                "No Track.toml found in current directory or any parent. Run 'track yard init <name>' to create a project."
+                "No Track.toml found in current directory or any parent. Run 'yard init <name>' to create a project."
                     .to_string(),
             );
         }

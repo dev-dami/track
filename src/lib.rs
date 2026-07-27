@@ -24,6 +24,31 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <ctype.h>
 #include <stdint.h>
 #include <errno.h>
+#include <math.h>
+
+// Math Extensions
+double math_abs(double x) { return fabs(x); }
+double math_min(double a, double b) { return a < b ? a : b; }
+double math_max(double a, double b) { return a > b ? a : b; }
+double math_pow(double base, double exp) { return pow(base, exp); }
+double math_sqrt(double x) { return sqrt(x); }
+double math_floor(double x) { return floor(x); }
+double math_ceil(double x) { return ceil(x); }
+double math_round(double x) { return round(x); }
+
+void print_err(const char* s) {
+    if (s) {
+        fprintf(stderr, "%s\n", s);
+        fflush(stderr);
+    }
+}
+void eprint(const char* s) {
+    print_err(s);
+}
+long long str_contains(const char* s, const char* sub_str) {
+    if (!s || !sub_str) return 0;
+    return strstr(s, sub_str) != NULL ? 1 : 0;
+}
 
 static size_t g_allocated_bytes = 0;
 static size_t g_max_memory_limit = 536870912; // 512MB default memory boundary limit

@@ -174,3 +174,20 @@ fn test_linear_checker_extended_char_str_path_api() {
     let res = compile_source(source);
     assert!(res.is_ok());
 }
+
+#[test]
+fn test_linear_checker_typo_suggestion() {
+    let source = r#"
+        fn main() -> void {
+            prnt("Hello");
+        }
+    "#;
+    let res = compile_source(source);
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    assert!(
+        err.contains("Did you mean 'print'?"),
+        "Expected typo suggestion 'Did you mean 'print'?', got: {}",
+        err
+    );
+}
