@@ -74,8 +74,7 @@ pub enum Token {
 
     #[regex(r#""([^"\\]|\\.)*""#, |lex| {
         let s = lex.slice();
-        let raw = &s[1..s.len()-1];
-        Some(raw.replace("\\\"", "\"").replace("\\n", "\n").replace("\\\\", "\\").to_string())
+        Some(unescape_str(&s[1..s.len()-1]))
     })]
     Str(String),
 
@@ -179,4 +178,30 @@ impl Lexer {
         }
         Ok(tokens)
     }
+}
+
+pub fn unescape_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('0') => out.push('\0'),
+                Some('"') => out.push('"'),
+                Some('\'') => out.push('\''),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }

@@ -565,10 +565,10 @@ impl<'a> FnContext<'a> {
             }
 
             Expr::Return { value } => {
+                let ret_ty = builder.func.signature.returns.first().map(|p| p.value_type);
                 if let Some(v_expr) = value {
                     if let Some(mut v) = self.compile_expr(builder, module, v_expr) {
-                        if let Some(ret_param) = builder.func.signature.returns.first() {
-                            let expected_ty = ret_param.value_type;
+                        if let Some(expected_ty) = ret_ty {
                             let actual_ty = builder.func.dfg.value_type(v);
                             if actual_ty != expected_ty {
                                 if actual_ty.bytes() > expected_ty.bytes() {
@@ -579,9 +579,15 @@ impl<'a> FnContext<'a> {
                             }
                         }
                         builder.ins().return_(&[v]);
+                    } else if let Some(ty) = ret_ty {
+                        let default_v = builder.ins().iconst(ty, 0);
+                        builder.ins().return_(&[default_v]);
                     } else {
                         builder.ins().return_(&[]);
                     }
+                } else if let Some(ty) = ret_ty {
+                    let default_v = builder.ins().iconst(ty, 0);
+                    builder.ins().return_(&[default_v]);
                 } else {
                     builder.ins().return_(&[]);
                 }

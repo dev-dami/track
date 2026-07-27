@@ -55,7 +55,7 @@ fn test_tokenize_types() {
 
 #[test]
 fn test_tokenize_literals_and_idents() {
-    let source = "12345 \"hello world\" my_var _var2";
+    let source = "12345 \"hello world\\r\\n\\t\" my_var _var2";
     let tokens = Lexer::tokenize(source).unwrap();
     let token_kinds: Vec<Token> = tokens.into_iter().map(|(t, _)| t).collect();
 
@@ -63,7 +63,7 @@ fn test_tokenize_literals_and_idents() {
         token_kinds,
         vec![
             Token::Int(12345),
-            Token::Str("hello world".to_string()),
+            Token::Str("hello world\r\n\t".to_string()),
             Token::Ident("my_var".to_string()),
             Token::Ident("_var2".to_string()),
         ]
