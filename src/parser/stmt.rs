@@ -15,6 +15,7 @@ impl Parser {
 
             Some(Token::Const) => self.parse_const()?,
             Some(Token::TypeDef) => self.parse_type_alias()?,
+            Some(Token::Struct) => self.parse_struct()?,
             Some(Token::AtMacro) => self.parse_macro_def()?,
             Some(Token::Enum) => self.parse_enum()?,
             Some(Token::Union) => self.parse_union()?,
@@ -259,6 +260,29 @@ impl Parser {
         self.expect(&Token::Eq)?;
         let target = self.parse_type()?;
         Ok(Expr::TypeAlias { name, target })
+    }
+
+    fn parse_struct(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'struct'
+        let name = self.expect_ident()?;
+        self.expect(&Token::LBrace)?;
+        let mut fields = Vec::new();
+        while self.peek() != Some(&Token::RBrace) && self.peek().is_some() {
+            let field_name = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let field_type = self.parse_type()?;
+            fields.push((field_name, field_type));
+            if self.peek() == Some(&Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(Expr::TypeAlias {
+            name,
+            target: crate::ast::TrackType::Custom("Struct".to_string()),
+        })
     }
 
     fn parse_macro_def(&mut self) -> Result<Expr, String> {

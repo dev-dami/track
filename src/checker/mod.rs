@@ -677,7 +677,7 @@ impl LinearChecker {
                 self.check_expr(condition)?;
 
                 // Run body to check for linear violations inside the loop
-                let mut pre_loop = self.registry.clone();
+                let pre_loop = self.registry.clone();
                 let pre_loop_types = self.types.clone();
                 let pre_loop_borrows = self.borrows.clone();
 
@@ -686,13 +686,18 @@ impl LinearChecker {
                     self.update_borrow_states();
                 }
 
-                // Propagate loop body state: variables consumed inside loop become Spent post-loop
-                for (name, pre_state) in &pre_loop.clone() {
+                // Reject linear resources defined outside the loop being consumed inside the loop
+                for (name, pre_state) in &pre_loop {
                     if *pre_state == VariableState::Active
+                        && !self.is_copy_var(name)
                         && let Some(post_state) = self.registry.get(name)
-                            && *post_state == VariableState::Spent {
-                                pre_loop.insert(name.clone(), VariableState::Spent);
-                            }
+                        && *post_state == VariableState::Spent
+                    {
+                        return Err(format!(
+                            "Compile Error: Cannot consume linear resource '{}' inside a loop. It was declared outside the loop and would be double-freed/moved on subsequent iterations.",
+                            name
+                        ));
+                    }
                 }
 
                 self.registry = pre_loop;
