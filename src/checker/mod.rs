@@ -273,6 +273,10 @@ impl LinearChecker {
             .insert("file_size".to_string(), Some(TrackType::I64));
         self.functions
             .insert("sys_exec".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("sys_set_memory_limit".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("sys_get_memory_used".to_string(), Some(TrackType::I64));
         self.functions.insert(
             "env_get".to_string(),
             Some(TrackType::Custom("Str".to_string())),

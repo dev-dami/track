@@ -57,6 +57,32 @@ fn test_valid_examples_compilation_and_execution() {
 }
 
 #[test]
+fn test_memory_boundary_exceeded_crash() {
+    let source = r#"
+        fn main() -> void {
+            sys_set_memory_limit(1000);
+            let buf = alloc(2000);
+        }
+    "#;
+    let temp_dir = env::temp_dir().join(format!("track_mem_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let src_file = temp_dir.join("mem_test.trk");
+    fs::write(&src_file, source).unwrap();
+
+    let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe_path).output().unwrap();
+
+    assert!(!output.status.success(), "Memory boundary exceeded program should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Process memory boundary limit exceeded"),
+        "Expected memory boundary message in stderr, got: {}",
+        stderr
+    );
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
 fn test_invalid_examples_rejection() {
     let invalid_examples = vec![
         ("borrow_lock_err.trk", "frozen"),

@@ -23,16 +23,59 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <sys/stat.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <errno.h>
 
-void* alloc(size_t size) { return malloc(size); }
-void dealloc(void* ptr) { if (ptr) free(ptr); }
+static size_t g_allocated_bytes = 0;
+static size_t g_max_memory_limit = 536870912; // 512MB default memory boundary limit
+
+void sys_set_memory_limit(long long bytes) {
+    if (bytes > 0) {
+        g_max_memory_limit = (size_t)bytes;
+    }
+}
+
+long long sys_get_memory_used(void) {
+    return (long long)g_allocated_bytes;
+}
+
+void* alloc(size_t size) {
+    if (size == 0) return NULL;
+    if (g_allocated_bytes + size > g_max_memory_limit) {
+        fprintf(stderr, "\nTrack Runtime Error: Process memory boundary limit exceeded! (Allocated: %zu bytes, Requested: %zu bytes, Limit: %zu bytes)\n", g_allocated_bytes, size, g_max_memory_limit);
+        fflush(stderr);
+        exit(137);
+    }
+    size_t total = size + sizeof(size_t);
+    size_t* ptr = (size_t*)malloc(total);
+    if (!ptr) {
+        fprintf(stderr, "\nTrack Runtime Error: Out of memory allocation failure!\n");
+        fflush(stderr);
+        exit(137);
+    }
+    *ptr = size;
+    g_allocated_bytes += size;
+    return (void*)(ptr + 1);
+}
+
+void dealloc(void* ptr) {
+    if (!ptr) return;
+    size_t* raw = (size_t*)ptr - 1;
+    size_t size = *raw;
+    if (g_allocated_bytes >= size) {
+        g_allocated_bytes -= size;
+    } else {
+        g_allocated_bytes = 0;
+    }
+    free(raw);
+}
 
 typedef struct { int* data; int len; int cap; } Vec;
 Vec vec_init(int cap) {
     Vec v;
-    v.data = (int*)malloc((size_t)cap * sizeof(int));
+    size_t alloc_cap = cap > 0 ? (size_t)cap : 16;
+    v.data = (int*)alloc(alloc_cap * sizeof(int));
     v.len = 0;
-    v.cap = cap;
+    v.cap = (int)alloc_cap;
     return v;
 }
 void vec_push(Vec* v, int val) {
@@ -59,7 +102,7 @@ int vec_pop(Vec* v) {
 }
 void vec_free(Vec v) {
     if (v.data) {
-        free(v.data);
+        dealloc(v.data);
     }
 }
 typedef struct { char* data; int len; } Str;
@@ -200,6 +243,12 @@ int net_socket_tcp_listen(int port) {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons((uint16_t)port);
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        if (errno == EADDRINUSE) {
+            fprintf(stderr, "Track Network Error: Port conflict! Port %d is already in use by another process.\n", port);
+        } else {
+            fprintf(stderr, "Track Network Error: Failed to bind TCP socket on port %d (errno: %d).\n", port, errno);
+        }
+        fflush(stderr);
         close(fd);
         return -1;
     }
@@ -357,11 +406,32 @@ unsigned char str_char_at(const char* s, long long idx) {
 
 // Memory & Vec Extensions
 void* mem_realloc(void* ptr, size_t new_size) {
-    return realloc(ptr, new_size);
+    if (!ptr) return alloc(new_size);
+    if (new_size == 0) {
+        dealloc(ptr);
+        return NULL;
+    }
+    size_t* raw = (size_t*)ptr - 1;
+    size_t old_size = *raw;
+    if (g_allocated_bytes - old_size + new_size > g_max_memory_limit) {
+        fprintf(stderr, "\nTrack Runtime Error: Process memory boundary limit exceeded! (Allocated: %zu bytes, Requested: %zu bytes, Limit: %zu bytes)\n", g_allocated_bytes, new_size, g_max_memory_limit);
+        fflush(stderr);
+        exit(137);
+    }
+    size_t total = new_size + sizeof(size_t);
+    size_t* new_raw = (size_t*)realloc(raw, total);
+    if (!new_raw) {
+        fprintf(stderr, "\nTrack Runtime Error: Out of memory reallocation failure!\n");
+        fflush(stderr);
+        exit(137);
+    }
+    *new_raw = new_size;
+    g_allocated_bytes = g_allocated_bytes - old_size + new_size;
+    return (void*)(new_raw + 1);
 }
 void vec_reserve(Vec* v, int cap) {
     if (v && cap > v->cap) {
-        v->data = (int*)realloc(v->data, (size_t)cap * sizeof(int));
+        v->data = (int*)mem_realloc(v->data, (size_t)cap * sizeof(int));
         v->cap = cap;
     }
 }
