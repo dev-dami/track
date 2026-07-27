@@ -122,9 +122,11 @@ impl ParallelBuilder {
 
         let mut handles = Vec::new();
 
+        let target_isa = crate::codegen::CodeGen::create_default_isa();
         for _ in 0..num_workers {
             let shared_tasks = Arc::clone(&shared_tasks);
             let results = Arc::clone(&results);
+            let target_isa = Arc::clone(&target_isa);
 
             let handle = thread::spawn(move || {
                 loop {
@@ -159,7 +161,7 @@ impl ParallelBuilder {
                             .map_err(|e| format!("{}: {}", task.trk_file.display(), e))?;
 
                         let mod_name = task.trk_file.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
-                        let mut codegen = crate::codegen::CodeGen::new(mod_name);
+                        let mut codegen = crate::codegen::CodeGen::new_with_isa(mod_name, target_isa.clone());
                         codegen.compile_program(&program);
 
                         codegen.write_object_file(&task.obj_path)?;

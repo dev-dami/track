@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, Value};
 use cranelift_codegen::isa;
@@ -21,17 +22,23 @@ pub struct CodeGen {
 }
 
 impl CodeGen {
-    pub fn new(module_name: &str) -> Self {
+    pub fn create_default_isa() -> Arc<dyn isa::TargetIsa> {
         let mut flag_builder = settings::builder();
         flag_builder.set("is_pic", "false").unwrap();
         flag_builder.set("opt_level", "speed").unwrap();
         let isa_flags = settings::Flags::new(flag_builder);
 
-        let isa = isa::lookup(Triple::host())
+        isa::lookup(Triple::host())
             .unwrap()
             .finish(isa_flags)
-            .unwrap();
+            .unwrap()
+    }
 
+    pub fn new(module_name: &str) -> Self {
+        Self::new_with_isa(module_name, Self::create_default_isa())
+    }
+
+    pub fn new_with_isa(module_name: &str, isa: Arc<dyn isa::TargetIsa>) -> Self {
         let object_builder =
             ObjectBuilder::new(isa, module_name, default_libcall_names()).unwrap();
         let module = ObjectModule::new(object_builder);
@@ -456,12 +463,11 @@ impl<'a> FnContext<'a> {
 
                 let local_func = module.declare_func_in_func(func_id, builder.func);
                 let sig_ref = builder.func.dfg.ext_funcs[local_func].signature;
-                let sig_params = builder.func.dfg.signatures[sig_ref].params.clone();
 
                 let mut fixed_args = Vec::new();
                 for (idx, &arg_val) in arg_vals.iter().enumerate() {
-                    if let Some(param) = sig_params.get(idx) {
-                        let expected_ty = param.value_type;
+                    let expected_ty_opt = builder.func.dfg.signatures[sig_ref].params.get(idx).map(|p| p.value_type);
+                    if let Some(expected_ty) = expected_ty_opt {
                         let actual_ty = builder.func.dfg.value_type(arg_val);
                         if actual_ty != expected_ty {
                             if actual_ty.bytes() > expected_ty.bytes() {
