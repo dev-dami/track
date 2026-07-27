@@ -22,6 +22,7 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <ctype.h>
+#include <stdint.h>
 
 void* alloc(size_t size) { return malloc(size); }
 void dealloc(void* ptr) { if (ptr) free(ptr); }
@@ -86,7 +87,35 @@ long long clock_ms(void) {
 void sys_exit(int code) {
     exit(code);
 }
+static int is_valid_string_pointer(const void* ptr) {
+    if (!ptr || (uintptr_t)ptr < 0x10000) return 0;
+    int pfd[2];
+    if (pipe(pfd) < 0) return 0;
+    ssize_t res = write(pfd[1], ptr, 1);
+    close(pfd[0]);
+    close(pfd[1]);
+    return res == 1;
+}
+
 void print(long long val) {
+    if (val >= 0x10000 && is_valid_string_pointer((const void*)(uintptr_t)val)) {
+        const char* str = (const char*)(uintptr_t)val;
+        int is_str = 1;
+        int len = 0;
+        while (len < 4096) {
+            unsigned char c = (unsigned char)str[len];
+            if (c == 0) break;
+            if (c < 9 || (c > 13 && c < 32) || c > 126) {
+                is_str = 0;
+                break;
+            }
+            len++;
+        }
+        if (is_str && len > 0) {
+            printf("%s\n", str);
+            return;
+        }
+    }
     printf("%lld\n", val);
 }
 long long add(long long a, long long b) {
