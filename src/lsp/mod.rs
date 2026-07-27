@@ -13,6 +13,7 @@ pub struct TrackLsp {
     client: Client,
     documents: Mutex<HashMap<Url, String>>,
     ast_cache: Mutex<HashMap<Url, Vec<crate::ast::Expr>>>,
+    doc_revisions: Mutex<HashMap<Url, usize>>,
 }
 
 impl TrackLsp {
@@ -21,10 +22,11 @@ impl TrackLsp {
             client,
             documents: Mutex::new(HashMap::new()),
             ast_cache: Mutex::new(HashMap::new()),
+            doc_revisions: Mutex::new(HashMap::new()),
         }
     }
 
-    async fn analyze_document_async(&self, uri: Url, text: String) -> Vec<Diagnostic> {
+    async fn analyze_document_async(&self, uri: Url, text: String, rev: usize) -> Vec<Diagnostic> {
         let uri_clone = uri.clone();
         let (ast_opt, diagnostics) = tokio::task::spawn_blocking(move || {
             if uri_clone.path().ends_with(".md") || uri_clone.path().ends_with(".markdown") {
@@ -48,6 +50,10 @@ impl TrackLsp {
         })
         .await
         .unwrap_or((None, Vec::new()));
+
+        if self.doc_revisions.lock().unwrap().get(&uri) != Some(&rev) {
+            return Vec::new(); // Superseded by newer edit
+        }
 
         if let Some(ast) = ast_opt {
             self.ast_cache.lock().unwrap().insert(uri, ast);
@@ -168,7 +174,14 @@ impl LanguageServer for TrackLsp {
             .unwrap()
             .insert(uri.clone(), text.clone());
 
-        let diagnostics = self.analyze_document_async(uri.clone(), text).await;
+        let rev = {
+            let mut map = self.doc_revisions.lock().unwrap();
+            let entry = map.entry(uri.clone()).or_insert(0);
+            *entry += 1;
+            *entry
+        };
+
+        let diagnostics = self.analyze_document_async(uri.clone(), text, rev).await;
 
         self.client
             .publish_diagnostics(uri, diagnostics, None)
@@ -189,7 +202,14 @@ impl LanguageServer for TrackLsp {
             .unwrap()
             .insert(uri.clone(), text.clone());
 
-        let diagnostics = self.analyze_document_async(uri.clone(), text).await;
+        let rev = {
+            let mut map = self.doc_revisions.lock().unwrap();
+            let entry = map.entry(uri.clone()).or_insert(0);
+            *entry += 1;
+            *entry
+        };
+
+        let diagnostics = self.analyze_document_async(uri.clone(), text, rev).await;
 
         self.client
             .publish_diagnostics(uri, diagnostics, None)
@@ -204,7 +224,14 @@ impl LanguageServer for TrackLsp {
                 .unwrap()
                 .insert(uri.clone(), text.clone());
 
-            let diagnostics = self.analyze_document_async(uri.clone(), text).await;
+            let rev = {
+                let mut map = self.doc_revisions.lock().unwrap();
+                let entry = map.entry(uri.clone()).or_insert(0);
+                *entry += 1;
+                *entry
+            };
+
+            let diagnostics = self.analyze_document_async(uri.clone(), text, rev).await;
 
             self.client
                 .publish_diagnostics(uri, diagnostics, None)

@@ -147,15 +147,6 @@ impl LinearChecker {
     }
 
     pub fn check_program(&mut self, program: &[Expr]) -> Result<(), String> {
-        // Collect function signatures first
-        for stmt in program {
-            if let Expr::FnDef {
-                name, return_type, ..
-            } = stmt
-            {
-                self.functions.insert(name.clone(), return_type.clone());
-            }
-        }
         // print is built-in and returns Void
         self.functions
             .insert("print".to_string(), Some(TrackType::Void));
@@ -399,8 +390,27 @@ impl LinearChecker {
                 Expr::TypeAlias { name, target } => {
                     self.type_aliases.insert(name.clone(), target.clone());
                 }
+                Expr::EnumDef { name, variants, .. } => {
+                    for (var_name, _) in variants {
+                        let fullname = format!("{}::{}", name, var_name);
+                        self.types
+                            .insert(fullname.clone(), TrackType::Custom(name.clone()));
+                        self.declare(fullname);
+                    }
+                }
                 Expr::UnionDef { name, variants } => {
                     self.unions.insert(name.clone(), variants.clone());
+                    for (var_name, ty_opt) in variants {
+                        let fullname = format!("{}::{}", name, var_name);
+                        if ty_opt.is_some() {
+                            self.functions
+                                .insert(fullname, Some(TrackType::Custom(name.clone())));
+                        } else {
+                            self.types
+                                .insert(fullname.clone(), TrackType::Custom(name.clone()));
+                            self.declare(fullname);
+                        }
+                    }
                 }
                 Expr::FnDef { name, return_type, .. } => {
                     self.functions.insert(name.clone(), return_type.clone());
@@ -666,37 +676,28 @@ impl LinearChecker {
                 self.check_expr(condition)?;
 
                 // Clone state for each branch
+                // Snapshot pre-if state
                 let pre_if = self.registry.clone();
                 let pre_if_types = self.types.clone();
                 let pre_if_borrows = self.borrows.clone();
 
-                // Check then branch
-                let mut then_state = pre_if.clone();
-                let mut then_types = pre_if_types.clone();
-                let mut then_borrows = pre_if_borrows.clone();
-                std::mem::swap(&mut self.registry, &mut then_state);
-                std::mem::swap(&mut self.types, &mut then_types);
-                std::mem::swap(&mut self.borrows, &mut then_borrows);
+                // Check then branch directly
                 for stmt in then_body {
                     self.check_expr(stmt)?;
                     self.update_borrow_states();
                 }
-                let then_end = self.registry.clone();
-                let then_end_borrows = self.borrows.clone();
+                let then_end = std::mem::replace(&mut self.registry, pre_if.clone());
+                let _then_types = std::mem::replace(&mut self.types, pre_if_types.clone());
+                let then_end_borrows = std::mem::replace(&mut self.borrows, pre_if_borrows.clone());
 
-                // Check else branch
-                let mut else_state = pre_if.clone();
-                let mut else_types = pre_if_types.clone();
-                let mut else_borrows = pre_if_borrows.clone();
-                std::mem::swap(&mut self.registry, &mut else_state);
-                std::mem::swap(&mut self.types, &mut else_types);
-                std::mem::swap(&mut self.borrows, &mut else_borrows);
+                // Check else branch directly
                 for stmt in else_body {
                     self.check_expr(stmt)?;
                     self.update_borrow_states();
                 }
-                let else_end = self.registry.clone();
-                let else_end_borrows = self.borrows.clone();
+                let else_end = std::mem::take(&mut self.registry);
+                let _else_types = std::mem::take(&mut self.types);
+                let else_end_borrows = std::mem::take(&mut self.borrows);
 
                 // CFG Merge: both branches must leave variables in identical states
                 let mut merged = HashMap::new();
@@ -820,13 +821,13 @@ impl LinearChecker {
                 return_type,
                 ..
             } => {
-                // Enter function scope
+                // Enter function scope (preserve global module declarations)
                 let saved_registry = self.registry.clone();
                 let saved_types = self.types.clone();
-                let saved_borrows = self.borrows.clone();
-                let saved_lens = self.lens_locked.clone();
-                let saved_lens_aliases = self.lens_aliases.clone();
-                let saved_params = self.current_params.clone();
+                let saved_borrows = std::mem::take(&mut self.borrows);
+                let saved_lens = std::mem::take(&mut self.lens_locked);
+                let saved_lens_aliases = std::mem::take(&mut self.lens_aliases);
+                let saved_params = std::mem::take(&mut self.current_params);
                 let saved_ret = self.current_return_type.clone();
 
                 self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
@@ -993,12 +994,12 @@ impl LinearChecker {
             } => {
                 self.functions.insert(name.clone(), return_type.clone());
 
-                let saved_registry = self.registry.clone();
-                let saved_types = self.types.clone();
-                let saved_borrows = self.borrows.clone();
-                let saved_lens = self.lens_locked.clone();
-                let saved_lens_aliases = self.lens_aliases.clone();
-                let saved_params = self.current_params.clone();
+                let saved_registry = std::mem::take(&mut self.registry);
+                let saved_types = std::mem::take(&mut self.types);
+                let saved_borrows = std::mem::take(&mut self.borrows);
+                let saved_lens = std::mem::take(&mut self.lens_locked);
+                let saved_lens_aliases = std::mem::take(&mut self.lens_aliases);
+                let saved_params = std::mem::take(&mut self.current_params);
                 let saved_ret = self.current_return_type.clone();
 
                 self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
