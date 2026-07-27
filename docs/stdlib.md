@@ -213,6 +213,27 @@ net_socket_close(server_fd);
 net_socket_close(client_fd);
 ```
 
+## Character, Path & String Extensions (v0.3.0)
+
+```track
+// Char & Byte Operations
+let is_d: bool = char_is_digit(0x35);       // true ('5')
+let is_a: bool = char_is_alpha(0x41);       // true ('A')
+let upper: u8 = char_to_upper(0x61);         // 'A'
+
+// String Search & Slicing
+let starts: bool = str_starts_with("track_compiler", "track"); // true
+let sub: Str = str_substr("hello world", 0, 5);              // "hello"
+let trimmed: Str = str_trim("   content   ");                 // "content"
+let ch: u8 = str_char_at("track", 0);                        // 't'
+
+// Path Utilities
+let name: Str = path_basename("/usr/bin/track");            // "track"
+let ext: Str = path_ext("main.trk");                         // "trk"
+let joined: Str = path_join("compiler", "lexer.trk");       // "compiler/lexer.trk"
+```
+
+
 ## Example: Dynamic Buffer
 
 ```track

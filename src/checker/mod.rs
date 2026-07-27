@@ -306,6 +306,62 @@ impl LinearChecker {
         self.functions
             .insert("process_spawn".to_string(), Some(TrackType::I32));
 
+        // Char & Byte Operations
+        self.functions
+            .insert("char_is_digit".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("char_is_alpha".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("char_is_alphanumeric".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("char_is_space".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("char_to_upper".to_string(), Some(TrackType::U8));
+        self.functions
+            .insert("char_to_lower".to_string(), Some(TrackType::U8));
+
+        // Extended String & Memory
+        self.functions
+            .insert("str_starts_with".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("str_ends_with".to_string(), Some(TrackType::Bool));
+        self.functions.insert(
+            "str_substr".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions.insert(
+            "str_trim".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions
+            .insert("str_char_at".to_string(), Some(TrackType::U8));
+        self.functions.insert(
+            "mem_realloc".to_string(),
+            Some(TrackType::Ptr(Box::new(TrackType::Custom(
+                "u8".to_string(),
+            )))),
+        );
+        self.functions
+            .insert("vec_reserve".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("vec_clear".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("vec_len".to_string(), Some(TrackType::I32));
+
+        // Path Operations
+        self.functions.insert(
+            "path_basename".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions.insert(
+            "path_ext".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions.insert(
+            "path_join".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+
         for stmt in program {
             match stmt {
                 Expr::TypeAlias { name, target } => {

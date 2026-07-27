@@ -156,3 +156,21 @@ fn test_linear_checker_type_alias_and_os_api() {
     let res = compile_source(source);
     assert!(res.is_ok());
 }
+
+#[test]
+fn test_linear_checker_extended_char_str_path_api() {
+    let source = r#"
+        fn main() -> void {
+            let is_d = char_is_digit(53);
+            let is_a = char_is_alpha(65);
+            let u = char_to_upper(97);
+            let starts = str_starts_with("compiler", "comp");
+            let sub = str_substr("hello world", 0, 5);
+            let base = path_basename("/bin/track");
+            let ext = path_ext("main.trk");
+            let joined = path_join("src", "lib.rs");
+        }
+    "#;
+    let res = compile_source(source);
+    assert!(res.is_ok());
+}

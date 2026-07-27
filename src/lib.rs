@@ -21,6 +21,7 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <ctype.h>
 
 void* alloc(size_t size) { return malloc(size); }
 void dealloc(void* ptr) { if (ptr) free(ptr); }
@@ -257,6 +258,148 @@ int file_copy(const char* src, const char* dst) {
 int process_spawn(const char* cmd) {
     if (!cmd) return -1;
     return system(cmd);
+}
+
+// Char & Byte Operations
+int char_is_digit(unsigned char c) { return isdigit(c) ? 1 : 0; }
+int char_is_alpha(unsigned char c) { return isalpha(c) ? 1 : 0; }
+int char_is_alphanumeric(unsigned char c) { return isalnum(c) ? 1 : 0; }
+int char_is_space(unsigned char c) { return isspace(c) ? 1 : 0; }
+unsigned char char_to_upper(unsigned char c) { return (unsigned char)toupper(c); }
+unsigned char char_to_lower(unsigned char c) { return (unsigned char)tolower(c); }
+
+// String Extensions
+int str_starts_with(const char* s, const char* prefix) {
+    if (!s || !prefix) return 0;
+    size_t len_s = strlen(s);
+    size_t len_p = strlen(prefix);
+    if (len_p > len_s) return 0;
+    return strncmp(s, prefix, len_p) == 0 ? 1 : 0;
+}
+int str_ends_with(const char* s, const char* suffix) {
+    if (!s || !suffix) return 0;
+    size_t len_s = strlen(s);
+    size_t len_p = strlen(suffix);
+    if (len_p > len_s) return 0;
+    return strcmp(s + len_s - len_p, suffix) == 0 ? 1 : 0;
+}
+Str str_substr(const char* s, long long start, long long len) {
+    Str res;
+    res.data = NULL;
+    res.len = 0;
+    if (!s || start < 0) return res;
+    size_t s_len = strlen(s);
+    if ((size_t)start >= s_len) return res;
+    size_t actual_len = (size_t)len;
+    if ((size_t)start + actual_len > s_len) {
+        actual_len = s_len - (size_t)start;
+    }
+    res.data = (char*)malloc(actual_len + 1);
+    memcpy(res.data, s + start, actual_len);
+    res.data[actual_len] = '\0';
+    res.len = (int)actual_len;
+    return res;
+}
+Str str_trim(const char* s) {
+    Str res;
+    res.data = NULL;
+    res.len = 0;
+    if (!s) return res;
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (*s == 0) {
+        res.data = (char*)calloc(1, 1);
+        return res;
+    }
+    const char* end = s + strlen(s) - 1;
+    while (end > s && isspace((unsigned char)*end)) end--;
+    size_t len = (size_t)(end - s + 1);
+    res.data = (char*)malloc(len + 1);
+    memcpy(res.data, s, len);
+    res.data[len] = '\0';
+    res.len = (int)len;
+    return res;
+}
+unsigned char str_char_at(const char* s, long long idx) {
+    if (!s || idx < 0) return 0;
+    size_t len = strlen(s);
+    if ((size_t)idx >= len) return 0;
+    return (unsigned char)s[idx];
+}
+
+// Memory & Vec Extensions
+void* mem_realloc(void* ptr, size_t new_size) {
+    return realloc(ptr, new_size);
+}
+void vec_reserve(Vec* v, int cap) {
+    if (v && cap > v->cap) {
+        v->data = (int*)realloc(v->data, (size_t)cap * sizeof(int));
+        v->cap = cap;
+    }
+}
+void vec_clear(Vec* v) {
+    if (v) v->len = 0;
+}
+int vec_len(const Vec* v) {
+    return v ? v->len : 0;
+}
+
+// Path Extensions
+Str path_basename(const char* path) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    if (!path) return s;
+    const char* last_slash = strrchr(path, '/');
+    const char* name = last_slash ? last_slash + 1 : path;
+    s.len = (int)strlen(name);
+    s.data = (char*)malloc((size_t)s.len + 1);
+    memcpy(s.data, name, (size_t)s.len + 1);
+    return s;
+}
+Str path_ext(const char* path) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    if (!path) return s;
+    const char* dot = strrchr(path, '.');
+    if (!dot || dot == path) return s;
+    s.len = (int)strlen(dot + 1);
+    s.data = (char*)malloc((size_t)s.len + 1);
+    memcpy(s.data, dot + 1, (size_t)s.len + 1);
+    return s;
+}
+Str path_join(const char* a, const char* b) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    if (!a && !b) return s;
+    if (!a) {
+        s.len = (int)strlen(b);
+        s.data = (char*)malloc((size_t)s.len + 1);
+        memcpy(s.data, b, (size_t)s.len + 1);
+        return s;
+    }
+    if (!b) {
+        s.len = (int)strlen(a);
+        s.data = (char*)malloc((size_t)s.len + 1);
+        memcpy(s.data, a, (size_t)s.len + 1);
+        return s;
+    }
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    int needs_slash = (len_a > 0 && a[len_a - 1] != '/' && (len_b == 0 || b[0] != '/')) ? 1 : 0;
+    size_t total = len_a + (size_t)needs_slash + len_b;
+    s.data = (char*)malloc(total + 1);
+    memcpy(s.data, a, len_a);
+    if (needs_slash) {
+        s.data[len_a] = '/';
+        memcpy(s.data + len_a + 1, b, len_b);
+    } else {
+        memcpy(s.data + len_a, b, len_b);
+    }
+    s.data[total] = '\0';
+    s.len = (int)total;
+    return s;
 }
 "#;
 
