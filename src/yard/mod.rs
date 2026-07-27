@@ -16,6 +16,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "run" => commands::run_cmd(&args[1..]),
         "add" => commands::add(&args[1..]),
         "check" => commands::check(&args[1..]),
+        "--version" | "-v" | "version" => {
+            println!("yard 0.3.0");
+            Ok(())
+        }
         "--help" | "-h" | "help" => {
             print_usage();
             Ok(())

@@ -14,6 +14,7 @@ impl Parser {
             Some(Token::Import) => self.parse_import()?,
 
             Some(Token::Const) => self.parse_const()?,
+            Some(Token::TypeDef) => self.parse_type_alias()?,
             Some(Token::AtMacro) => self.parse_macro_def()?,
             Some(Token::Enum) => self.parse_enum()?,
             Some(Token::Union) => self.parse_union()?,
@@ -250,6 +251,14 @@ impl Parser {
             name,
             value: Box::new(value),
         })
+    }
+
+    fn parse_type_alias(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume 'type'
+        let name = self.expect_ident()?;
+        self.expect(&Token::Eq)?;
+        let target = self.parse_type()?;
+        Ok(Expr::TypeAlias { name, target })
     }
 
     fn parse_macro_def(&mut self) -> Result<Expr, String> {

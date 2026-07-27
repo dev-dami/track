@@ -20,6 +20,7 @@ pub const RUNTIME_C_SOURCE: &str = r#"
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 void* alloc(size_t size) { return malloc(size); }
 void dealloc(void* ptr) { if (ptr) free(ptr); }
@@ -212,6 +213,50 @@ long long net_socket_recv(int fd, void* buf, size_t max_len) {
 }
 void net_socket_close(int fd) {
     if (fd >= 0) close(fd);
+}
+static int g_argc = 0;
+static char** g_argv = NULL;
+int os_args_count(void) {
+    return g_argc;
+}
+Str os_arg(int idx) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    if (g_argv && idx >= 0 && idx < g_argc) {
+        const char* arg = g_argv[idx];
+        s.len = (int)strlen(arg);
+        s.data = (char*)malloc((size_t)s.len + 1);
+        memcpy(s.data, arg, (size_t)s.len + 1);
+    }
+    return s;
+}
+int dir_exists(const char* path) {
+    if (!path) return 0;
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return 1;
+    }
+    return 0;
+}
+int file_copy(const char* src, const char* dst) {
+    if (!src || !dst) return -1;
+    FILE *in = fopen(src, "rb");
+    if (!in) return -1;
+    FILE *out = fopen(dst, "wb");
+    if (!out) { fclose(in); return -1; }
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        fwrite(buf, 1, n, out);
+    }
+    fclose(in);
+    fclose(out);
+    return 0;
+}
+int process_spawn(const char* cmd) {
+    if (!cmd) return -1;
+    return system(cmd);
 }
 "#;
 

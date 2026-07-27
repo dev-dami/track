@@ -37,7 +37,7 @@ fn main() {
             }
         }
         "--version" | "-v" | "version" => {
-            println!("track 0.1.6");
+            println!("track 0.3.0");
         }
         "--help" | "-h" | "help" => {
             print_usage();

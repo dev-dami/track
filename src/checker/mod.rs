@@ -18,6 +18,7 @@ pub struct LinearChecker {
     pub lens_aliases: std::collections::HashSet<String>,
     pub mutables: std::collections::HashSet<String>,
     pub unions: HashMap<String, Vec<(String, Option<TrackType>)>>,
+    pub type_aliases: HashMap<String, TrackType>,
     pub current_params: std::collections::HashSet<String>,
     pub current_return_type: Option<TrackType>,
 }
@@ -53,6 +54,7 @@ impl LinearChecker {
             lens_aliases: std::collections::HashSet::new(),
             mutables: std::collections::HashSet::new(),
             unions: HashMap::new(),
+            type_aliases: HashMap::new(),
             current_params: std::collections::HashSet::new(),
             current_return_type: None,
         }
@@ -290,6 +292,34 @@ impl LinearChecker {
         self.functions
             .insert("net_socket_close".to_string(), Some(TrackType::Void));
 
+        // OS & FS Extensions (v0.2.0)
+        self.functions
+            .insert("os_args_count".to_string(), Some(TrackType::I32));
+        self.functions.insert(
+            "os_arg".to_string(),
+            Some(TrackType::Custom("Str".to_string())),
+        );
+        self.functions
+            .insert("dir_exists".to_string(), Some(TrackType::Bool));
+        self.functions
+            .insert("file_copy".to_string(), Some(TrackType::I32));
+        self.functions
+            .insert("process_spawn".to_string(), Some(TrackType::I32));
+
+        for stmt in program {
+            match stmt {
+                Expr::TypeAlias { name, target } => {
+                    self.type_aliases.insert(name.clone(), target.clone());
+                }
+                Expr::UnionDef { name, variants } => {
+                    self.unions.insert(name.clone(), variants.clone());
+                }
+                Expr::FnDef { name, return_type, .. } => {
+                    self.functions.insert(name.clone(), return_type.clone());
+                }
+                _ => {}
+            }
+        }
         for stmt in program {
             self.check_expr(stmt)?;
         }
@@ -373,13 +403,17 @@ impl LinearChecker {
             Expr::LetDef { .. } => Some(TrackType::Void),
             Expr::EnumDef { .. } => Some(TrackType::Void),
             Expr::UnionDef { .. } => Some(TrackType::Void),
+            Expr::TypeAlias { .. } => Some(TrackType::Void),
             Expr::Match { arms, .. } => arms.first().and_then(|arm| self.infer_type(&arm.body)),
         }
     }
 
     fn check_expr(&mut self, expr: &Expr) -> Result<(), String> {
         match expr {
-            Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::BoolLiteral(_) => Ok(()),
+            Expr::IntLiteral(_)
+            | Expr::StringLiteral(_)
+            | Expr::BoolLiteral(_)
+            | Expr::TypeAlias { .. } => Ok(()),
 
             Expr::Variable(name) => {
                 self.read_or_move(name)?;
@@ -1127,6 +1161,7 @@ impl LinearChecker {
             | Expr::MacroDef { .. }
             | Expr::EnumDef { .. }
             | Expr::UnionDef { .. }
+            | Expr::TypeAlias { .. }
             | Expr::Variable(_) => None,
         }
     }

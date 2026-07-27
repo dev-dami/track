@@ -1,0 +1,18 @@
+type Buffer = []u8;
+type FilePath = Str;
+
+fn test_v030_os_and_alias() -> void {
+    let count = os_args_count();
+    print(count);
+
+    let exists = dir_exists("src");
+    if exists {
+        print(1);
+    } else {
+        print(0);
+    }
+}
+
+fn main() -> void {
+    test_v030_os_and_alias();
+}

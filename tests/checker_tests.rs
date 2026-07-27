@@ -142,3 +142,17 @@ fn test_linear_checker_enum_and_union_matching() {
     let res = compile_source(source);
     assert!(res.is_ok());
 }
+
+#[test]
+fn test_linear_checker_type_alias_and_os_api() {
+    let source = r#"
+        type Buffer = []u8;
+        fn main() -> void {
+            let count = os_args_count();
+            print(count);
+            let exists = dir_exists("src");
+        }
+    "#;
+    let res = compile_source(source);
+    assert!(res.is_ok());
+}

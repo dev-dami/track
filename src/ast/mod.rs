@@ -94,6 +94,11 @@ pub enum Expr {
         value: Box<Expr>,
     },
 
+    TypeAlias {
+        name: String,
+        target: TrackType,
+    },
+
     MacroDef {
         name: String,
         params: Vec<(String, TrackType)>,

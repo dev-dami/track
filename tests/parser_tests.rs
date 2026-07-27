@@ -253,3 +253,16 @@ fn test_parse_array_type_and_literal() {
         }
     );
 }
+
+#[test]
+fn test_parse_type_alias() {
+    let source = "type ByteBuf = []u8;";
+    let ast = parse(source);
+    assert_eq!(
+        ast,
+        vec![Expr::TypeAlias {
+            name: "ByteBuf".to_string(),
+            target: TrackType::Slice(Box::new(TrackType::U8)),
+        }]
+    );
+}

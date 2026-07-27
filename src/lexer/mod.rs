@@ -43,6 +43,8 @@ pub enum Token {
 
     #[token("const")]
     Const,
+    #[token("type")]
+    TypeDef,
     #[token("@")]
     At,
 
