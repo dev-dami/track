@@ -41,7 +41,7 @@ Displays current Yard toolchain and compiler version:
 
 ```bash
 yard -v
-# Output: yard 0.3.0
+# Output: yard 0.4.0
 ```
 
 ### `yard init <name>`
@@ -72,6 +72,30 @@ Builds and immediately executes the package binary:
 yard run
 ```
 
+### `yard check`
+
+Runs tokenization, parsing, and type-checking on all source files in the project without performing codegen:
+
+```bash
+yard check
+```
+
+### `yard lint`
+
+Lints all source files in the project for potential code style and safety issues:
+
+```bash
+yard lint
+```
+
+### `yard clean`
+
+Removes the `target/` build cache directory:
+
+```bash
+yard clean
+```
+
 ### `yard add <package>`
 
 Adds a new dependency to the project's `Track.toml` manifest:
@@ -82,12 +106,4 @@ yard add my_library --path ../my_library
 
 # Add a Git dependency
 yard add logger --git https://github.com/example/logger.git
-```
-
-### `yard check`
-
-Runs tokenization, parsing, and type-checking on all source files in the project without performing codegen:
-
-```bash
-yard check
 ```

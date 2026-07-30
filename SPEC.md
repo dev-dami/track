@@ -1,4 +1,4 @@
-# Track Core Language Specification (v0.1)
+# Track Core Language Specification (v0.4)
 
 Track is a low-level systems programming language designed for deterministic memory safety without a garbage collector or complex lifetime annotations.
 
@@ -22,7 +22,7 @@ Every value in Track belongs to one of four value categories:
 The ownership checker tracks variables using four explicit states:
 
 - **`Active`**: Value is initialized and owned.
-- **`Borrowed`**: A read-only reference (`&T`) exists. Track v0.1 permits at most one active shared borrow per value; general `Shared(n)` borrow counts are reserved for a later version.
+- **`Borrowed`**: A read-only reference (`&T`) exists. Track permits active shared borrows per value.
 - **`Locked`**: An exclusive lexical lens (`with`) is currently active.
 - **`Spent`**: Ownership has been moved or transferred.
 
@@ -33,7 +33,7 @@ The ownership checker tracks variables using four explicit states:
 | **Move Value** (`let y = x;`) | `Active` | `Spent` | `x` cannot be used after move |
 | **Create Lens** (`with u -> user`) | `Active` | `Locked` | `u` frozen from moves/borrows |
 | **Exit Lens Block** | `Locked` | `Active` | Restores `u` ownership |
-| **Shared Borrow** (`let r = &x;`) | `Active` | `Borrowed` | `x` frozen from moves; v0.1 permits at most one active shared borrow per value |
+| **Shared Borrow** (`let r = &x;`) | `Active` | `Borrowed` | `x` frozen from moves |
 | **End Borrow Scope** | `Borrowed` | `Active` | Restores full ownership |
 
 ---
@@ -48,8 +48,8 @@ A linear resource is consumed (spent) by:
 2. **Function Call Transfer**: Passing an owned value into a function parameter transfers ownership to the callee.
 3. **Implicit Scope Cleanup**: If a linear resource remains `Active` at scope exit, the compiler automatically emits cleanup deallocation code (`vec_free`, `str_free`).
 
-### Struct Ownership & Field Move Policy (v0.1)
-Structs in Track v0.1 are moved as **atomic units**. Moving any field or the struct itself consumes the entire struct instance, preventing use-after-free or partial double-destruction.
+### Struct Ownership & Field Move Policy
+Structs in Track are moved as **atomic units**. Moving any field or the struct itself consumes the entire struct instance, preventing use-after-free or partial double-destruction.
 
 ---
 
@@ -99,7 +99,26 @@ A variable is usable after the loop only if the merged state is consistent acros
 
 ---
 
-## 6. Diagnostics & Error Reporting
+## 6. Anonymous Tuples & Destructuring
+
+Tuples are heterogeneous value containers specified with `(T1, T2, ...)`.
+
+- **Element Access**: Zero-based numerical dot notation (`pair.0`, `pair.1`).
+- **Destructuring**: Unpack tuple elements into fresh variables using `let (a, b) = expr;`.
+- **Ownership**: Moving a linear component out of a tuple moves the component according to linear ownership rules.
+
+---
+
+## 7. Advanced Pattern Matching & Arm Guards
+
+Pattern matching expressions (`match`) evaluate patterns sequentially against a target value.
+
+- **Arm Guards**: Arms may contain conditional expressions (`pattern if guard => body`).
+- **Nested Patterns**: Patterns recursively match tuple structures `(p1, p2)`, union variants `Variant(p1, p2)`, literals (`0`, `true`), and struct fields.
+
+---
+
+## 8. Diagnostics & Error Reporting
 
 Track compiler diagnostics report span location, root cause, and ownership state transitions:
 

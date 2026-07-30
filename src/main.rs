@@ -37,7 +37,7 @@ fn main() {
             }
         }
         "--version" | "-v" | "version" => {
-            println!("track 0.3.0");
+            println!("track 0.4.0");
         }
         "--help" | "-h" | "help" => {
             print_usage();
@@ -55,7 +55,7 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Track v0.1.6 — Systems programming with linear types\n");
+    eprintln!("Track v0.4.0 — Systems programming with linear types\n");
     eprintln!("USAGE:");
     eprintln!("    track build <file.trk>    Compile to native executable");
     eprintln!("    track run <file.trk>      Compile and run");
