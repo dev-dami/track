@@ -452,6 +452,21 @@ impl LinearChecker {
                     .unwrap_or(TrackType::I32);
                 Some(TrackType::Array(Box::new(elem_type), elements.len()))
             }
+            Expr::TupleLiteral { elements } => {
+                let elem_types = elements
+                    .iter()
+                    .map(|e| self.infer_type(e).unwrap_or(TrackType::I32))
+                    .collect();
+                Some(TrackType::Tuple(elem_types))
+            }
+            Expr::TupleIndex { target, index } => match self.infer_type(target) {
+                Some(TrackType::Tuple(types)) => types.get(*index).cloned(),
+                Some(TrackType::Ref(inner)) => match *inner {
+                    TrackType::Tuple(types) => types.get(*index).cloned(),
+                    _ => None,
+                },
+                _ => None,
+            },
             Expr::ArrayIndex { target, .. } => match self.infer_type(target) {
                 Some(TrackType::Array(inner, _)) => Some(*inner),
                 Some(TrackType::Ptr(inner)) => Some(*inner),
@@ -498,7 +513,7 @@ impl LinearChecker {
                     self.functions.get(name).cloned().flatten()
                 }
             }
-            Expr::LetDef { .. } => Some(TrackType::Void),
+            Expr::LetDef { .. } | Expr::LetDestructure { .. } => Some(TrackType::Void),
             Expr::EnumDef { .. } => Some(TrackType::Void),
             Expr::UnionDef { .. } => Some(TrackType::Void),
             Expr::TypeAlias { .. } => Some(TrackType::Void),
@@ -531,6 +546,37 @@ impl LinearChecker {
             Expr::ArrayLiteral { elements } => {
                 for elem in elements {
                     self.check_expr(elem)?;
+                }
+                Ok(())
+            }
+
+            Expr::TupleLiteral { elements } => {
+                for elem in elements {
+                    self.check_expr(elem)?;
+                }
+                Ok(())
+            }
+
+            Expr::TupleIndex { target, index } => {
+                self.check_borrow(target)?;
+                if let Some(ty) = self.infer_type(target) {
+                    let tuple_types = match ty {
+                        TrackType::Tuple(types) => Some(types),
+                        TrackType::Ref(inner) => match *inner {
+                            TrackType::Tuple(types) => Some(types),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(types) = tuple_types
+                        && *index >= types.len()
+                    {
+                        return Err(format!(
+                            "Compile Error: Tuple index {} out of bounds for tuple of length {}",
+                            index,
+                            types.len()
+                        ));
+                    }
                 }
                 Ok(())
             }
@@ -1124,8 +1170,22 @@ impl LinearChecker {
                 Ok(())
             }
 
+            Expr::LetDestructure {
+                pattern,
+                mutable,
+                value,
+            } => {
+                self.reject_lens_escape(value)?;
+                self.check_expr(value)?;
+                let val_ty = self.infer_type(value).unwrap_or(TrackType::I32);
+                self.bind_pattern_variables(pattern, &val_ty, *mutable)?;
+                self.update_borrow_states();
+                Ok(())
+            }
+
             Expr::Match { target, arms } => {
                 self.check_expr(target)?;
+                let target_ty = self.infer_type(target).unwrap_or(TrackType::I32);
                 for arm in arms {
                     let saved_registry = self.registry.clone();
                     let saved_types = self.types.clone();
@@ -1133,23 +1193,7 @@ impl LinearChecker {
                     let saved_lens = self.lens_locked.clone();
                     let saved_lens_aliases = self.lens_aliases.clone();
 
-                    if let crate::ast::Pattern::Variant {
-                        ref enum_or_union,
-                        ref variant,
-                        binding: Some(ref bind_var),
-                    } = arm.pattern
-                    {
-                        let bind_ty = match (enum_or_union.as_str(), variant.as_str()) {
-                            ("Value", "Int") => TrackType::I32,
-                            ("Value", "Float") => TrackType::I64,
-                            ("Value", "Bool") => TrackType::Bool,
-                            ("Result", "Ok") => TrackType::I64,
-                            ("Result", "Err") => TrackType::I64,
-                            _ => TrackType::I32,
-                        };
-                        self.declare(bind_var.clone());
-                        self.types.insert(bind_var.clone(), bind_ty);
-                    }
+                    self.bind_pattern_variables(&arm.pattern, &target_ty, false)?;
 
                     if let Some(ref guard_expr) = arm.guard {
                         self.check_expr(guard_expr)?;
@@ -1166,6 +1210,57 @@ impl LinearChecker {
                 Ok(())
             }
         }
+    }
+
+    fn bind_pattern_variables(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        target_type: &TrackType,
+        mutable: bool,
+    ) -> Result<(), String> {
+        match pattern {
+            crate::ast::Pattern::Ident(name) => {
+                self.declare(name.clone());
+                self.types.insert(name.clone(), target_type.clone());
+                if mutable {
+                    self.mutables.insert(name.clone());
+                }
+            }
+            crate::ast::Pattern::Wildcard | crate::ast::Pattern::Literal(_) => {}
+            crate::ast::Pattern::Tuple(pats) => {
+                let elem_types = match target_type {
+                    TrackType::Tuple(types) => types.clone(),
+                    _ => vec![TrackType::I32; pats.len()],
+                };
+                for (i, p) in pats.iter().enumerate() {
+                    let ty = elem_types.get(i).cloned().unwrap_or(TrackType::I32);
+                    self.bind_pattern_variables(p, &ty, mutable)?;
+                }
+            }
+            crate::ast::Pattern::Variant {
+                enum_or_union,
+                variant,
+                bindings,
+            } => {
+                for (i, p) in bindings.iter().enumerate() {
+                    let bind_ty = match (enum_or_union.as_str(), variant.as_str(), i) {
+                        ("Value", "Int", _) => TrackType::I32,
+                        ("Value", "Float", _) => TrackType::I64,
+                        ("Value", "Bool", _) => TrackType::Bool,
+                        ("Result", "Ok", _) => TrackType::I64,
+                        ("Result", "Err", _) => TrackType::I64,
+                        _ => TrackType::I32,
+                    };
+                    self.bind_pattern_variables(p, &bind_ty, mutable)?;
+                }
+            }
+            crate::ast::Pattern::Struct { fields, .. } => {
+                for (_fname, p) in fields {
+                    self.bind_pattern_variables(p, &TrackType::I32, mutable)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Check an expression without consuming it (for & borrows)
@@ -1304,9 +1399,11 @@ impl LinearChecker {
             Expr::Assign { target, value } => self
                 .find_lens_alias(target)
                 .or_else(|| self.find_lens_alias(value)),
-            Expr::LetDef { value, .. } | Expr::ConstDef { value, .. } => {
+            Expr::LetDef { value, .. } | Expr::ConstDef { value, .. } | Expr::LetDestructure { value, .. } => {
                 self.find_lens_alias(value)
             }
+            Expr::TupleLiteral { elements } => elements.iter().find_map(|e| self.find_lens_alias(e)),
+            Expr::TupleIndex { target, .. } => self.find_lens_alias(target),
             Expr::FunctionCall { .. } => None,
             Expr::MacroCall { args, body, .. } => args
                 .iter()

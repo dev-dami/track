@@ -86,9 +86,40 @@ match val {
 }
 ```
 
+## Tuple Patterns & Destructuring
+
+Match directly on tuples or destructure in `let` bindings:
+
+```track
+// Destructuring Let
+let (x, y) = (10, 20);
+
+// Tuple Pattern Matching
+let point = (5, 0);
+match point {
+    (0, 0) => print("origin"),
+    (x, 0) => print("on x-axis"),
+    (0, y) => print("on y-axis"),
+    (x, y) => print("point"),
+}
+```
+
+## Nested Pattern Matching
+
+Patterns can be nested recursively:
+
+```track
+match result {
+    Result::Ok((val, true)) => print(val),
+    Result::Ok((_, false)) => print("disabled"),
+    Result::Err(code) if code > 500 => print("server error"),
+    _ => print("unknown"),
+}
+```
+
 ## Rules
 
 - **Exhaustive**: Compiler errors if cases are missing
 - **No fallthrough**: Each arm is independent
 - **No hidden control flow**: Compiles to jump table or branches
-- **Linear safety**: Matched union values are consumed
+- **Linear safety**: Matched union and tuple values are safely bound or moved

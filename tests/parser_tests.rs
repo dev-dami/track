@@ -137,7 +137,7 @@ fn test_parse_match() {
                     pattern: Pattern::Variant {
                         enum_or_union: "Value".to_string(),
                         variant: "Int".to_string(),
-                        binding: Some("n".to_string()),
+                        bindings: vec![Pattern::Ident("n".to_string())],
                     },
                     guard: Some(Expr::BinaryOp {
                         op: BinOp::Gt,

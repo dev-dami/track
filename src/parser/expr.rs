@@ -206,23 +206,34 @@ impl Parser {
         loop {
             match self.peek() {
                 Some(Token::Dot) => {
-                    // UFCS: expr.method(args)  =>  method(expr, args)
                     self.advance();
-                    let method_name = self.expect_ident()?;
-                    self.expect(&Token::LParen)?;
-                    let mut args = vec![expr];
-                    if self.peek() != Some(&Token::RParen) {
-                        args.push(self.parse_expr()?);
-                        while self.peek() == Some(&Token::Comma) {
+                    match self.peek() {
+                        Some(Token::Int(idx)) => {
+                            let idx = *idx as usize;
                             self.advance();
-                            args.push(self.parse_expr()?);
+                            expr = Expr::TupleIndex {
+                                target: Box::new(expr),
+                                index: idx,
+                            };
+                        }
+                        _ => {
+                            let method_name = self.expect_ident()?;
+                            self.expect(&Token::LParen)?;
+                            let mut args = vec![expr];
+                            if self.peek() != Some(&Token::RParen) {
+                                args.push(self.parse_expr()?);
+                                while self.peek() == Some(&Token::Comma) {
+                                    self.advance();
+                                    args.push(self.parse_expr()?);
+                                }
+                            }
+                            self.expect(&Token::RParen)?;
+                            expr = Expr::FunctionCall {
+                                name: method_name,
+                                args,
+                            };
                         }
                     }
-                    self.expect(&Token::RParen)?;
-                    expr = Expr::FunctionCall {
-                        name: method_name,
-                        args,
-                    };
                 }
                 Some(Token::LBracket) => {
                     // Array index: expr[index] or Slice index: expr[start..end]
@@ -345,9 +356,27 @@ impl Parser {
             }
             Some(Token::LParen) => {
                 self.advance();
-                let expr = self.parse_expr()?;
-                self.expect(&Token::RParen)?;
-                Ok(expr)
+                if self.peek() == Some(&Token::RParen) {
+                    self.advance();
+                    Ok(Expr::TupleLiteral { elements: Vec::new() })
+                } else {
+                    let first = self.parse_expr()?;
+                    if self.peek() == Some(&Token::Comma) {
+                        self.advance();
+                        let mut elements = vec![first];
+                        while self.peek() != Some(&Token::RParen) {
+                            elements.push(self.parse_expr()?);
+                            if self.peek() == Some(&Token::Comma) {
+                                self.advance();
+                            }
+                        }
+                        self.expect(&Token::RParen)?;
+                        Ok(Expr::TupleLiteral { elements })
+                    } else {
+                        self.expect(&Token::RParen)?;
+                        Ok(first)
+                    }
+                }
             }
             Some(Token::LBracket) => {
                 // Array literal: [expr, expr, ...]
@@ -486,11 +515,43 @@ impl Parser {
         })
     }
 
-    fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, String> {
-        match self.peek() {
+    pub fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, String> {
+        match self.peek().cloned() {
             Some(Token::Underscore) => {
                 self.advance();
                 Ok(crate::ast::Pattern::Wildcard)
+            }
+            Some(Token::Int(val)) => {
+                self.advance();
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::IntLiteral(val))))
+            }
+            Some(Token::True) => {
+                self.advance();
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::BoolLiteral(true))))
+            }
+            Some(Token::False) => {
+                self.advance();
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::BoolLiteral(false))))
+            }
+            Some(Token::Str(s)) => {
+                self.advance();
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::StringLiteral(s))))
+            }
+            Some(Token::LParen) => {
+                self.advance();
+                let mut patterns = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    patterns.push(self.parse_pattern()?);
+                    while self.peek() == Some(&Token::Comma) {
+                        self.advance();
+                        if self.peek() == Some(&Token::RParen) {
+                            break;
+                        }
+                        patterns.push(self.parse_pattern()?);
+                    }
+                }
+                self.expect(&Token::RParen)?;
+                Ok(crate::ast::Pattern::Tuple(patterns))
             }
             Some(Token::Ident(_)) => {
                 let name = self.parse_namespaced_ident()?;
@@ -499,20 +560,48 @@ impl Parser {
                     let enum_or_union = parts[0].to_string();
                     let variant = parts[1].to_string();
 
-                    let binding = if self.peek() == Some(&Token::LParen) {
+                    let bindings = if self.peek() == Some(&Token::LParen) {
                         self.advance();
-                        let b = self.expect_ident()?;
+                        let mut pats = Vec::new();
+                        if self.peek() != Some(&Token::RParen) {
+                            pats.push(self.parse_pattern()?);
+                            while self.peek() == Some(&Token::Comma) {
+                                self.advance();
+                                if self.peek() == Some(&Token::RParen) {
+                                    break;
+                                }
+                                pats.push(self.parse_pattern()?);
+                            }
+                        }
                         self.expect(&Token::RParen)?;
-                        Some(b)
+                        pats
                     } else {
-                        None
+                        Vec::new()
                     };
 
                     Ok(crate::ast::Pattern::Variant {
                         enum_or_union,
                         variant,
-                        binding,
+                        bindings,
                     })
+                } else if self.peek() == Some(&Token::LBrace) {
+                    self.advance();
+                    let mut fields = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        let fname = self.expect_ident()?;
+                        let pat = if self.peek() == Some(&Token::Colon) {
+                            self.advance();
+                            self.parse_pattern()?
+                        } else {
+                            crate::ast::Pattern::Ident(fname.clone())
+                        };
+                        fields.push((fname, pat));
+                        if self.peek() == Some(&Token::Comma) {
+                            self.advance();
+                        }
+                    }
+                    self.expect(&Token::RBrace)?;
+                    Ok(crate::ast::Pattern::Struct { name, fields })
                 } else {
                     Ok(crate::ast::Pattern::Ident(name))
                 }

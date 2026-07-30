@@ -127,6 +127,22 @@ impl Parser {
                     }
                 }
             }
+            Some(Token::LParen) => {
+                self.advance();
+                let mut types = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    types.push(self.parse_type()?);
+                    while self.peek() == Some(&Token::Comma) {
+                        self.advance();
+                        if self.peek() == Some(&Token::RParen) {
+                            break;
+                        }
+                        types.push(self.parse_type()?);
+                    }
+                }
+                self.expect(&Token::RParen)?;
+                Ok(TrackType::Tuple(types))
+            }
             other => Err(format!("Parser error: expected type, got {:?}", other)),
         }
     }

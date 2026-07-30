@@ -675,6 +675,46 @@ impl<'a> FnContext<'a> {
                 last
             }
 
+            Expr::TupleLiteral { elements } => {
+                let elem_count = elements.len();
+                let size_val = builder.ins().iconst(ir::types::I64, (elem_count * 8) as i64);
+                let alloc_fid = if let Some(&fid) = self.functions.get("alloc") {
+                    fid
+                } else {
+                    let mut sig = module.make_signature();
+                    sig.params.push(AbiParam::new(ir::types::I64));
+                    sig.returns.push(AbiParam::new(ir::types::I64));
+                    let fid = module.declare_function("alloc", Linkage::Import, &sig).unwrap();
+                    self.functions.insert("alloc".to_string(), fid);
+                    fid
+                };
+                let local_alloc = module.declare_func_in_func(alloc_fid, builder.func);
+                let call_inst = builder.ins().call(local_alloc, &[size_val]);
+                let ptr = builder.inst_results(call_inst)[0];
+
+                for (i, elem) in elements.iter().enumerate() {
+                    if let Some(val) = self.compile_expr(builder, module, elem) {
+                        let offset = (i * 8) as i32;
+                        builder.ins().store(ir::MemFlags::new(), val, ptr, offset);
+                    }
+                }
+                Some(ptr)
+            }
+
+            Expr::TupleIndex { target, index } => {
+                let ptr = self.compile_expr(builder, module, target)?;
+                let offset = (*index * 8) as i32;
+                let val = builder.ins().load(ir::types::I64, ir::MemFlags::new(), ptr, offset);
+                Some(val)
+            }
+
+            Expr::LetDestructure { pattern, value, .. } => {
+                if let Some(val) = self.compile_expr(builder, module, value) {
+                    self.bind_pattern_codegen(builder, module, pattern, val);
+                }
+                None
+            }
+
             Expr::Match { target, arms } => {
                 let disc = self.compile_expr(builder, module, target)?;
                 let merge_block = builder.create_block();
@@ -684,28 +724,25 @@ impl<'a> FnContext<'a> {
                     let arm_block = builder.create_block();
                     let next_arm_block = builder.create_block();
 
-                    let matched = match &arm.pattern {
-                        Pattern::Ident(name) => {
-                            let var = self.new_var();
-                            builder.declare_var(var, ir::types::I64);
-                            builder.def_var(var, disc);
-                            self.var_map.insert(name.clone(), var);
-                            builder.ins().iconst(ir::types::I8, 1)
+                    let mut matched = self.compile_pattern_match(builder, module, &arm.pattern, disc);
+
+                    if let Some(ref guard) = arm.guard {
+                        let guard_block = builder.create_block();
+                        builder.ins().brif(matched, guard_block, &[], next_arm_block, &[]);
+
+                        builder.switch_to_block(guard_block);
+                        builder.seal_block(guard_block);
+
+                        self.bind_pattern_codegen(builder, module, &arm.pattern, disc);
+
+                        if let Some(guard_val) = self.compile_expr(builder, module, guard) {
+                            matched = guard_val;
+                        } else {
+                            matched = builder.ins().iconst(ir::types::I8, 1);
                         }
-                        Pattern::Variant { variant, binding, .. } => {
-                            let target_disc = self.variant_map.get(variant).copied().unwrap_or(0i64);
-                            let expected = builder.ins().iconst(ir::types::I64, target_disc);
-                            let cond = builder.ins().icmp(ir::condcodes::IntCC::Equal, disc, expected);
-                            if let Some(bname) = binding {
-                                let var = self.new_var();
-                                builder.declare_var(var, ir::types::I64);
-                                builder.def_var(var, disc);
-                                self.var_map.insert(bname.clone(), var);
-                            }
-                            cond
-                        }
-                        Pattern::Wildcard => builder.ins().iconst(ir::types::I8, 1),
-                    };
+                    } else {
+                        self.bind_pattern_codegen(builder, module, &arm.pattern, disc);
+                    }
 
                     builder.ins().brif(matched, arm_block, &[], next_arm_block, &[]);
 
@@ -743,6 +780,76 @@ impl<'a> FnContext<'a> {
             _ => None,
         }
     }
+
+    fn bind_pattern_codegen(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        _module: &mut ObjectModule,
+        pattern: &Pattern,
+        val: Value,
+    ) {
+        match pattern {
+            Pattern::Ident(name) => {
+                let var = self.new_var();
+                builder.declare_var(var, ir::types::I64);
+                builder.def_var(var, val);
+                self.var_map.insert(name.clone(), var);
+            }
+            Pattern::Wildcard | Pattern::Literal(_) => {}
+            Pattern::Tuple(pats) => {
+                for (i, p) in pats.iter().enumerate() {
+                    let offset = (i * 8) as i32;
+                    let elem_val = builder.ins().load(ir::types::I64, ir::MemFlags::new(), val, offset);
+                    self.bind_pattern_codegen(builder, _module, p, elem_val);
+                }
+            }
+            Pattern::Variant { bindings, .. } => {
+                for p in bindings {
+                    self.bind_pattern_codegen(builder, _module, p, val);
+                }
+            }
+            Pattern::Struct { fields, .. } => {
+                for (_fname, p) in fields {
+                    self.bind_pattern_codegen(builder, _module, p, val);
+                }
+            }
+        }
+    }
+
+    fn compile_pattern_match(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        pattern: &Pattern,
+        val: Value,
+    ) -> Value {
+        match pattern {
+            Pattern::Ident(_) | Pattern::Wildcard => builder.ins().iconst(ir::types::I8, 1),
+            Pattern::Literal(lit_expr) => {
+                if let Some(lit_val) = self.compile_expr(builder, module, lit_expr) {
+                    builder.ins().icmp(ir::condcodes::IntCC::Equal, val, lit_val)
+                } else {
+                    builder.ins().iconst(ir::types::I8, 1)
+                }
+            }
+            Pattern::Variant { variant, .. } => {
+                let target_disc = self.variant_map.get(variant).copied().unwrap_or(0i64);
+                let expected = builder.ins().iconst(ir::types::I64, target_disc);
+                builder.ins().icmp(ir::condcodes::IntCC::Equal, val, expected)
+            }
+            Pattern::Tuple(pats) => {
+                let mut cond = builder.ins().iconst(ir::types::I8, 1);
+                for (i, p) in pats.iter().enumerate() {
+                    let offset = (i * 8) as i32;
+                    let elem_val = builder.ins().load(ir::types::I64, ir::MemFlags::new(), val, offset);
+                    let elem_cond = self.compile_pattern_match(builder, module, p, elem_val);
+                    cond = builder.ins().band(cond, elem_cond);
+                }
+                cond
+            }
+            Pattern::Struct { .. } => builder.ins().iconst(ir::types::I8, 1),
+        }
+    }
 }
 
 fn track_type_to_cl(ty: &TrackType) -> ir::Type {
@@ -752,7 +859,7 @@ fn track_type_to_cl(ty: &TrackType) -> ir::Type {
         TrackType::I64 | TrackType::U64 => ir::types::I64,
         TrackType::Bool => ir::types::I8,
         TrackType::Void => ir::types::I32,
-        TrackType::Ptr(_) | TrackType::Ref(_) | TrackType::Slice(_) => ir::types::I64,
+        TrackType::Ptr(_) | TrackType::Ref(_) | TrackType::Slice(_) | TrackType::Tuple(_) => ir::types::I64,
         TrackType::Array(_, _) => ir::types::I64,
         TrackType::Custom(_) => ir::types::I64,
     }

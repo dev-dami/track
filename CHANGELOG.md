@@ -5,6 +5,17 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-07-30
+
+### Added
+- **First-Class Anonymous Tuples**: Tuple types `(T1, T2)`, literals `(a, b)`, and element indexing notation `tuple.0`, `tuple.1`.
+- **Tuple Destructuring**: Support for `let (a, b) = expr;` statements with variable pattern matching.
+- **Nested Pattern Matching**: Extended pattern matching support for tuple patterns `(p1, p2)`, multi-binding variant patterns `Variant(p1, p2)`, literal patterns (`0`, `true`), and struct patterns.
+- **Match Arm Guards**: Expression guards on match arms (`match x { n if n > 10 => ..., _ => ... }`).
+- **Demo Program**: Added `examples/v040_features_demo.trk` demonstrating all v0.4.0 features.
+
+---
+
 ## [0.3.0] — 2026-07-27
 
 ### Performance & Correctness

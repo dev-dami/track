@@ -20,6 +20,15 @@ pub enum Expr {
         elements: Vec<Expr>,
     },
 
+    TupleLiteral {
+        elements: Vec<Expr>,
+    },
+
+    TupleIndex {
+        target: Box<Expr>,
+        index: usize,
+    },
+
     ArrayIndex {
         target: Box<Expr>,
         index: Box<Expr>,
@@ -125,6 +134,12 @@ pub enum Expr {
         value: Box<Expr>,
     },
 
+    LetDestructure {
+        pattern: Pattern,
+        mutable: bool,
+        value: Box<Expr>,
+    },
+
     EnumDef {
         name: String,
         underlying_type: Option<TrackType>,
@@ -155,6 +170,7 @@ pub enum TrackType {
     Ref(Box<TrackType>),
     Slice(Box<TrackType>),
     Array(Box<TrackType>, usize),
+    Tuple(Vec<TrackType>),
     Void,
     Custom(String),
 }
@@ -197,10 +213,16 @@ pub struct MatchArm {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Ident(String),
+    Wildcard,
+    Literal(Box<Expr>),
+    Tuple(Vec<Pattern>),
     Variant {
         enum_or_union: String,
         variant: String,
-        binding: Option<String>,
+        bindings: Vec<Pattern>,
     },
-    Wildcard,
+    Struct {
+        name: String,
+        fields: Vec<(String, Pattern)>,
+    },
 }

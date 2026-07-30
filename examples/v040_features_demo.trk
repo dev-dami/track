@@ -1,0 +1,19 @@
+fn main() -> void {
+    // 1. Tuple Creation & Indexing
+    let pair: (i64, i64) = (42, 100);
+    let first = pair.0;
+    let second = pair.1;
+    print(first);
+    print(second);
+
+    // 2. Tuple Destructuring
+    let (a, b) = (10, 20);
+    print(a + b);
+
+    // 3. Match Arm Guards & Nested Patterns
+    let val = 15;
+    match val {
+        n if n > 10 => print(1),
+        _ => print(0)
+    }
+}

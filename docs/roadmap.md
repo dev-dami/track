@@ -8,10 +8,10 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ```
 [v0.1.6] Slices & Primitives        ✅ DONE
-[v0.2.0] Standard Library & OS       🚀 CURRENT TARGET
-[v0.3.0] Monomorphized Generics      ⏳ PLANNED
-[v0.4.0] Advanced Pattern Matching   ⏳ PLANNED
-[v0.5.0] Option/Result & '?' Op      ⏳ PLANNED
+[v0.2.0] Standard Library & OS       ✅ DONE
+[v0.3.0] Monomorphized Generics      ✅ DONE
+[v0.4.0] Advanced Pattern Matching   ✅ DONE
+[v0.5.0] Option/Result & '?' Op      🚀 CURRENT TARGET
 [v0.6.0] Track Lexer in Track        ⏳ PLANNED
 [v0.7.0] Track Parser & AST in Track ⏳ PLANNED
 [v0.8.0] Track Checker & Codegen     ⏳ PLANNED
@@ -55,9 +55,9 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ---
 
-### v0.4.0 — Advanced Pattern Matching & Tuples
+### v0.4.0 — Advanced Pattern Matching & Tuples ✅
 - **Nested Pattern Matching**:
-  - Matching on nested structs and tagged unions (`match val { Value::Int(x) => ..., Value::Tuple(a, b) => ... }`).
+  - Matching on nested structs, tuples, and tagged unions (`match val { Value::Int(x) => ..., Value::Tuple(a, b) => ... }`).
 - **Match Arm Guard Expressions**:
   - Pattern guards (`match x { n if n > 10 => ..., _ => ... }`).
 - **Tuples & Destructuring**:

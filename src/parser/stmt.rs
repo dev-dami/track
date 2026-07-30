@@ -49,23 +49,34 @@ impl Parser {
         } else {
             false
         };
-        let name = self.expect_ident()?;
 
-        let ty = if self.peek() == Some(&Token::Colon) {
-            self.advance();
-            Some(self.parse_type()?)
+        if self.peek() == Some(&Token::LParen) {
+            let pattern = self.parse_pattern()?;
+            self.expect(&Token::Eq)?;
+            let val = self.parse_expr()?;
+            Ok(Expr::LetDestructure {
+                pattern,
+                mutable,
+                value: Box::new(val),
+            })
         } else {
-            None
-        };
+            let name = self.expect_ident()?;
+            let ty = if self.peek() == Some(&Token::Colon) {
+                self.advance();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
 
-        self.expect(&Token::Eq)?;
-        let val = self.parse_expr()?;
-        Ok(Expr::LetDef {
-            name,
-            mutable,
-            ty,
-            value: Box::new(val),
-        })
+            self.expect(&Token::Eq)?;
+            let val = self.parse_expr()?;
+            Ok(Expr::LetDef {
+                name,
+                mutable,
+                ty,
+                value: Box::new(val),
+            })
+        }
     }
 
     fn parse_with(&mut self) -> Result<Expr, String> {
