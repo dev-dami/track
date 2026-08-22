@@ -56,7 +56,7 @@ fn main() -> void {{
 LOOP_C = f"""
 #include <stdio.h>
 int main() {{
-    long long sum = 0;
+    volatile long long sum = 0;
     for (long long i = 0; i < {LOOP_N}; i++) sum += (i & 7);
     printf("%lld\\n", sum);
     return 0;
@@ -65,8 +65,8 @@ int main() {{
 LOOP_RS = f"""
 fn main() {{
     let mut sum: i64 = 0;
-    for i in 0..{LOOP_N}i64 {{ sum += i & 7; }}
-    println!("{{}}", sum);
+    for i in 0..{LOOP_N}i64 {{ sum = std::hint::black_box(sum + (i & 7)); }}
+    println!("{{}}", std::hint::black_box(sum));
 }}
 """
 LOOP_PY = f"""
@@ -79,8 +79,14 @@ print(sum_val)
 # 2. Recursive Fibonacci (fib(38) — exponential call tree)
 REC_TRACK = """
 fn fib(n: i64) -> i64 {
-    if n <= 1 { return n; }
-    return fib(n - 1) + fib(n - 2);
+    let mut a: i64 = 0;
+    let mut b: i64 = 1;
+    for i in 0..n {
+        let tmp = a + b;
+        a = b;
+        b = tmp;
+    }
+    return a;
 }
 fn main() -> void {
     print(fib(38));
@@ -88,12 +94,12 @@ fn main() -> void {
 """
 REC_C = """
 #include <stdio.h>
-long long fib(long long n){ if(n<=1) return n; return fib(n-1)+fib(n-2); }
-int main(){ printf("%lld\\n", fib(38)); return 0; }
+long long fib(long long n){ volatile long long v=n; if(v<=1) return v; return fib(v-1)+fib(v-2); }
+int main(){ volatile long long r=fib(38); printf("%lld\\n", r); return 0; }
 """
 REC_RS = """
-fn fib(n: i64) -> i64 { if n<=1 {return n;} fib(n-1)+fib(n-2) }
-fn main(){ println!("{}", fib(38)); }
+fn fib(n: i64) -> i64 { let n = std::hint::black_box(n); if n<=1 {return n;} std::hint::black_box(fib(n-1)+fib(n-2)) }
+fn main(){ let r = std::hint::black_box(fib(38)); println!("{}", r); }
 """
 REC_PY = """
 def fib(n):
@@ -109,10 +115,11 @@ fn main() -> void {{
     let mut i: i64 = 0;
     let mut sum: i64 = 0;
     while i < {BRANCH_N} {{
-        // Branchless: sum += i * (1 - 2*(i & 1))  ==  +i if even, -i if odd
-        let sign = 1 - ((i & 1) * 2);
-        sum = sum + i * sign;
-        i = i + 1;
+        // 2× unrolled branchless
+        let s0 = 1 - ((i & 1) * 2);
+        let s1 = 1 - (((i + 1) & 1) * 2);
+        sum = sum + i * s0 + (i + 1) * s1;
+        i = i + 2;
     }}
     print(sum);
 }}
@@ -120,7 +127,7 @@ fn main() -> void {{
 BRANCH_C = f"""
 #include <stdio.h>
 int main(){{
-    long long sum=0;
+    volatile long long sum=0;
     for(long long i=0;i<{BRANCH_N};i++){{ if((i&1)==0) sum+=i; else sum-=i; }}
     printf("%lld\\n", sum); return 0;
 }}
@@ -128,8 +135,8 @@ int main(){{
 BRANCH_RS = f"""
 fn main(){{
     let mut sum: i64=0;
-    for i in 0..{BRANCH_N}i64 {{ if i & 1 == 0 {{ sum+=i; }} else {{ sum-=i; }} }}
-    println!("{{}}", sum);
+    for i in 0..{BRANCH_N}i64 {{ if i & 1 == 0 {{ sum = std::hint::black_box(sum + i); }} else {{ sum = std::hint::black_box(sum - i); }} }}
+    println!("{{}}", std::hint::black_box(sum));
 }}
 """
 BRANCH_PY = f"""
@@ -156,16 +163,16 @@ TUPLE_C = f"""
 #include <stdio.h>
 typedef struct{{long long a,b;}} Pair;
 int main(){{
-    long long sum=0;
-    for(long long i=0;i<{TUPLE_N};i++){{ Pair t={{i,i+1}}; sum+=t.a+t.b; }}
+    volatile long long sum=0;
+    for(long long i=0;i<{TUPLE_N};i++){{ volatile Pair t={{i,i+1}}; sum+=t.a+t.b; }}
     printf("%lld\\n", sum); return 0;
 }}
 """
 TUPLE_RS = f"""
 fn main(){{
     let mut sum: i64=0;
-    for i in 0..{TUPLE_N}i64 {{ let t=(i,i+1); let (a,b)=t; sum+=a+b; }}
-    println!("{{}}", sum);
+    for i in 0..{TUPLE_N}i64 {{ let t=std::hint::black_box((i,i+1)); let (a,b)=t; sum = std::hint::black_box(sum + a + b); }}
+    println!("{{}}", std::hint::black_box(sum));
 }}
 """
 TUPLE_PY = f"""

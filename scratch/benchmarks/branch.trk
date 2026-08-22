@@ -2,10 +2,11 @@ fn main() -> void {
     let mut i: i64 = 0;
     let mut sum: i64 = 0;
     while i < 50000000 {
-        // Branchless: sum += i * (1 - 2*(i & 1))  ==  +i if even, -i if odd
-        let sign = 1 - ((i & 1) * 2);
-        sum = sum + i * sign;
-        i = i + 1;
+        // 2× unrolled branchless
+        let s0 = 1 - ((i & 1) * 2);
+        let s1 = 1 - (((i + 1) & 1) * 2);
+        sum = sum + i * s0 + (i + 1) * s1;
+        i = i + 2;
     }
     print(sum);
 }

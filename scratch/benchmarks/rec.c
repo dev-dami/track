@@ -1,3 +1,3 @@
 #include <stdio.h>
-long long fib(long long n){ if(n<=1) return n; return fib(n-1)+fib(n-2); }
-int main(){ printf("%lld\n", fib(38)); return 0; }
+long long fib(long long n){ volatile long long v=n; if(v<=1) return v; return fib(v-1)+fib(v-2); }
+int main(){ volatile long long r=fib(38); printf("%lld\n", r); return 0; }
