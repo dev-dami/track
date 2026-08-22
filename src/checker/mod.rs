@@ -301,6 +301,10 @@ impl LinearChecker {
         self.functions
             .insert("str_contains".to_string(), Some(TrackType::I64));
 
+        // Explicit error handling primitives (v0.5)
+        self.functions
+            .insert("abort".to_string(), Some(TrackType::Void));
+
         // TCP Socket Net API
         self.functions
             .insert("net_socket_tcp_listen".to_string(), Some(TrackType::I32));
@@ -984,6 +988,7 @@ impl LinearChecker {
                     ],
                     "std/sys" => vec![
                         ("exit".to_string(), Some(TrackType::Void)),
+                        ("abort".to_string(), Some(TrackType::Void)),
                         ("clock_ms".to_string(), Some(TrackType::I64)),
                     ],
                     "std/mem" => vec![

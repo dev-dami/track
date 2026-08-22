@@ -326,6 +326,7 @@ impl LanguageServer for TrackLsp {
             "str_starts_with",
             "str_ends_with",
             "str_contains",
+            "abort",
         ];
 
         for b in builtins {

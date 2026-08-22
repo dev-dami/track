@@ -1,0 +1,39 @@
+// v0.5.0 demo: explicit stack-based error handling
+// - (value, err) tuple returns with destructuring
+// - explicit propagation by hand
+// - abort(msg) for fatal, unrecoverable states
+
+const ERR_NOT_FOUND = 1;
+const ERR_TOO_LARGE = 2;
+
+fn file_len_checked(path: &ptr<u8>) -> (i64, i32) {
+    let ok = file_exists(path);
+    if (!ok) {
+        return (-1, ERR_NOT_FOUND);
+    }
+    let size = file_size(path);
+    if (size > 1048576) {
+        return (-1, ERR_TOO_LARGE);
+    }
+    return (size, 0);
+}
+
+fn total_size(path: &ptr<u8>, fallback: i64) -> i64 {
+    let (size, err) = file_len_checked(path);
+    if (err == ERR_NOT_FOUND) {
+        print_err("missing input, using fallback");
+        return fallback;
+    }
+    if (err == ERR_TOO_LARGE) {
+        abort("fatal: input exceeds 1MB safety limit");
+    }
+    return size;
+}
+
+fn main() -> void {
+    let a = total_size(&"/etc/hostname", 0);
+    print(a);
+
+    let b = total_size(&"/definitely/not/here", 7);
+    print(b);
+}

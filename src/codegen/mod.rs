@@ -19,6 +19,7 @@ pub struct CodeGen {
     fn_builder_ctx: FunctionBuilderContext,
     functions: HashMap<String, FuncId>,
     variant_map: HashMap<String, i64>,
+    consts: HashMap<String, i64>,
 }
 
 impl CodeGen {
@@ -62,13 +63,50 @@ impl CodeGen {
             fn_builder_ctx: FunctionBuilderContext::new(),
             functions: HashMap::new(),
             variant_map,
+            consts: HashMap::new(),
+        }
+    }
+
+    /// Evaluate a compile-time constant expression (integer literals,
+    /// negation, and arithmetic over known constants).
+    fn eval_const(&self, expr: &Expr) -> Option<i64> {
+        match expr {
+            Expr::IntLiteral(v) => Some(*v),
+            Expr::BoolLiteral(b) => Some(if *b { 1 } else { 0 }),
+            Expr::UnaryOp {
+                op: UnaryOp::Neg,
+                expr,
+            } => self.eval_const(expr).map(|v| -v),
+            Expr::BinaryOp { op, left, right } => {
+                let l = self.eval_const(left)?;
+                let r = self.eval_const(right)?;
+                match op {
+                    BinOp::Add => Some(l.wrapping_add(r)),
+                    BinOp::Sub => Some(l.wrapping_sub(r)),
+                    BinOp::Mul => Some(l.wrapping_mul(r)),
+                    BinOp::Div if r != 0 => Some(l.wrapping_div(r)),
+                    BinOp::Mod if r != 0 => Some(l.wrapping_rem(r)),
+                    BinOp::BitAnd => Some(l & r),
+                    BinOp::BitOr => Some(l | r),
+                    BinOp::Shl => Some(l.wrapping_shl(r as u32)),
+                    BinOp::Shr => Some(l.wrapping_shr(r as u32)),
+                    _ => None,
+                }
+            }
+            Expr::Variable(name) => self.consts.get(name).copied(),
+            _ => None,
         }
     }
 
     pub fn compile_program(&mut self, program: &[Expr]) {
-        // First pass: declare all functions, macros, enums, and unions
+        // First pass: declare all functions, macros, enums, unions, and consts
         for expr in program {
             match expr {
+                Expr::ConstDef { name, value } => {
+                    if let Some(v) = self.eval_const(value) {
+                        self.consts.insert(name.clone(), v);
+                    }
+                }
                 Expr::EnumDef { name, variants, .. } => {
                     for (idx, (vname, _)) in variants.iter().enumerate() {
                         self.variant_map.insert(vname.clone(), idx as i64);
@@ -203,6 +241,7 @@ impl CodeGen {
             var_counter,
             functions: &mut self.functions,
             variant_map: &self.variant_map,
+            consts: &self.consts,
         };
 
         // If compiling main, compile top-level statements (global variables/consts) into entry block first
@@ -267,6 +306,7 @@ impl CodeGen {
             var_counter: 0,
             functions: &mut self.functions,
             variant_map: &self.variant_map,
+            consts: &self.consts,
         };
 
         let mut has_return_stmt = false;
@@ -305,6 +345,7 @@ struct FnContext<'a> {
     var_counter: u32,
     functions: &'a mut HashMap<String, FuncId>,
     variant_map: &'a HashMap<String, i64>,
+    consts: &'a HashMap<String, i64>,
 }
 
 impl<'a> FnContext<'a> {
@@ -354,6 +395,8 @@ impl<'a> FnContext<'a> {
                     Some(builder.ins().iconst(ir::types::I64, disc))
                 } else if let Some(&var) = self.var_map.get(name) {
                     Some(builder.use_var(var))
+                } else if let Some(&c) = self.consts.get(name) {
+                    Some(builder.ins().iconst(ir::types::I64, c))
                 } else {
                     None
                 }
@@ -408,7 +451,17 @@ impl<'a> FnContext<'a> {
                 let val = self.compile_expr(builder, module, expr)?;
                 match op {
                     UnaryOp::Neg => Some(builder.ins().ineg(val)),
-                    UnaryOp::Not => Some(builder.ins().bnot(val)),
+                    // Logical NOT: (val == 0). Bitwise bnot would turn 1 into -2,
+                    // which is still truthy and inverts branch semantics.
+                    UnaryOp::Not => {
+                        let ty = builder.func.dfg.value_type(val);
+                        let zero = builder.ins().iconst(ty, 0);
+                        Some(
+                            builder
+                                .ins()
+                                .icmp(ir::condcodes::IntCC::Equal, val, zero),
+                        )
+                    }
                     UnaryOp::Deref => Some(val),
                 }
             }
@@ -425,7 +478,7 @@ impl<'a> FnContext<'a> {
                 }
 
                 let clean_name = name.trim_start_matches('@');
-                let target_name = if clean_name.contains("::") {
+                let mut target_name = if clean_name.contains("::") {
                     clean_name.split("::").last().unwrap()
                 } else {
                     clean_name
@@ -439,6 +492,11 @@ impl<'a> FnContext<'a> {
                     return arg_vals.first().copied().or_else(|| {
                         Some(builder.ins().iconst(ir::types::I64, disc))
                     });
+                }
+
+                // Map Track-level builtin names to their C runtime symbols.
+                if target_name == "abort" {
+                    target_name = "track_abort";
                 }
 
                 let func_id = if let Some(&fid) = self.functions.get(name) {

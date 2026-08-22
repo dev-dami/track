@@ -165,6 +165,18 @@ static int is_valid_string_pointer(const void* ptr) {
     return res == 1;
 }
 
+// Fatal abort: print message and terminate the process.
+// No unwinding — stack frames are simply discarded (linear cleanup is skipped by design).
+void track_abort(const char* msg) {
+    if (msg && is_valid_string_pointer(msg)) {
+        fprintf(stderr, "Track abort: %s\n", msg);
+    } else {
+        fprintf(stderr, "Track abort\n");
+    }
+    fflush(stderr);
+    exit(134);
+}
+
 void print(long long val) {
     if (val >= 0x10000 && is_valid_string_pointer((const void*)(uintptr_t)val)) {
         const char* str = (const char*)(uintptr_t)val;

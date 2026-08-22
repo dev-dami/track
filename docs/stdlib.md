@@ -252,3 +252,24 @@ let joined: Str = path_join("compiler", "lexer.trk");          // "compiler/lexe
 - Stdlib functions are just wrappers around C runtime / native OS calls
 - All functions are comptime-resolved when possible
 
+## Error Conventions (v0.5)
+
+Stdlib functions never throw, unwrap, or hide failures. They follow the
+explicit error-passing convention (see [errors.md](errors.md)):
+
+| Pattern | Functions |
+|---------|-----------|
+| Status code (`0` ok / `-1` fail) | `file_remove`, `file_copy`, `process_spawn`, `sys_exec`, `net_socket_*` |
+| Sentinel value | `str_find` (-1), `file_size` (-1), `net_socket_recv` (-1) |
+| Boolean predicate | `file_exists`, `dir_exists`, `str_starts_with`, `str_contains` |
+
+Fatal, unrecoverable states are handled with `abort(msg)` — print to stderr
+and exit with status 134. There is no unwinding.
+
+```track
+let fd = net_socket_tcp_listen(8080);
+if (fd < 0) {
+    abort("fatal: cannot bind port 8080");
+}
+```
+

@@ -5,6 +5,16 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — v0.5.0 work begins
+- **`abort(msg)` builtin**: print message to stderr and exit with status 134. No unwinding — frames are discarded by design.
+- **Explicit stack-based error handling** adopted as the official error model (no `Option`/`Result`, no `?` operator): error codes as copy primitives, `(value, err)` tuple returns via destructuring, out-params via `&T`. Documented in `docs/errors.md`; demo in `examples/error_handling.trk`.
+
+### Fixed
+- **Unary `!` miscompiled**: compiled to bitwise NOT (`bnot`), so `if (!flag)` with `flag == 1` evaluated `-2` (truthy) and took the wrong branch. Now compiles to a proper logical NOT (`val == 0`).
+- **Top-level `const`s resolved as 0 at codegen** when referenced from non-main functions. Constants are now collected in a first pass (including arithmetic over other constants) and emitted as immediate values everywhere.
+
 ## [0.4.0] — 2026-07-30
 
 ### Added

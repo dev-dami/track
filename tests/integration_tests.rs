@@ -137,3 +137,128 @@ fn test_for_in_loop_execution() {
     assert!(output.status.success(), "For loop execution failed");
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_explicit_error_handling_convention() {
+    // v0.5.0: (value, err) tuple returns, explicit propagation, abort(msg)
+    let source = r#"
+        const ERR_NOT_FOUND = 1;
+
+        fn file_len(path: &ptr<u8>) -> (i64, i32) {
+            let ok = file_exists(path);
+            if (!ok) {
+                return (-1, ERR_NOT_FOUND);
+            }
+            return (file_size(path), 0);
+        }
+
+        fn total(path: &ptr<u8>, fallback: i64) -> i64 {
+            let (size, err) = file_len(path);
+            if (err == ERR_NOT_FOUND) {
+                print_err("missing input, using fallback");
+                return fallback;
+            }
+            if (err != 0) {
+                abort("fatal: unexpected error");
+            }
+            return size;
+        }
+
+        fn main() -> void {
+            print(total("/etc/hostname", -7));
+            print(total("/definitely/not/here", 7));
+        }
+    "#;
+    let temp_dir = env::temp_dir().join(format!("track_err_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let src_file = temp_dir.join("error_handling.trk");
+    fs::write(&src_file, source).unwrap();
+
+    let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe_path).output().unwrap();
+
+    assert!(output.status.success(), "Error handling program failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(
+        lines.len() >= 2 && lines[0].trim() != "-1" && !lines[0].is_empty(),
+        "Expected real size for existing file, got: {}",
+        stdout
+    );
+    assert!(
+        lines[1].trim() == "7",
+        "Expected fallback value 7 for missing file, got: {}",
+        stdout
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("missing input"),
+        "Expected stderr diagnostic, got: {}",
+        stderr
+    );
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_logical_not_operator() {
+    // Regression: unary ! was compiled as bitwise NOT (bnot),
+    // making `if (!flag)` with flag == 1 take the wrong branch.
+    let source = r#"
+        fn main() -> void {
+            let ok = file_exists("/etc/hostname");
+            if (!ok) {
+                print(999);
+                return;
+            }
+            let missing = file_exists("/definitely/not/here");
+            if (!missing) {
+                print(42);
+            }
+        }
+    "#;
+    let temp_dir = env::temp_dir().join(format!("track_lnot_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let src_file = temp_dir.join("lnot.trk");
+    fs::write(&src_file, source).unwrap();
+
+    let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe_path).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "42", "Logical NOT miscompiled; got: {}", stdout);
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_const_resolution_across_functions() {
+    // Regression: top-level consts were invisible to non-main functions
+    // and silently evaluated to 0 at codegen.
+    let source = r#"
+        const BASE = 100;
+        const OFFSET = BASE + 23;
+
+        fn get_offset() -> i64 {
+            return OFFSET;
+        }
+
+        fn main() -> void {
+            print(BASE);
+            print(get_offset());
+        }
+    "#;
+    let temp_dir = env::temp_dir().join(format!("track_const_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let src_file = temp_dir.join("consts.trk");
+    fs::write(&src_file, source).unwrap();
+
+    let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe_path).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.first().copied().unwrap_or(""), "100", "got: {}", stdout);
+    assert_eq!(lines.get(1).copied().unwrap_or(""), "123", "got: {}", stdout);
+    let _ = fs::remove_dir_all(&temp_dir);
+}
