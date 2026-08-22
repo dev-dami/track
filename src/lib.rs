@@ -216,6 +216,18 @@ long long str_to_int(const char* s) {
     if (!s) return 0;
     return atoll(s);
 }
+// Predicate companion for str_to_int: distinguishes a genuine "0" from a parse failure.
+int str_is_int(const char* s) {
+    if (!s || *s == '\0') return 0;
+    const char* p = s;
+    if (*p == '+' || *p == '-') p++;
+    if (*p == '\0') return 0;
+    while (*p) {
+        if (!isdigit((unsigned char)*p)) return 0;
+        p++;
+    }
+    return 1;
+}
 Str int_to_str(long long val) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%lld", val);
@@ -268,6 +280,11 @@ Str env_get(const char* key) {
         memcpy(s.data, val, (size_t)s.len + 1);
     }
     return s;
+}
+int env_exists(const char* key) {
+    if (!key) return 0;
+    const char* val = getenv(key);
+    return val != NULL ? 1 : 0;
 }
 int net_socket_tcp_listen(int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);

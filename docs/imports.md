@@ -62,7 +62,7 @@ import "path/to/module" as alias :: { item1 };
 | Module | Core Functions | Description |
 |--------|-----------|-------------|
 | `std/io` | `print`, `print_int`, `read_line` | Standard I/O operations |
-| `std/os` | `os_args_count`, `os_arg`, `env_get` | Command line & OS environment |
+| `std/os` | `os_args_count`, `os_arg`, `env_get`, `env_exists` | Command line & OS environment |
 | `std/fs` | `dir_exists`, `file_copy`, `file_size`, `file_remove` | File system & directory operations |
 | `std/process` | `process_spawn`, `sys_exec` | Subprocess creation and command execution |
 | `std/path` | `path_basename`, `path_ext`, `path_join` | Path string manipulation |

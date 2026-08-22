@@ -37,7 +37,7 @@ fn main() {
             }
         }
         "--version" | "-v" | "version" => {
-            println!("track 0.4.0");
+            println!("track {}", env!("CARGO_PKG_VERSION"));
         }
         "--help" | "-h" | "help" => {
             print_usage();

@@ -326,6 +326,9 @@ impl LanguageServer for TrackLsp {
             "str_starts_with",
             "str_ends_with",
             "str_contains",
+            "str_is_int",
+            "env_get",
+            "env_exists",
             "abort",
         ];
 

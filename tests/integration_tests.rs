@@ -262,3 +262,41 @@ fn test_const_resolution_across_functions() {
     assert_eq!(lines.get(1).copied().unwrap_or(""), "123", "got: {}", stdout);
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_error_predicates_disambiguate_sentinels() {
+    // str_is_int / env_exists disambiguate ambiguous sentinel returns
+    let source = r#"
+        fn main() -> void {
+            if (str_is_int("00042")) {
+                print(str_to_int("00042"));
+            }
+            if (!str_is_int("junk")) {
+                print(111);
+            }
+            if (env_exists("PATH")) {
+                print(222);
+            }
+            if (!env_exists("TRACK_DEFINITELY_NOT_SET_9x7")) {
+                print(333);
+            }
+        }
+    "#;
+    let temp_dir = env::temp_dir().join(format!("track_pred_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let src_file = temp_dir.join("pred.trk");
+    fs::write(&src_file, source).unwrap();
+
+    let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe_path).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.first().copied().unwrap_or(""), "42", "got: {}", stdout);
+    assert!(lines.contains(&"111"), "got: {}", stdout);
+    assert!(lines.contains(&"222"), "got: {}", stdout);
+    assert!(lines.contains(&"333"), "got: {}", stdout);
+    assert!(!lines.contains(&"999"), "got: {}", stdout);
+    let _ = fs::remove_dir_all(&temp_dir);
+}

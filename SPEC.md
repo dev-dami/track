@@ -1,4 +1,4 @@
-# Track Core Language Specification (v0.4)
+# Track Core Language Specification (v0.5)
 
 Track is a low-level systems programming language designed for deterministic memory safety without a garbage collector or complex lifetime annotations.
 
@@ -118,7 +118,22 @@ Pattern matching expressions (`match`) evaluate patterns sequentially against a 
 
 ---
 
-## 8. Diagnostics & Error Reporting
+## 8. Explicit Error Handling Convention
+
+Track rejects wrapper-based error handling. There are no `Option`/`Result`
+types, no `?` operator, no exceptions, and no stack unwinding. Errors are
+ordinary stack values passed around explicitly.
+
+1. **Status Codes**: Failing functions return copy-type status values (`i32`, `bool`). `0` = success.
+2. **Tuple Returns**: `(T, i32)` pairs a payload with an error code; destructured at the call site via `let (val, err) = ...`.
+3. **Out-Params**: `&T` parameters for explicit outputs on hot paths.
+4. **Predicates**: Ambiguous sentinels (`str_to_int`, `env_get`) are paired with boolean predicates (`str_is_int`, `env_exists`) that must be checked first.
+5. **Fatal Abort**: `abort(msg)` prints to stderr and exits with status 134. Frames are discarded without linear cleanup — abort is not an error channel.
+6. **Explicit Propagation**: Every error path is visible in the source; there is no implicit propagation.
+
+---
+
+## 9. Diagnostics & Error Reporting
 
 Track compiler diagnostics report span location, root cause, and ownership state transitions:
 

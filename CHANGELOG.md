@@ -5,15 +5,18 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] — 2026-08-22
 
-### Added — v0.5.0 work begins
-- **`abort(msg)` builtin**: print message to stderr and exit with status 134. No unwinding — frames are discarded by design.
-- **Explicit stack-based error handling** adopted as the official error model (no `Option`/`Result`, no `?` operator): error codes as copy primitives, `(value, err)` tuple returns via destructuring, out-params via `&T`. Documented in `docs/errors.md`; demo in `examples/error_handling.trk`.
+### Added
+- **Explicit stack-based error handling** adopted as the official error model: no `Option`/`Result` types, no `?` operator, no hidden control flow, no unwinding. Error codes as copy primitives, `(value, err)` tuple returns via v0.4 destructuring, out-params via `&T`. Documented in `docs/errors.md`; demo in `examples/error_handling.trk`.
+- **`abort(msg)` builtin**: print message to stderr and exit with status 134. No unwinding — frames are discarded by design. Exported via `std/sys`.
+- **`str_is_int(s)`**: predicate companion for `str_to_int`, distinguishing a genuine `0` from a parse failure.
+- **`env_exists(key)`**: predicate companion for `env_get`.
 
 ### Fixed
-- **Unary `!` miscompiled**: compiled to bitwise NOT (`bnot`), so `if (!flag)` with `flag == 1` evaluated `-2` (truthy) and took the wrong branch. Now compiles to a proper logical NOT (`val == 0`).
-- **Top-level `const`s resolved as 0 at codegen** when referenced from non-main functions. Constants are now collected in a first pass (including arithmetic over other constants) and emitted as immediate values everywhere.
+- **Unary `!` miscompiled as bitwise NOT (`bnot`)**: `if (!flag)` with `flag == 1` evaluated `-2` (truthy) and took the wrong branch. Now compiles to a proper logical NOT (`val == 0`).
+- **Top-level `const`s silently resolved to 0 at codegen** when referenced from non-main functions. Constants are now collected in a first pass (including arithmetic over other constants) and emitted as immediate values everywhere.
+- `track --version` hardcoded the version string; now derived from `CARGO_PKG_VERSION`.
 
 ## [0.4.0] — 2026-07-30
 

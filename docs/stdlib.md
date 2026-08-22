@@ -132,7 +132,10 @@ print_hex(0xFF);
 let line = read_line();
 
 // File operations
-let f = file_open("data.txt", "r");
+let f = file_open("data.txt", "r"); // returns null (0) if open fails — check before use!
+if (f == 0) {
+    abort("fatal: cannot open data.txt");
+}
 let content = file_read_all(f);
 // f is automatically closed when spent
 
@@ -146,14 +149,16 @@ file_write(f, &content);
 // Substring find (index or -1)
 let idx = str_find("hello world", "world"); // 6
 
-// Parse string to int
+// Parse string to int (pair with str_is_int — returns 0 on invalid input)
 let val = str_to_int("42"); // 42
 
 // Format int to owned Str
 let s = int_to_str(1337);
 
 // Environment variables
-let path = env_get("PATH");
+if (env_exists("PATH")) {
+    let path = env_get("PATH");
+}
 ```
 
 ## Extended File System & OS (`std/fs`, `std/os`, `std/process`)
@@ -261,7 +266,7 @@ explicit error-passing convention (see [errors.md](errors.md)):
 |---------|-----------|
 | Status code (`0` ok / `-1` fail) | `file_remove`, `file_copy`, `process_spawn`, `sys_exec`, `net_socket_*` |
 | Sentinel value | `str_find` (-1), `file_size` (-1), `net_socket_recv` (-1) |
-| Boolean predicate | `file_exists`, `dir_exists`, `str_starts_with`, `str_contains` |
+| Boolean predicate | `file_exists`, `dir_exists`, `env_exists`, `str_starts_with`, `str_ends_with`, `str_contains`, `str_is_int` |
 
 Fatal, unrecoverable states are handled with `abort(msg)` — print to stderr
 and exit with status 134. There is no unwinding.

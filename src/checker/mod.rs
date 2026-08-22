@@ -300,10 +300,14 @@ impl LinearChecker {
             .insert("eprint".to_string(), Some(TrackType::Void));
         self.functions
             .insert("str_contains".to_string(), Some(TrackType::I64));
+        self.functions
+            .insert("str_is_int".to_string(), Some(TrackType::I32));
 
         // Explicit error handling primitives (v0.5)
         self.functions
             .insert("abort".to_string(), Some(TrackType::Void));
+        self.functions
+            .insert("env_exists".to_string(), Some(TrackType::I32));
 
         // TCP Socket Net API
         self.functions

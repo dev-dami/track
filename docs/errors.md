@@ -11,7 +11,24 @@ are passed around explicitly. Every error path is visible in the source.
 | Status code | `-> i32` (`0` = ok) | Simple success/failure, no payload |
 | Tuple return | `-> (T, i32)` | Returning a value *and* an error code |
 | Out-param | `-> i32` with `out: &T` | Hot paths, large payloads, C interop |
+| Boolean predicate | `-> i32` (1/0), checked first | Ambiguous sentinels (`str_is_int`, `env_exists`, `file_exists`) |
 | Fatal abort | `abort(msg)` | Unrecoverable errors — print and exit |
+
+### Disambiguating Sentinels
+
+Some stdlib functions return sentinel values that can overlap real data
+(`str_to_int("0")` and `str_to_int("junk")` both give `0`). Pair them with
+their predicate companion before trusting the value:
+
+```track
+let raw = "00042";
+if (str_is_int(raw)) {
+    let n = str_to_int(raw); // guaranteed valid
+    print(n);
+} else {
+    print_err("not a number");
+}
+```
 
 ## 1. Error Codes as Copy Primitives
 

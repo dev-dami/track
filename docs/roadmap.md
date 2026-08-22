@@ -11,8 +11,8 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 [v0.2.0] UFCS, Lenses & CFG Merging ✅ DONE
 [v0.3.0] Perf & Self-Hosting Prep   ✅ DONE
 [v0.4.0] Tuples & Pattern Matching  ✅ DONE
-[v0.5.0] Explicit Error Handling    🚀 CURRENT TARGET
-[v0.6.0] Monomorphized Generics     ⏳ PLANNED
+[v0.5.0] Explicit Error Handling    ✅ DONE
+[v0.6.0] Monomorphized Generics     🚀 CURRENT TARGET
 [v0.7.0] Track Lexer in Track       ⏳ PLANNED
 [v0.8.0] Track Parser, Checker & Codegen ⏳ PLANNED
 [v0.9.0] Self-Bootstrapping Verified 🎯 MILESTONE
@@ -70,7 +70,7 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ---
 
-### v0.5.0 — Explicit Stack-Based Error Handling 🚀 CURRENT TARGET
+### v0.5.0 — Explicit Stack-Based Error Handling ✅
 Track rejects wrapper-based error handling: **no `Option`/`Result` types, no `?`
 operator, no hidden control flow, no stack unwinding.** Errors are ordinary
 values that live on the call stack and are passed around explicitly.
@@ -84,10 +84,11 @@ values that live on the call stack and are passed around explicitly.
   - C-style explicit outputs (`fn read_all(path: Str, out: &Str) -> i32`) for hot paths.
 - **Explicit Propagation**:
   - Callers branch on the error value and return it upward by hand — every error path is visible in the source.
-- **Stdlib Convention Audit**:
-  - All failing stdlib functions standardized on the `(value, err)` / out-param convention.
-- **Fatal Abort Primitive**:
-  - `abort(msg)` — print message and exit the process; no unwinding, frames are simply discarded.
+- **Stdlib Convention Audit** ✅:
+  - Failing functions standardized on the `(value, err)` / out-param / predicate convention.
+  - Ambiguous sentinels disambiguated with predicate companions (`str_is_int`, `env_exists`).
+- **Fatal Abort Primitive** ✅:
+  - `abort(msg)` — print message and exit the process with status 134; no unwinding, frames are simply discarded.
 
 ---
 
