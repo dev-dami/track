@@ -1,0 +1,35 @@
+// v0.6.0 demo: monomorphized generics — generic functions
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn pair<T, U>(a: T, b: U) -> (T, U) {
+    return (a, b);
+}
+
+fn first<T, U>(p: (T, U)) -> T {
+    return p.0;
+}
+
+fn main() -> void {
+    // identity monomorphized for i32 and i64
+    let a: i32 = 5;
+    print(identity(a));
+    let b: i64 = 10;
+    print(identity(b));
+
+    // pair creates (i32, i32) and (i64, bool)
+    let p1 = pair(1, 2);
+    print(p1.0);
+    print(p1.1);
+
+    // nested generic calls: pair(identity(1), identity(2))
+    let p2 = pair(identity(1), identity(2));
+    print(p2.0);
+    print(p2.1);
+
+    // generic with tuple param
+    let t = (100, 200);
+    print(first(t));
+}

@@ -16,6 +16,7 @@ fn test_parse_fn_def() {
         ast,
         vec![Expr::FnDef {
             name: "add".to_string(),
+            generics: Vec::new(),
             params: vec![
                 ("a".to_string(), TrackType::I32),
                 ("b".to_string(), TrackType::I32)
@@ -281,4 +282,44 @@ fn test_parse_use_statement() {
     let ast = parse(source);
     assert_eq!(ast.len(), 1);
     assert!(matches!(ast[0], Expr::Use { .. }));
+}
+
+#[test]
+fn test_parse_generic_fn_single_param() {
+    let source = "fn identity<T>(x: T) -> T { return x; }";
+    let ast = parse(source);
+    assert_eq!(
+        ast,
+        vec![Expr::FnDef {
+            name: "identity".to_string(),
+            generics: vec!["T".to_string()],
+            params: vec![("x".to_string(), TrackType::Custom("T".to_string()))],
+            return_type: Some(TrackType::Custom("T".to_string())),
+            body: vec![Expr::Return {
+                value: Some(Box::new(Expr::Variable("x".to_string())))
+            }]
+        }]
+    );
+}
+
+#[test]
+fn test_parse_generic_fn_multi_params() {
+    let source = "fn pair<T, U>(a: T, b: U) -> (T, U) { return (a, b); }";
+    let ast = parse(source);
+    assert_eq!(ast.len(), 1);
+    if let Expr::FnDef { name, generics, params, return_type, .. } = &ast[0] {
+        assert_eq!(name, "pair");
+        assert_eq!(generics, &vec!["T".to_string(), "U".to_string()]);
+        assert_eq!(params.len(), 2);
+        assert!(matches!(return_type, Some(TrackType::Tuple(_))));
+    } else {
+        panic!("expected FnDef");
+    }
+}
+
+#[test]
+fn test_parse_generic_fn_no_return() {
+    let source = "fn log<T>(x: T) { print(x); }";
+    let ast = parse(source);
+    assert!(matches!(&ast[0], Expr::FnDef { generics, .. } if generics == &vec!["T".to_string()]));
 }

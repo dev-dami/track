@@ -102,6 +102,25 @@ impl Parser {
     fn parse_fn(&mut self) -> Result<Expr, String> {
         self.advance(); // consume 'fn'
         let name = self.expect_ident()?;
+
+        // Optional generic parameters: fn name<T, U>(...)
+        let generics = if self.peek() == Some(&Token::Lt) {
+            self.advance();
+            let mut params = Vec::new();
+            loop {
+                params.push(self.expect_ident()?);
+                if self.peek() == Some(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.expect(&Token::Gt)?;
+            params
+        } else {
+            Vec::new()
+        };
+
         self.expect(&Token::LParen)?;
 
         let mut params = Vec::new();
@@ -137,6 +156,7 @@ impl Parser {
 
         Ok(Expr::FnDef {
             name,
+            generics,
             params,
             return_type,
             body,

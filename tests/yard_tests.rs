@@ -93,3 +93,58 @@ fn test_yard_parallel_build_and_incremental_cache() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_yard_lint_and_clean() {
+    let td = env::temp_dir().join(format!("track_yard_lint_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&td);
+    let proj = td.join("lint_app");
+    commands::init(&[proj.to_str().unwrap().to_string()]).unwrap();
+    // lint should succeed on fresh project
+    let lint = commands::lint_at(&proj, &[]);
+    assert!(lint.is_ok(), "lint failed: {:?}", lint.err());
+    // build then clean
+    let build = commands::build_at(&proj, &[]);
+    assert!(build.is_ok(), "build failed: {:?}", build.err());
+    assert!(proj.join("target").exists());
+    let clean = commands::clean_at(&proj);
+    assert!(clean.is_ok());
+    assert!(!proj.join("target").exists());
+    let _ = fs::remove_dir_all(&td);
+}
+
+#[test]
+fn test_yard_version_reports() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_yard"))
+        .arg("--version")
+        .output();
+    if let Ok(o) = out {
+        let s = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(s.contains("0.6.0"), "yard version missing 0.6.0: {}", s);
+    } else {
+        // fallback via cargo run
+        let o = std::process::Command::new("cargo").args(&["run","--bin","yard","--","--version"]).output().unwrap();
+        let s = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(s.contains("0.6.0"), "yard version missing: {}", s);
+    }
+}
+
+#[test]
+fn test_yard_build_generics_project() {
+    let td = env::temp_dir().join(format!("track_yard_gen_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&td);
+    let proj = td.join("gen_app");
+    commands::init(&[proj.to_str().unwrap().to_string()]).unwrap();
+    fs::write(
+        proj.join("src/main.trk"),
+        "fn identity<T>(x: T) -> T { return x; } fn main() -> void { let a: i32 = 9; print(identity(a)); }",
+    ).unwrap();
+    let build = commands::build_at(&proj, &[]);
+    assert!(build.is_ok(), "generics build failed: {:?}", build.err());
+    assert!(proj.join("target/gen_app").exists());
+    let check = commands::check_at(&proj, &[]);
+    assert!(check.is_ok(), "generics check failed: {:?}", check.err());
+    let lint = commands::lint_at(&proj, &[]);
+    assert!(lint.is_ok());
+    let _ = fs::remove_dir_all(&td);
+}

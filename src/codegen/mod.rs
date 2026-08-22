@@ -121,11 +121,34 @@ impl CodeGen {
                 }
                 Expr::FnDef {
                     name,
+                    generics,
                     params,
                     return_type,
                     ..
+                } => {
+                    // Generic templates are never emitted — only their
+                    // monomorphized instances (which have empty `generics`).
+                    if !generics.is_empty() {
+                        continue;
+                    }
+                    let mut sig = self.module.make_signature();
+                    for (_, pty) in params {
+                        sig.params.push(AbiParam::new(track_type_to_cl(pty)));
+                    }
+                    if name == "main" {
+                        sig.returns.push(AbiParam::new(ir::types::I32));
+                    } else if let Some(rty) = return_type
+                        && *rty != TrackType::Void {
+                            sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+                        }
+
+                    let func_id = self
+                        .module
+                        .declare_function(name, Linkage::Export, &sig)
+                        .unwrap_or_else(|_| self.module.declare_anonymous_function(&sig).unwrap());
+                    self.functions.insert(name.clone(), func_id);
                 }
-                | Expr::MacroDef {
+                Expr::MacroDef {
                     name,
                     params,
                     return_type,
@@ -167,11 +190,22 @@ impl CodeGen {
         for expr in program {
             if let Expr::FnDef {
                 name,
+                generics,
                 params,
                 return_type,
                 body,
-            }
-            | Expr::MacroDef {
+            } = expr
+            {
+                if !generics.is_empty() {
+                    // Templates are handled via their monomorphized instances.
+                    continue;
+                }
+                if name == "main" {
+                    has_main = true;
+                }
+                let func_id = *self.functions.get(name).unwrap();
+                self.compile_fn(func_id, name, params, return_type.as_ref(), body, program);
+            } else if let Expr::MacroDef {
                 name,
                 params,
                 return_type,

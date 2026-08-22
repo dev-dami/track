@@ -1,4 +1,4 @@
-# Track Core Language Specification (v0.5)
+# Track Core Language Specification (v0.6)
 
 Track is a low-level systems programming language designed for deterministic memory safety without a garbage collector or complex lifetime annotations.
 
@@ -133,7 +133,18 @@ ordinary stack values passed around explicitly.
 
 ---
 
-## 9. Diagnostics & Error Reporting
+## 9. Monomorphized Generics
+
+Generic functions are **templates** monomorphized at call sites.
+
+- **Syntax**: `fn name<T, U>(x: T, y: U) -> T { ... }`.
+- **Inference**: Type parameters are inferred from argument types (variable bindings, literals). Annotate `let x: i64 = ...` when inference is ambiguous.
+- **Monomorphization**: Each distinct instantiation (`identity<i32>`, `identity<i64>`) produces a mangled concrete function (`identity__Ti32`). Call sites are rewritten; only instances are checked and emitted. No boxing, no runtime cost.
+- **Limitations (v0.6.0)**: Generic functions are fully supported. Generic structs (`struct Stack<T>`) header-parsing is reserved for a follow-on; `Stack<T>` as a type argument is not yet monomorphized.
+
+---
+
+## 10. Diagnostics & Error Reporting
 
 Track compiler diagnostics report span location, root cause, and ownership state transitions:
 

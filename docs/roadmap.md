@@ -12,7 +12,7 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 [v0.3.0] Perf & Self-Hosting Prep   ✅ DONE
 [v0.4.0] Tuples & Pattern Matching  ✅ DONE
 [v0.5.0] Explicit Error Handling    ✅ DONE
-[v0.6.0] Monomorphized Generics     🚀 CURRENT TARGET
+[v0.6.0] Monomorphized Generics     ✅ DONE
 [v0.7.0] Track Lexer in Track       ⏳ PLANNED
 [v0.8.0] Track Parser, Checker & Codegen ⏳ PLANNED
 [v0.9.0] Self-Bootstrapping Verified 🎯 MILESTONE
@@ -92,11 +92,12 @@ values that live on the call stack and are passed around explicitly.
 
 ---
 
-### v0.6.0 — Monomorphized Generics ⏳ PLANNED
-- **Monomorphized Generics**:
-  - Generic structs (`struct Stack<T> { data: []T, len: u64 }`).
-  - Generic function definitions (`fn identity<T>(x: T) -> T`).
-  - Compile-time monomorphization pass producing optimized concrete types.
+### v0.6.0 — Monomorphized Generics ✅
+- **Generic Function Definitions** ✅:
+  - `fn identity<T>(x: T) -> T` with inference at call sites.
+  - Multi-param functions (`fn pair<T, U>(a: T, b: U) -> (T, U)`) and nested generic calls.
+  - Compile-time monomorphization pass (`src/mono.rs`) producing per-site mangled concrete functions (`identity__Ti32`).
+- **Generic Structs** ⏳ — `struct Stack<T>` parses the `<T>` header; full field-generic substitution and `Stack<T>` as a type argument are planned as a follow-on (type `Stack<i32>` syntax).
 
 ---
 

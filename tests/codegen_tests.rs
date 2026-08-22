@@ -10,6 +10,7 @@ fn test_codegen_simple_function() {
 
     let program = vec![Expr::FnDef {
         name: "add".to_string(),
+        generics: Vec::new(),
         params: vec![
             ("a".to_string(), TrackType::I32),
             ("b".to_string(), TrackType::I32),

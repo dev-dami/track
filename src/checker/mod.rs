@@ -420,7 +420,11 @@ impl LinearChecker {
                         }
                     }
                 }
-                Expr::FnDef { name, return_type, .. } => {
+                Expr::FnDef { name, generics, return_type, .. } => {
+                    if !generics.is_empty() {
+                        // Generic templates are checked via their instances.
+                        continue;
+                    }
                     self.functions.insert(name.clone(), return_type.clone());
                 }
                 _ => {}
@@ -911,11 +915,15 @@ impl LinearChecker {
             }
 
             Expr::FnDef {
+                generics,
                 params,
                 body,
                 return_type,
                 ..
             } => {
+                if !generics.is_empty() {
+                    return Ok(());
+                }
                 // Enter function scope (preserve global module declarations)
                 let saved_registry = self.registry.clone();
                 let saved_types = self.types.clone();

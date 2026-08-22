@@ -5,6 +5,16 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-08-22
+
+### Added
+- **Monomorphized generics — generic functions** (`fn name<T, U>(x: T, ys: []U) -> ...`): type parameters parsed as `<T, U>` on `fn` headers, inferred from call-site argument types (with `let`/`param` scope tracking), monomorphized into per-site mangled concrete functions (`identity__Ti32`). Nested generic calls (e.g., `pair(identity(1), identity(2))`) specialize recursively. New pass `src/mono.rs` (template table → substituted instances) runs between parser and checker; codegen templates are skipped and only instances are emitted.
+- `docs/generics.md` guide and `examples/generics.trk` demo (`identity`, `pair`, nested calls).
+- Generic function header syntax now parsed; non-generic programs unchanged.
+
+### Notes
+- Generic structs (`struct Stack<T>`) header-parsing lands in this release; full field/type-argument monomorphization for `Stack<T>` types is tracked as a v0.6.x follow-on.
+
 ## [0.5.0] — 2026-08-22
 
 ### Added

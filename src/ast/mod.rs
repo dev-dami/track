@@ -93,6 +93,7 @@ pub enum Expr {
 
     FnDef {
         name: String,
+        generics: Vec<String>,
         params: Vec<(String, TrackType)>,
         return_type: Option<TrackType>,
         body: Vec<Expr>,

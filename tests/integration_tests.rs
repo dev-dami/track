@@ -300,3 +300,35 @@ fn test_error_predicates_disambiguate_sentinels() {
     assert!(!lines.contains(&"999"), "got: {}", stdout);
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_generics_monomorphization() {
+    let source = r#"
+        fn identity<T>(x: T) -> T { return x; }
+        fn pair<T, U>(a: T, b: U) -> (T, U) { return (a, b); }
+        fn main() -> void {
+            let a: i32 = 5;
+            print(identity(a));
+            let b: i64 = 10;
+            print(identity(b));
+            let p = pair(1, 2);
+            print(p.0);
+            print(p.1);
+            let z = pair(identity(1), identity(2));
+            print(z.0);
+            print(z.1);
+        }
+    "#;
+    let temp_dir = env::temp_dir().join(format!("track_gen_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let src_file = temp_dir.join("gen.trk");
+    fs::write(&src_file, source).unwrap();
+
+    let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe_path).output().unwrap();
+    assert!(output.status.success(), "generics test failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines, vec!["5","10","1","2","1","2"], "got: {}", stdout);
+    let _ = fs::remove_dir_all(&temp_dir);
+}

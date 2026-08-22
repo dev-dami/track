@@ -151,8 +151,11 @@ impl ParallelBuilder {
                             .map_err(|e| format!("{}: {}", task.trk_file.display(), e))?;
 
                         let mut parser = crate::parser::Parser::new(tokens, task.source.clone());
-                        let program = parser
+                        let mut program = parser
                             .parse_program()
+                            .map_err(|e| format!("{}: {}", task.trk_file.display(), e))?;
+
+                        crate::mono::monomorphize(&mut program)
                             .map_err(|e| format!("{}: {}", task.trk_file.display(), e))?;
 
                         let mut checker = crate::checker::LinearChecker::new();
@@ -289,7 +292,7 @@ impl ParallelBuilder {
                 };
 
                 let mut parser = crate::parser::Parser::new(tokens, source.clone());
-                let program = match parser.parse_program() {
+                let mut program = match parser.parse_program() {
                     Ok(p) => p,
                     Err(e) => {
                         errors
@@ -299,6 +302,11 @@ impl ParallelBuilder {
                         continue;
                     }
                 };
+
+                if let Err(e) = crate::mono::monomorphize(&mut program) {
+                    errors.lock().unwrap().push(format!("{}: {}", trk_file.display(), e));
+                    continue;
+                }
 
                 let mut checker = crate::checker::LinearChecker::new();
                 if let Err(e) = checker.check_program(&program) {

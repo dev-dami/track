@@ -3,6 +3,7 @@ pub mod checker;
 pub mod codegen;
 pub mod lexer;
 pub mod lsp;
+pub mod mono;
 pub mod parser;
 pub mod yard;
 
@@ -556,11 +557,13 @@ Str path_join(const char* a, const char* b) {
 }
 "#;
 
-/// Compile source string through Lexer -> Parser -> LinearChecker pipeline.
+/// Compile source string through Lexer -> Parser -> Monomorphizer -> LinearChecker pipeline.
 pub fn compile_source(source: &str) -> Result<Vec<ast::Expr>, String> {
     let tokens = lexer::Lexer::tokenize(source)?;
     let mut p = parser::Parser::new(tokens, source.to_string());
     let program = p.parse_program()?;
+    let mut program = program;
+    mono::monomorphize(&mut program)?;
     let mut chk = checker::LinearChecker::new();
     chk.check_program(&program)?;
     Ok(program)

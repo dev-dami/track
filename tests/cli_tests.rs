@@ -55,3 +55,69 @@ fn test_cli_invalid_command() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Unknown command"));
 }
+
+#[test]
+fn test_cli_version_reports_0_6() {
+    let out = run_track_cmd(&["--version"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{}{}", stdout, stderr);
+    assert!(combined.contains("0.6.0"), "version output missing 0.6.0: {}", combined);
+}
+
+#[test]
+fn test_cli_check_generics_valid() {
+    let td = env::temp_dir().join(format!("track_cli_gen_ok_{}", std::process::id()));
+    let _ = fs::create_dir_all(&td);
+    let f = td.join("ok.trk");
+    fs::write(&f, "fn identity<T>(x: T) -> T { return x; } fn main() -> void { let a: i32 = 5; print(identity(a)); }").unwrap();
+    let out = run_track_cmd(&["check", f.to_str().unwrap()]);
+    assert!(out.status.success(), "check should pass: {}", String::from_utf8_lossy(&out.stderr));
+    let _ = fs::remove_dir_all(&td);
+}
+
+#[test]
+fn test_cli_check_generics_arity_mismatch() {
+    let td = env::temp_dir().join(format!("track_cli_gen_bad_{}", std::process::id()));
+    let _ = fs::create_dir_all(&td);
+    let f = td.join("bad.trk");
+    fs::write(&f, "fn pair<T, U>(a: T, b: U) -> (T, U) { return (a, b); } fn main() -> void { let p = pair(1); }").unwrap();
+    let out = run_track_cmd(&["check", f.to_str().unwrap()]);
+    assert!(!out.status.success(), "arity mismatch should fail");
+    let _ = fs::remove_dir_all(&td);
+}
+
+#[test]
+fn test_cli_check_const_across_functions() {
+    let td = env::temp_dir().join(format!("track_cli_const_{}", std::process::id()));
+    let _ = fs::create_dir_all(&td);
+    let f = td.join("const.trk");
+    fs::write(&f, "const BASE = 100; const OFF = BASE + 23; fn get() -> i64 { return OFF; } fn main() -> void { print(get()); }").unwrap();
+    let out = run_track_cmd(&["check", f.to_str().unwrap()]);
+    assert!(out.status.success(), "const across functions should check: {}", String::from_utf8_lossy(&out.stderr));
+    let _ = fs::remove_dir_all(&td);
+}
+
+#[test]
+fn test_cli_build_and_run_generics() {
+    let td = env::temp_dir().join(format!("track_cli_build_gen_{}", std::process::id()));
+    let _ = fs::create_dir_all(&td);
+    let f = td.join("gen.trk");
+    fs::write(&f, "fn identity<T>(x: T) -> T { return x; } fn main() -> void { let a: i32 = 7; print(identity(a)); }").unwrap();
+    let build = run_track_cmd(&["build", f.to_str().unwrap()]);
+    assert!(build.status.success(), "build generics failed: {}", String::from_utf8_lossy(&build.stderr));
+    // executable is produced next to source or cwd — just verify build succeeded
+    let _ = fs::remove_dir_all(&td);
+    let _ = fs::remove_file("gen");
+}
+
+#[test]
+fn test_cli_check_invalid_syntax_fails() {
+    let td = env::temp_dir().join(format!("track_cli_invalid_{}", std::process::id()));
+    let _ = fs::create_dir_all(&td);
+    let f = td.join("inv.trk");
+    fs::write(&f, "fn main() -> void { let x = ; }").unwrap();
+    let out = run_track_cmd(&["check", f.to_str().unwrap()]);
+    assert!(!out.status.success());
+    let _ = fs::remove_dir_all(&td);
+}
