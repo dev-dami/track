@@ -48,11 +48,12 @@ Wrap code blocks:
 ## Compile-time Built-ins
 
 ```track
-@fib_comptime(40)    // evaluated at compile time
 @now()               // current timestamp
 @compile_error(msg)  // compile-time error
-@compile_warning(msg) // compile-time warning
 ```
+
+Other macros like `@assert`, `@timer`, or `@fib_comptime` are not built-ins —
+you can define them yourself with `@macro`.
 
 ## Syntax
 

@@ -10,18 +10,9 @@ vim.filetype.add({
 
 -- 2. Syntax highlighting
 vim.cmd([[
-  syntax keyword trackKeyword import fn return if else while let mut with struct enum union match const as true false
-  syntax keyword trackType i8 i16 i32 i64 u8 u16 u32 u64 bool void ptr str
-  syntax match trackMacro /@macro/
-
-  syntax match trackMacro /@bit/
-  syntax match trackMacro /@pin/
-  syntax match trackMacro /@register/
-  syntax match trackMacro /@compile_error/
-  syntax match trackMacro /@now/
-  syntax match trackMacro /@fib_comptime/
-  syntax match trackMacro /@timer/
-  syntax match trackMacro /@assert/
+  syntax keyword trackKeyword import use fn return if else while for in let mut with struct enum union match const type as true false
+  syntax keyword trackType i8 u8 i32 u32 i64 u64 bool void ptr
+  syntax match trackMacro /@[a-zA-Z_][a-zA-Z0-9_]*/
   syntax match trackNamespace /::/
   syntax match trackOperator /->/
   syntax match trackOperator /=>/

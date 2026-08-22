@@ -31,6 +31,14 @@ let mut u = User { age: 30 };
 with u -> user {
     user.set_age(31);
 }
+
+// Anonymous tuples, destructuring & pattern matching (v0.4)
+let pair: (i64, bool) = (42, true);
+let (n, flag) = pair;
+match n {
+    x if x > 10 => io::print("big"),
+    _ => io::print("small"),
+}
 ```
 
 ## Installation
@@ -74,6 +82,9 @@ yard init my_app
 
 # Type-check project
 yard check
+
+# Lint project (check without build)
+yard lint
 
 # Build project to target/my_app
 yard build

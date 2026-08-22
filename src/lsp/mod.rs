@@ -274,8 +274,8 @@ impl LanguageServer for TrackLsp {
 
         // Keywords
         let keywords = vec![
-            "import", "let", "mut", "fn", "return", "if", "else", "while", "struct", "enum",
-            "union", "match", "with", "const", "true", "false", "as",
+            "import", "use", "let", "mut", "fn", "return", "if", "else", "while", "for", "in",
+            "struct", "enum", "union", "match", "with", "const", "type", "true", "false", "as",
         ];
 
         for kw in keywords {
@@ -288,7 +288,7 @@ impl LanguageServer for TrackLsp {
         }
 
         // Types
-        let types = vec!["i32", "u32", "i64", "u64", "bool", "void", "ptr"];
+        let types = vec!["i8", "u8", "i32", "u32", "i64", "u64", "bool", "void", "ptr"];
 
         for ty in types {
             if ty.starts_with(word) {
@@ -310,10 +310,22 @@ impl LanguageServer for TrackLsp {
             "file_open",
             "file_close",
             "file_exists",
+            "dir_exists",
+            "file_copy",
             "clock_ms",
             "exit",
             "alloc",
             "dealloc",
+            "env_get",
+            "os_args_count",
+            "os_arg",
+            "process_spawn",
+            "sys_exec",
+            "sys_set_memory_limit",
+            "sys_get_memory_used",
+            "str_starts_with",
+            "str_ends_with",
+            "str_contains",
         ];
 
         for b in builtins {
@@ -328,14 +340,7 @@ impl LanguageServer for TrackLsp {
         }
 
         // Macros
-        let macros = vec![
-            "bit",
-            "pin",
-            "register",
-            "compile_error",
-            "now",
-            "fib_comptime",
-        ];
+        let macros = vec!["macro", "now", "compile_error"];
 
         for m in macros {
             if m.starts_with(word) {
@@ -447,6 +452,10 @@ impl LanguageServer for TrackLsp {
             ("if", "Conditional expression"),
             ("else", "Else branch"),
             ("while", "Loop"),
+            ("for", "For-in loop\n\n```track\nfor i in 0..10 {\n    print(i);\n}\n```"),
+            ("in", "Iteration in a for-in loop"),
+            ("use", "Import items from a module (synonym for `import`)"),
+            ("type", "Define a type alias\n\n```track\ntype Matrix = [i32; 16];\n```"),
             ("struct", "Define a struct"),
             ("enum", "Define an enum\n\n```track\nenum Color {\n    Red,\n    Green,\n    Blue,\n}\n```"),
             ("union", "Define a tagged union\n\n```track\nunion Value {\n    Int(i32),\n    Float(f64),\n}\n```"),
@@ -470,6 +479,8 @@ impl LanguageServer for TrackLsp {
 
         // Check types
         let type_docs = HashMap::from([
+            ("i8", "8-bit signed integer (copy type)"),
+            ("u8", "8-bit unsigned integer (copy type)"),
             ("i32", "32-bit signed integer (copy type)"),
             ("u32", "32-bit unsigned integer (copy type)"),
             ("i64", "64-bit signed integer (copy type)"),
@@ -514,20 +525,11 @@ impl LanguageServer for TrackLsp {
         // Check macros
         let macro_docs = HashMap::from([
             (
-                "@bit",
-                "Create a bit mask\n\n```track\nlet pin = @bit(5);  // 1 << 5\n```",
-            ),
-            (
-                "@pin",
-                "Create a pin identifier\n\n```track\nlet led = @pin(1, 5);  // (1 << 8) | 5\n```",
-            ),
-            (
-                "@register",
-                "Create a register address\n\n```track\nlet reg = @register(0x4000, 0xFF);\n```",
+                "@macro",
+                "Define a compile-time macro\n\n```track\n@macro double(n: i32) -> i32 {\n    return n * 2;\n}\n```",
             ),
             ("@compile_error", "Trigger a compile-time error"),
             ("@now", "Get current timestamp"),
-            ("@fib_comptime", "Compute Fibonacci at compile time"),
         ]);
 
         if let Some(doc) = macro_docs.get(word) {

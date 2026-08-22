@@ -8,13 +8,13 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ```
 [v0.1.6] Slices & Primitives        ✅ DONE
-[v0.2.0] Standard Library & OS       ✅ DONE
-[v0.3.0] Monomorphized Generics      ✅ DONE
-[v0.4.0] Advanced Pattern Matching   ✅ DONE
-[v0.5.0] Option/Result & '?' Op      🚀 CURRENT TARGET
-[v0.6.0] Track Lexer in Track        ⏳ PLANNED
-[v0.7.0] Track Parser & AST in Track ⏳ PLANNED
-[v0.8.0] Track Checker & Codegen     ⏳ PLANNED
+[v0.2.0] UFCS, Lenses & CFG Merging ✅ DONE
+[v0.3.0] Perf & Self-Hosting Prep   ✅ DONE
+[v0.4.0] Tuples & Pattern Matching  ✅ DONE
+[v0.5.0] Option/Result & '?' Op     🚀 CURRENT TARGET
+[v0.6.0] Monomorphized Generics     ⏳ PLANNED
+[v0.7.0] Track Lexer in Track       ⏳ PLANNED
+[v0.8.0] Track Parser, Checker & Codegen ⏳ PLANNED
 [v0.9.0] Self-Bootstrapping Verified 🎯 MILESTONE
 ```
 
@@ -32,26 +32,30 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ---
 
-### v0.2.0 — Extended Standard Library & OS Abstractions 🚀 (Next Up)
-- **Directory & File Operations (`std/fs`, `std/path`)**:
-  - Directory iteration (`dir_read(path)`), path joins, extension checking, metadata.
-- **Process & Environment (`std/os`, `std/process`)**:
-  - Command-line argument vector access (`os_args() -> []Str`).
-  - Child process spawning (`process_spawn(cmd, args) -> Process`).
-- **Dynamic Collections (`std/map`, `std/vec`)**:
-  - Dictionary/map implementation (`Map<K, V>`).
-  - Vector manipulation utilities (`vec_reserve`, `vec_shrink`, `vec_slice`).
+### v0.2.0 — UFCS, Lexical Lenses & CFG Merging ✅
+- Struct literal disambiguation inside conditionals.
+- CFG state merging for branches (`if`/`else`) and loops (`while`).
+- Primitive copy semantics via static type inference.
+- Array indexing, address-of (`&`), and pointer arithmetic.
+- Uniform Function Call Syntax (UFCS).
+- Lexical lens blocks (`with ->` expression blocks).
 
 ---
 
-### v0.3.0 — Monomorphized Generics & Type Aliases
-- **Monomorphized Generics**:
-  - Generic structs (`struct Stack<T> { data: []T, len: u64 }`).
-  - Generic function definitions (`fn identity<T>(x: T) -> T`).
-  - Compile-time monomorphization pass producing optimized concrete types.
-- **Type Aliases**:
+### v0.3.0 — Performance & Self-Hosting Readiness ✅
+- Shared `Arc<dyn TargetIsa>` across parallel worker threads; eliminated per-file ISA re-initialization.
+- Allocation and O(N²) bottleneck eliminations across checker, codegen, LSP, and build cache.
+- `yard lint` and `yard clean` commands; `Track.toml` lock file serialization.
+- New stdlib functions: `os_args_count`, `os_arg`, `dir_exists`, `file_copy`, `process_spawn`, `sys_exec`, `sys_set_memory_limit`, `sys_get_memory_used`, `env_get`, `str_starts_with`, `str_ends_with`, `str_contains`.
+- `track-lsp` binary ships with release builds.
+
+---
+
+### v0.3.x — Type Aliases ✅ / Const Array Sizing ⏳
+- **Type Aliases** ✅:
   - Type alias syntax (`type ByteBuf = []u8;`).
-  - Const expressions and constant array sizing (`const BUF_SIZE = 1024; let buf: [u8; BUF_SIZE];`).
+- **Const Expressions in Array Sizes** ⏳ PLANNED:
+  - Constant array sizing (`const BUF_SIZE = 1024; let buf: [u8; BUF_SIZE];`).
 
 ---
 
@@ -76,7 +80,15 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ---
 
-### v0.6.0 — Self-Hosted Compiler Component 1: Track Lexer in Track (`compiler/lexer.trk`)
+### v0.6.0 — Monomorphized Generics ⏳ PLANNED
+- **Monomorphized Generics**:
+  - Generic structs (`struct Stack<T> { data: []T, len: u64 }`).
+  - Generic function definitions (`fn identity<T>(x: T) -> T`).
+  - Compile-time monomorphization pass producing optimized concrete types.
+
+---
+
+### v0.7.0 — Self-Hosted Compiler Component 1: Track Lexer in Track (`compiler/lexer.trk`)
 - **Native Tokenizer**:
   - Port Lexer from Rust to 100% native Track code in `compiler/lexer.trk`.
   - Token stream representation using `union Token` and `[]u8` string slices.
@@ -84,14 +96,10 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ---
 
-### v0.7.0 — Self-Hosted Compiler Component 2: Track Parser & AST in Track (`compiler/parser.trk`)
+### v0.8.0 — Self-Hosted Compiler Components 2 & 3: Parser, Checker & Codegen in Track (`compiler/parser.trk`, `compiler/checker.trk` & `compiler/codegen.trk`)
 - **Native Parser**:
   - Port AST representation (`union Expr`) and recursive descent parser to native Track code in `compiler/parser.trk`.
   - Detailed compile-time error reporting with source code line/column highlighting.
-
----
-
-### v0.8.0 — Self-Hosted Compiler Component 3: Type Checker & Codegen in Track (`compiler/checker.trk` & `compiler/codegen.trk`)
 - **Native Checker**:
   - Port `LinearChecker` borrow-checker, escape analysis, and type inference to Track in `compiler/checker.trk`.
 - **Native Codegen**:

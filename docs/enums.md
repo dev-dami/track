@@ -49,7 +49,6 @@ Unions are tagged variants that can hold different types. They are linear types.
 ```track
 union Value {
     Int(i32),
-    Float(f64),
     Bool(bool),
 }
 ```
@@ -93,17 +92,20 @@ match state {
 
 ### Error Handling
 
+Generic type parameters are not yet supported (planned — see the roadmap), so
+result-like unions are written with concrete types:
+
 ```track
-union Result(T, E) {
-    Ok(T),
-    Err(E),
+union ParseResult {
+    Ok(i32),
+    Err(Str),
 }
 
-let value: Result(i32, str) = Result::Ok(42);
+let value: ParseResult = ParseResult::Ok(42);
 
 match value {
-    Result::Ok(x) => print(x),
-    Result::Err(msg) => print(msg),
+    ParseResult::Ok(x) => print(x),
+    ParseResult::Err(msg) => print_str(msg.data),
 }
 ```
 

@@ -25,7 +25,7 @@ track-lsp
 ## Installation
 
 ```bash
-./install.sh
+./scripts/install.sh
 ```
 
 This installs both `track` and `track-lsp` to `/usr/local/bin`.

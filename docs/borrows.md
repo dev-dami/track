@@ -36,7 +36,7 @@ If you attempt to move a variable while a borrow is active, the compiler rejects
 ```track
 fn main() -> void {
     let x = [1, 2, 3]; // Arrays are linear resources (non-copy)
-    let r = &x;        // x is now Locked
+    let r = &x;        // x is now Borrowed
     let y = x;         // Error: x is frozen (either locked in a lens or borrowed).
 }
 ```

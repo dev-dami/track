@@ -46,3 +46,14 @@ match pair {
     (x, y) => print(x + y),
 }
 ```
+
+## 5. Ownership
+
+Tuple components follow linear ownership rules: moving a linear component out
+of a tuple moves that component and spends it inside the tuple.
+
+```track
+let t = (vec_init(16), 42);
+let v = t.0; // moves the vector out — the tuple is now partially spent
+// using t.0 again is a use-after-move error
+```

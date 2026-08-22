@@ -7,7 +7,7 @@ Compile-time constants with explicit values. No hidden evaluation.
 ```track
 const BUFFER_SIZE = 1024;
 const SAMPLE_RATE = 44100;
-const PI = 3.14159;
+const DEBUG = 1;
 ```
 
 ## Type Aliases (`type Alias = TargetType;`)
@@ -37,7 +37,7 @@ type ALIAS_NAME = TargetType;
 - Immutable after definition
 - No hidden evaluation
 - Type inferred from value
-- Can be used in array sizes, register addresses, etc.
+- Usable in register addresses and other constant expressions (array sizes currently require literal integers — const array sizing is planned, see the roadmap)
 
 ## Examples
 
@@ -48,7 +48,7 @@ const BUFFER_SIZE = 1024;
 const CHANNELS = 2;
 const SAMPLE_RATE = 44100;
 
-let buffer: [f32; BUFFER_SIZE];
+let buffer: [i32; 1024];
 ```
 
 ### Hardware Registers

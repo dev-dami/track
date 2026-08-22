@@ -161,6 +161,20 @@ pub fn check_at(project_root: &Path, _args: &[String]) -> Result<(), String> {
     ParallelBuilder::check(project_root, &manifest)
 }
 
+// ── yard lint ────────────────────────────────────────────────────────
+
+/// Lint the project (type/ownership check without building).
+pub fn lint(args: &[String]) -> Result<(), String> {
+    let project_root = find_project_root()?;
+    lint_at(&project_root, args)
+}
+
+pub fn lint_at(project_root: &Path, args: &[String]) -> Result<(), String> {
+    check_at(project_root, args)?;
+    println!("✓ No issues found");
+    Ok(())
+}
+
 // ── yard clean ───────────────────────────────────────────────────────
 
 pub fn clean(_args: &[String]) -> Result<(), String> {

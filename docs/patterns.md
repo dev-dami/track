@@ -35,7 +35,6 @@ match color {
 ```track
 union Value {
     Int(i32),
-    Float(f64),
     Bool(bool),
 }
 
@@ -43,7 +42,6 @@ let val: Value = Value::Int(42);
 
 match val {
     Value::Int(x) => print(x),
-    Value::Float(x) => print(x),
     Value::Bool(x) => print(x),
 }
 ```
@@ -101,6 +99,26 @@ match point {
     (x, 0) => print("on x-axis"),
     (0, y) => print("on y-axis"),
     (x, y) => print("point"),
+}
+```
+
+## Struct Patterns
+
+Struct patterns match on struct fields. Fields can bind directly by name or
+match a nested pattern after `:`:
+
+```track
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+let p = Point { x: 0, y: 42 };
+
+match p {
+    Point { x: 0, y } => print(y),          // binds y by name
+    Point { x, y: 0 } => print(x),
+    Point { x, y } => print(x + y),
 }
 ```
 

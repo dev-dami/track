@@ -12,6 +12,12 @@ fn main() -> void {
 }
 ```
 
+The `use` keyword is accepted as a synonym for `import`:
+
+```track
+use "std/io";
+```
+
 ## Import Specific Items
 
 ```track
@@ -62,7 +68,7 @@ import "path/to/module" as alias :: { item1 };
 | `std/path` | `path_basename`, `path_ext`, `path_join` | Path string manipulation |
 | `std/char` | `char_is_digit`, `char_is_alpha`, `char_to_upper` | ASCII character classification & conversion |
 | `std/str` | `str_starts_with`, `str_substr`, `str_trim`, `str_char_at` | High-performance string operations |
-| `std/net` | `net_socket_tcp_listen`, `connect`, `send`, `recv` | POSIX TCP socket networking |
+| `std/net` | `net_socket_tcp_listen`, `net_socket_connect`, `net_socket_send`, `net_socket_recv` | POSIX TCP socket networking |
 | `math/vec` | `add`, `sub` | Vector math functions |
 
 ## Rules

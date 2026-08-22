@@ -101,7 +101,10 @@ let popped = vec_pop(&mut v);
 // v is automatically freed when spent
 ```
 
-## Hash Map (Your Own)
+## Hash Map (Illustrative Sketch)
+
+The stdlib does not ship a hash map yet — the following is a sketch of how you
+would define one yourself using the memory primitives above:
 
 ```track
 struct Entry {
@@ -115,20 +118,6 @@ struct HashMap {
     size: u32,
     cap: u32,
 }
-
-// Initialize
-let mut map: HashMap = hashmap_init(64);
-
-// Insert
-hashmap_insert(&mut map, "key", 42);
-
-// Get
-let val = hashmap_get(&map, "key");
-
-// Remove
-hashmap_remove(&mut map, "key");
-
-// map is automatically freed when spent
 ```
 
 ## I/O
@@ -143,16 +132,17 @@ print_hex(0xFF);
 let line = read_line();
 
 // File operations
-let f = file_open("data.txt", FILE_READ);
+let f = file_open("data.txt", "r");
 let content = file_read_all(f);
 // f is automatically closed when spent
 
 // Write file
-let f = file_open("out.txt", FILE_WRITE);
+let f = file_open("out.txt", "w");
 file_write(f, &content);
 // f is automatically closed when spent
 ```
 
+```track
 // Substring find (index or -1)
 let idx = str_find("hello world", "world"); // 6
 
@@ -182,6 +172,10 @@ file_remove("temp.txt");
 // Process execution
 let exit_code: i32 = process_spawn("echo Hello from Track");
 let old_exec: i32 = sys_exec("ls -la");
+
+// Memory boundary enforcement
+sys_set_memory_limit(64 * 1024 * 1024); // 64 MB process limit
+let used: u64 = sys_get_memory_used();
 ```
 
 ## Extended Math & Utilities
@@ -232,6 +226,7 @@ let lower: u8 = char_to_lower(0x41);            // 'a'
 // String Search & Slicing
 let starts: bool = str_starts_with("track_compiler", "track"); // true
 let ends: bool = str_ends_with("main.trk", ".trk");             // true
+let contains: bool = str_contains("track_compiler", "comp");    // true
 let sub: Str = str_substr("hello world", 0, 5);                 // "hello"
 let trimmed: Str = str_trim("   content   ");                    // "content"
 let ch: u8 = str_char_at("track", 0);                           // 't'
