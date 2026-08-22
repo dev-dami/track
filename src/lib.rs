@@ -594,6 +594,7 @@ pub fn build_file_in_dir(filename: &str, out_dir: &Path) -> Result<PathBuf, Stri
         .map_err(|e| format!("Failed to write runtime helper: {}", e))?;
 
     let status = process::Command::new("cc")
+        .arg("-O3")
         .arg(&obj_path)
         .arg(&runtime_path)
         .arg("-o")

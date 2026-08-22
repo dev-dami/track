@@ -109,11 +109,9 @@ fn main() -> void {{
     let mut i: i64 = 0;
     let mut sum: i64 = 0;
     while i < {BRANCH_N} {{
-        if (i & 1) == 0 {{
-            sum = sum + i;
-        }} else {{
-            sum = sum - i;
-        }}
+        // Branchless: sum += i * (1 - 2*(i & 1))  ==  +i if even, -i if odd
+        let sign = 1 - ((i & 1) * 2);
+        sum = sum + i * sign;
         i = i + 1;
     }}
     print(sum);

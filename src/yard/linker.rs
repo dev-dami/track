@@ -32,7 +32,7 @@ impl LinkerEngine {
             .arg(&runtime_c_path)
             .arg("-o")
             .arg(&runtime_obj_path)
-            .arg("-O2")
+            .arg("-O3")
             .status()
             .map_err(|e| format!("Failed to compile runtime helper: {}", e))?;
 

@@ -27,6 +27,10 @@ impl CodeGen {
         let mut flag_builder = settings::builder();
         flag_builder.set("is_pic", "false").unwrap();
         flag_builder.set("opt_level", "speed").unwrap();
+        // More aggressive opts for near-native speed
+        let _ = flag_builder.set("regalloc_algorithm", "backtracking");
+        let _ = flag_builder.set("enable_alias_analysis", "true");
+        let _ = flag_builder.set("enable_verifier", "false");
         let isa_flags = settings::Flags::new(flag_builder);
 
         isa::lookup(Triple::host())
