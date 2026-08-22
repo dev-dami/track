@@ -11,7 +11,7 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 [v0.2.0] UFCS, Lenses & CFG Merging ✅ DONE
 [v0.3.0] Perf & Self-Hosting Prep   ✅ DONE
 [v0.4.0] Tuples & Pattern Matching  ✅ DONE
-[v0.5.0] Option/Result & '?' Op     🚀 CURRENT TARGET
+[v0.5.0] Explicit Error Handling    🚀 CURRENT TARGET
 [v0.6.0] Monomorphized Generics     ⏳ PLANNED
 [v0.7.0] Track Lexer in Track       ⏳ PLANNED
 [v0.8.0] Track Parser, Checker & Codegen ⏳ PLANNED
@@ -70,13 +70,24 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 
 ---
 
-### v0.5.0 — Core Error Handling (`Option`, `Result` & `?`)
-- **First-Class Error Handling Primitives**:
-  - `Option<T>` (`Some(T)`, `None`) and `Result<T, E>` (`Ok(T)`, `Err(E)`).
-- **Try Operator (`?`)**:
-  - Propagation operator (`let content = file_read_all("input.txt")?;`).
-- **Panic & Abort Handling**:
-  - `panic("message")` runtime handler with stack frame printing.
+### v0.5.0 — Explicit Stack-Based Error Handling 🚀 CURRENT TARGET
+Track rejects wrapper-based error handling: **no `Option`/`Result` types, no `?`
+operator, no hidden control flow, no stack unwinding.** Errors are ordinary
+values that live on the call stack and are passed around explicitly.
+
+- **Error Codes as Copy Primitives**:
+  - Failing functions return plain status values (`i32` code, `bool` ok) — zero allocation, zero wrapping.
+- **Multi-Value Returns via Tuples**:
+  - `(T, i32)` returns with v0.4 tuple destructuring (`let (val, err) = read_file(path);`).
+  - Linear payloads move out of the error tuple per normal ownership rules.
+- **Out-Params via References & Lenses**:
+  - C-style explicit outputs (`fn read_all(path: Str, out: &Str) -> i32`) for hot paths.
+- **Explicit Propagation**:
+  - Callers branch on the error value and return it upward by hand — every error path is visible in the source.
+- **Stdlib Convention Audit**:
+  - All failing stdlib functions standardized on the `(value, err)` / out-param convention.
+- **Fatal Abort Primitive**:
+  - `abort(msg)` — print message and exit the process; no unwinding, frames are simply discarded.
 
 ---
 

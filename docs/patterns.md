@@ -127,10 +127,10 @@ match p {
 Patterns can be nested recursively:
 
 ```track
-match result {
-    Result::Ok((val, true)) => print(val),
-    Result::Ok((_, false)) => print("disabled"),
-    Result::Err(code) if code > 500 => print("server error"),
+match response {
+    Response::Data((val, true)) => print(val),
+    Response::Data((_, false)) => print("disabled"),
+    Response::Error(code) if code > 500 => print("server error"),
     _ => print("unknown"),
 }
 ```

@@ -90,24 +90,32 @@ match state {
 }
 ```
 
-### Error Handling
+### Explicit Error Passing
 
-Generic type parameters are not yet supported (planned — see the roadmap), so
-result-like unions are written with concrete types:
+Track does not use `Option`/`Result` wrapper types. Errors are plain values
+returned on the stack and checked explicitly — status codes, tuples, or
+out-params (see the roadmap's v0.5.0 milestone):
 
 ```track
-union ParseResult {
-    Ok(i32),
-    Err(Str),
+// Tuple return: (value, error code)
+fn parse_config(path: Str) -> (i32, i32) {
+    let ok = file_exists(path.data);
+    if (!ok) {
+        return (0, 1); // explicit error path
+    }
+    return (42, 0);
 }
 
-let value: ParseResult = ParseResult::Ok(42);
-
-match value {
-    ParseResult::Ok(x) => print(x),
-    ParseResult::Err(msg) => print_str(msg.data),
+let (value, err) = parse_config(str_from_literal("app.cfg"));
+if (err != 0) {
+    print_err("config load failed");
+    return;
 }
+print(value);
 ```
+
+Unions with data-carrying variants remain available for cases that genuinely
+need tagged alternatives — they are just not the idiomatic error mechanism.
 
 ### Hardware Registers
 
