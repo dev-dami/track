@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Track Benchmark Suite — stronger, statistically rigorous, auto-reporting.
+Track Benchmark Suite — fair, statistically rigorous, auto-reporting.
 
 When run, this script compiles and measures Track (Cranelift) vs C (gcc -O3)
 vs Rust (rustc -O) vs Python 3 across multiple workloads that stress different
 language subsystems: tight loops, branching, recursion, and tuple operations.
-It automatically writes a markdown report to ../benchmark_results.md — you do
-not need to edit that file by hand.
+All workloads use IDENTICAL algorithms across languages (no branchless
+cheating, no iterative-vs-recursive mismatches, no extra volatile/black_box
+barriers that unfairly penalize C/Rust while Track runs unhindered).
+It automatically writes a markdown report to benchmark_results.md.
 
 Usage:
     python3 scratch/benchmark.py          # full suite
@@ -56,7 +58,7 @@ fn main() -> void {{
 LOOP_C = f"""
 #include <stdio.h>
 int main() {{
-    volatile long long sum = 0;
+    long long sum = 0;
     for (long long i = 0; i < {LOOP_N}; i++) sum += (i & 7);
     printf("%lld\\n", sum);
     return 0;
@@ -65,8 +67,8 @@ int main() {{
 LOOP_RS = f"""
 fn main() {{
     let mut sum: i64 = 0;
-    for i in 0..{LOOP_N}i64 {{ sum = std::hint::black_box(sum + (i & 7)); }}
-    println!("{{}}", std::hint::black_box(sum));
+    for i in 0..{LOOP_N}i64 {{ sum += i & 7; }}
+    println!("{{}}", sum);
 }}
 """
 LOOP_PY = f"""
@@ -77,16 +79,13 @@ print(sum_val)
 """
 
 # 2. Recursive Fibonacci (fib(38) — exponential call tree)
+# All languages use the SAME naive recursive algorithm to ensure fair comparison.
 REC_TRACK = """
 fn fib(n: i64) -> i64 {
-    let mut a: i64 = 0;
-    let mut b: i64 = 1;
-    for i in 0..n {
-        let tmp = a + b;
-        a = b;
-        b = tmp;
+    if n <= 1 {
+        return n;
     }
-    return a;
+    return fib(n - 1) + fib(n - 2);
 }
 fn main() -> void {
     print(fib(38));
@@ -94,12 +93,12 @@ fn main() -> void {
 """
 REC_C = """
 #include <stdio.h>
-long long fib(long long n){ volatile long long v=n; if(v<=1) return v; return fib(v-1)+fib(v-2); }
-int main(){ volatile long long r=fib(38); printf("%lld\\n", r); return 0; }
+long long fib(long long n){ if(n<=1) return n; return fib(n-1)+fib(n-2); }
+int main(){ long long r=fib(38); printf("%lld\\n", r); return 0; }
 """
 REC_RS = """
-fn fib(n: i64) -> i64 { let n = std::hint::black_box(n); if n<=1 {return n;} std::hint::black_box(fib(n-1)+fib(n-2)) }
-fn main(){ let r = std::hint::black_box(fib(38)); println!("{}", r); }
+fn fib(n: i64) -> i64 { if n<=1 {return n;} fib(n-1)+fib(n-2) }
+fn main(){ let r = fib(38); println!("{}", r); }
 """
 REC_PY = """
 def fib(n):
@@ -109,17 +108,19 @@ print(fib(38))
 """
 
 # 3. Branch-heavy loop (50M iterations, if / else)
+# All languages use identical branching logic — no branchless/unrolled cheating.
 BRANCH_N = 50_000_000
 BRANCH_TRACK = f"""
 fn main() -> void {{
     let mut i: i64 = 0;
     let mut sum: i64 = 0;
     while i < {BRANCH_N} {{
-        // 2× unrolled branchless
-        let s0 = 1 - ((i & 1) * 2);
-        let s1 = 1 - (((i + 1) & 1) * 2);
-        sum = sum + i * s0 + (i + 1) * s1;
-        i = i + 2;
+        if (i & 1) == 0 {{
+            sum = sum + i;
+        }} else {{
+            sum = sum - i;
+        }}
+        i = i + 1;
     }}
     print(sum);
 }}
@@ -127,7 +128,7 @@ fn main() -> void {{
 BRANCH_C = f"""
 #include <stdio.h>
 int main(){{
-    volatile long long sum=0;
+    long long sum=0;
     for(long long i=0;i<{BRANCH_N};i++){{ if((i&1)==0) sum+=i; else sum-=i; }}
     printf("%lld\\n", sum); return 0;
 }}
@@ -135,8 +136,8 @@ int main(){{
 BRANCH_RS = f"""
 fn main(){{
     let mut sum: i64=0;
-    for i in 0..{BRANCH_N}i64 {{ if i & 1 == 0 {{ sum = std::hint::black_box(sum + i); }} else {{ sum = std::hint::black_box(sum - i); }} }}
-    println!("{{}}", std::hint::black_box(sum));
+    for i in 0..{BRANCH_N}i64 {{ if i & 1 == 0 {{ sum += i; }} else {{ sum -= i; }} }}
+    println!("{{}}", sum);
 }}
 """
 BRANCH_PY = f"""
@@ -147,7 +148,8 @@ for i in range({BRANCH_N}):
 print(sum_val)
 """
 
-# 4. Tuple create / destructure loop (50M iterations)
+# 4. Tuple create / destructure loop (10M iterations)
+# All languages use same tuple create/destructure pattern without extra volatile/black_box barriers.
 TUPLE_N = 10_000_000
 TUPLE_TRACK = f"""
 fn main() -> void {{
@@ -163,16 +165,16 @@ TUPLE_C = f"""
 #include <stdio.h>
 typedef struct{{long long a,b;}} Pair;
 int main(){{
-    volatile long long sum=0;
-    for(long long i=0;i<{TUPLE_N};i++){{ volatile Pair t={{i,i+1}}; sum+=t.a+t.b; }}
+    long long sum=0;
+    for(long long i=0;i<{TUPLE_N};i++){{ Pair t={{i,i+1}}; sum+=t.a+t.b; }}
     printf("%lld\\n", sum); return 0;
 }}
 """
 TUPLE_RS = f"""
 fn main(){{
     let mut sum: i64=0;
-    for i in 0..{TUPLE_N}i64 {{ let t=std::hint::black_box((i,i+1)); let (a,b)=t; sum = std::hint::black_box(sum + a + b); }}
-    println!("{{}}", std::hint::black_box(sum));
+    for i in 0..{TUPLE_N}i64 {{ let t=(i,i+1); let (a,b)=t; sum += a + b; }}
+    println!("{{}}", sum);
 }}
 """
 TUPLE_PY = f"""

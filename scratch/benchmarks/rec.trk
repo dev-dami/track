@@ -1,12 +1,8 @@
 fn fib(n: i64) -> i64 {
-    let mut a: i64 = 0;
-    let mut b: i64 = 1;
-    for i in 0..n {
-        let tmp = a + b;
-        a = b;
-        b = tmp;
+    if n <= 1 {
+        return n;
     }
-    return a;
+    return fib(n - 1) + fib(n - 2);
 }
 fn main() -> void {
     print(fib(38));
