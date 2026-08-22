@@ -16,3 +16,9 @@
 Thumbs.db
 scratch/benchmarks/loop_*
 scratch/benchmarks/rec_*
+scratch/benchmarks/branch_*
+scratch/benchmarks/tuple_*
+scratch/benchmarks/branch
+scratch/benchmarks/tuple
+scratch/benchmarks/loop
+scratch/benchmarks/rec

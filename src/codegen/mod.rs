@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use cranelift_codegen::ir::{self, AbiParam, InstBuilder, Value};
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, StackSlotData, StackSlotKind, Value};
 use cranelift_codegen::isa;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -725,7 +725,34 @@ impl<'a> FnContext<'a> {
             Expr::Return { value } => {
                 let ret_ty = builder.func.signature.returns.first().map(|p| p.value_type);
                 if let Some(v_expr) = value {
-                    if let Some(mut v) = self.compile_expr(builder, module, v_expr) {
+                    // Returning a tuple must heap-allocate (stack slot would dangle).
+                    let v_opt = if let Expr::TupleLiteral { elements } = v_expr.as_ref() {
+                        let elem_count = elements.len();
+                        let size_val = builder.ins().iconst(ir::types::I64, (elem_count * 8) as i64);
+                        let alloc_fid = if let Some(&fid) = self.functions.get("alloc") {
+                            fid
+                        } else {
+                            let mut sig = module.make_signature();
+                            sig.params.push(AbiParam::new(ir::types::I64));
+                            sig.returns.push(AbiParam::new(ir::types::I64));
+                            let fid = module.declare_function("alloc", Linkage::Import, &sig).unwrap();
+                            self.functions.insert("alloc".to_string(), fid);
+                            fid
+                        };
+                        let local_alloc = module.declare_func_in_func(alloc_fid, builder.func);
+                        let call_inst = builder.ins().call(local_alloc, &[size_val]);
+                        let ptr = builder.inst_results(call_inst)[0];
+                        for (i, elem) in elements.iter().enumerate() {
+                            if let Some(val) = self.compile_expr(builder, module, elem) {
+                                let offset = (i * 8) as i32;
+                                builder.ins().store(ir::MemFlags::new(), val, ptr, offset);
+                            }
+                        }
+                        Some(ptr)
+                    } else {
+                        self.compile_expr(builder, module, v_expr)
+                    };
+                    if let Some(mut v) = v_opt {
                         if let Some(expected_ty) = ret_ty {
                             let actual_ty = builder.func.dfg.value_type(v);
                             if actual_ty != expected_ty {
@@ -768,22 +795,16 @@ impl<'a> FnContext<'a> {
             }
 
             Expr::TupleLiteral { elements } => {
+                // Fast, stack-allocated tuples for non-escaping locals.
+                // Heap allocation is used only when the tuple is directly
+                // returned (escaping the stack frame) — handled in the
+                // Return arm below.
                 let elem_count = elements.len();
-                let size_val = builder.ins().iconst(ir::types::I64, (elem_count * 8) as i64);
-                let alloc_fid = if let Some(&fid) = self.functions.get("alloc") {
-                    fid
-                } else {
-                    let mut sig = module.make_signature();
-                    sig.params.push(AbiParam::new(ir::types::I64));
-                    sig.returns.push(AbiParam::new(ir::types::I64));
-                    let fid = module.declare_function("alloc", Linkage::Import, &sig).unwrap();
-                    self.functions.insert("alloc".to_string(), fid);
-                    fid
-                };
-                let local_alloc = module.declare_func_in_func(alloc_fid, builder.func);
-                let call_inst = builder.ins().call(local_alloc, &[size_val]);
-                let ptr = builder.inst_results(call_inst)[0];
-
+                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    (elem_count * 8) as u32,
+                ));
+                let ptr = builder.ins().stack_addr(ir::types::I64, slot, 0);
                 for (i, elem) in elements.iter().enumerate() {
                     if let Some(val) = self.compile_expr(builder, module, elem) {
                         let offset = (i * 8) as i32;
@@ -801,6 +822,17 @@ impl<'a> FnContext<'a> {
             }
 
             Expr::LetDestructure { pattern, value, .. } => {
+                // Fast path: let (a,b) = (x, y) without allocating a tuple.
+                if let Expr::TupleLiteral { elements } = value.as_ref()
+                    && let Pattern::Tuple(pats) = pattern
+                        && pats.len() == elements.len() {
+                            for (pat, elem) in pats.iter().zip(elements.iter()) {
+                                if let Some(val) = self.compile_expr(builder, module, elem) {
+                                    self.bind_pattern_codegen(builder, module, pat, val);
+                                }
+                            }
+                            return None;
+                        }
                 if let Some(val) = self.compile_expr(builder, module, value) {
                     self.bind_pattern_codegen(builder, module, pattern, val);
                 }

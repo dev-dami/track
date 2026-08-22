@@ -1,0 +1,8 @@
+fn main() -> void {
+    let mut sum: i64 = 0;
+    for i in 0..10000000 {
+        let (a, b) = (i, i + 1);
+        sum = sum + a + b;
+    }
+    print(sum);
+}
