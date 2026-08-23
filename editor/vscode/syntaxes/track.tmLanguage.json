@@ -2,19 +2,23 @@
   "name": "Track",
   "scopeName": "source.track",
   "fileTypes": ["trk"],
-  "foldingStartMarkers": ["\\{\\s*$"],
-  "foldingStopMarkers": ["^\\s*\\}"],
+  "foldingStartMarker": "\\{\\s*$",
+  "foldingStopMarker": "^\\s*\\}",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#imports" },
+    { "include": "#macros" },
+    { "include": "#functionDefinitions" },
+    { "include": "#typeDefinitions" },
     { "include": "#keywords" },
     { "include": "#types" },
-    { "include": "#macros" },
     { "include": "#constants" },
-    { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#operators" },
     { "include": "#punctuation" },
-    { "include": "#identifiers" }
+    { "include": "#supportFunctions" },
+    { "include": "#variables" }
   ],
   "repository": {
     "comments": {
@@ -22,38 +26,11 @@
         {
           "name": "comment.line.double-slash.track",
           "match": "//.*$"
-        }
-      ]
-    },
-    "keywords": {
-      "patterns": [
+        },
         {
-          "name": "keyword.control.track",
-          "match": "\\b(import|use|fn|return|if|else|while|for|in|let|mut|with|struct|enum|union|match|const|type|as|true|false)\\b"
-        }
-      ]
-    },
-    "types": {
-      "patterns": [
-        {
-          "name": "support.type.track",
-          "match": "\\b(i8|u8|i32|u32|i64|u64|bool|void|ptr)\\b"
-        }
-      ]
-    },
-    "macros": {
-      "patterns": [
-        {
-          "name": "entity.name.function.macro.track",
-          "match": "@[a-zA-Z_][a-zA-Z0-9_]*"
-        }
-      ]
-    },
-    "constants": {
-      "patterns": [
-        {
-          "name": "keyword.other.const.track",
-          "match": "\\bconst\\b"
+          "name": "comment.block.track",
+          "begin": "/\\*",
+          "end": "\\*/"
         }
       ]
     },
@@ -66,9 +43,157 @@
           "patterns": [
             {
               "name": "constant.character.escape.track",
-              "match": "\\\\(?:[\"\\\\nrt0'])"
+              "match": "\\\\(?:[\"\\\\nrt0'\\\\]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\})"
+            },
+            {
+              "name": "invalid.illegal.escape.track",
+              "match": "\\\\."
             }
           ]
+        }
+      ]
+    },
+    "imports": {
+      "patterns": [
+        {
+          "name": "meta.import.track",
+          "match": "\\b(import|use)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.import.track" }
+          }
+        },
+        {
+          "name": "string.quoted.double.track",
+          "match": "\"[^\"]*\""
+        }
+      ]
+    },
+    "macros": {
+      "patterns": [
+        {
+          "name": "meta.macro.definition.track",
+          "begin": "(@macro)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.macro.track" },
+            "2": { "name": "entity.name.function.macro.track" }
+          },
+          "end": "\\}",
+          "patterns": [{ "include": "$self" }]
+        },
+        {
+          "name": "entity.name.function.macro.track",
+          "match": "@[a-zA-Z_][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    },
+    "functionDefinitions": {
+      "patterns": [
+        {
+          "name": "meta.function.definition.track",
+          "begin": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "beginCaptures": {
+            "1": { "name": "storage.type.function.track" },
+            "2": { "name": "entity.name.function.track" }
+          },
+          "end": "(?=\\{)",
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#strings" },
+            { "include": "#generics" },
+            { "include": "#types" },
+            { "include": "#keywords" },
+            { "include": "#punctuation" },
+            { "include": "#variables" }
+          ]
+        }
+      ]
+    },
+    "generics": {
+      "patterns": [
+        {
+          "name": "meta.generics.track",
+          "begin": "<",
+          "end": ">",
+          "patterns": [
+            { "include": "#types" },
+            { "include": "#variables" }
+          ]
+        }
+      ]
+    },
+    "typeDefinitions": {
+      "patterns": [
+        {
+          "name": "meta.type.definition.track",
+          "begin": "\\b(struct|enum|union|type)\\s+([A-Z][a-zA-Z0-9_]*)",
+          "beginCaptures": {
+            "1": { "name": "storage.type.track" },
+            "2": { "name": "entity.name.type.track" }
+          },
+          "end": "(?=\\{|=|;)",
+          "patterns": [{ "include": "#types" }]
+        },
+        {
+          "name": "storage.type.track",
+          "match": "\\b(struct|enum|union|type)\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.track",
+          "match": "\\b(import|use|as|fn|return|if|else|while|for|in|let|mut|with|match|const|struct|enum|union|type)\\b"
+        },
+        {
+          "name": "keyword.control.conditional.track",
+          "match": "\\b(if|else|match)\\b"
+        },
+        {
+          "name": "keyword.control.loop.track",
+          "match": "\\b(while|for|in)\\b"
+        },
+        {
+          "name": "keyword.control.lens.track",
+          "match": "\\b(with)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.track",
+          "match": "\\b(i8|u8|i32|u32|i64|u64|bool|void|ptr|Str|Vec)\\b"
+        },
+        {
+          "name": "storage.type.track",
+          "match": "\\b(i8|u8|i32|u32|i64|u64|bool|void)\\b"
+        },
+        {
+          "name": "entity.name.type.track",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        },
+        {
+          "name": "meta.bracket.track",
+          "begin": "\\[",
+          "end": "\\]",
+          "patterns": [{ "include": "#types" }, { "include": "#numbers" }]
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.track",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.numeric.keyword.track",
+          "match": "\\b(const)\\b"
+        },
+        {
+          "name": "variable.other.constant.track",
+          "match": "\\b[A-Z_][A-Z0-9_]*\\b"
         }
       ]
     },
@@ -76,11 +201,15 @@
       "patterns": [
         {
           "name": "constant.numeric.hex.track",
-          "match": "\\b0[xX][0-9a-fA-F]+\\b"
+          "match": "\\b0[xX][0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.track",
+          "match": "\\b0[bB][01_]+\\b"
         },
         {
           "name": "constant.numeric.integer.track",
-          "match": "\\b[0-9]+\\b"
+          "match": "\\b[0-9][0-9_]*\\b"
         }
       ]
     },
@@ -108,11 +237,15 @@
         },
         {
           "name": "keyword.operator.assignment.track",
-          "match": "(=)"
+          "match": "=(?!=|>)"
         },
         {
           "name": "keyword.operator.arrow.track",
           "match": "(->|=>)"
+        },
+        {
+          "name": "keyword.operator.borrow.track",
+          "match": "&(?=mut|\\w)"
         }
       ]
     },
@@ -148,11 +281,11 @@
         },
         {
           "name": "punctuation.separator.colon.track",
-          "match": ":"
+          "match": "::"
         },
         {
-          "name": "punctuation.separator.namespace.track",
-          "match": "::"
+          "name": "punctuation.separator.colon.track",
+          "match": ":"
         },
         {
           "name": "punctuation.terminator.semicolon.track",
@@ -161,18 +294,26 @@
         {
           "name": "punctuation.accessor.dot.track",
           "match": "\\."
+        },
+        {
+          "name": "punctuation.accessor.underscore.track",
+          "match": "\\b_\\b"
         }
       ]
     },
-    "identifiers": {
+    "supportFunctions": {
+      "patterns": [
+        {
+          "name": "support.function.stdlib.track",
+          "match": "\\b(print|println|eprint|abort|alloc|free|memcpy|memset|memcmp|vec_init|vec_push|vec_get|vec_set|vec_pop|vec_len|vec_clear|vec_reserve|str_from_literal|str_len|str_eq|str_concat|str_find|str_to_int|str_is_int|str_starts_with|str_ends_with|str_contains|str_substr|str_trim|str_char_at|int_to_str|char_is_digit|char_is_alpha|char_is_alphanumeric|char_is_space|char_to_upper|char_to_lower|path_basename|path_ext|path_join|mem_realloc|file_open|file_read_all|file_write|file_close|file_exists|file_size|file_copy|file_remove|dir_exists|os_args_count|os_arg|env_get|env_exists|process_spawn|sys_exec|sys_set_memory_limit|sys_get_memory_used|net_socket_tcp_listen|net_socket_connect|net_socket_accept|net_socket_send|net_socket_recv|net_socket_close|math_abs|math_max|math_min|math_pow|math_sqrt|math_clamp|math_random|read_line|print_str|print_int|print_hex)\\b"
+        }
+      ]
+    },
+    "variables": {
       "patterns": [
         {
           "name": "variable.other.track",
           "match": "\\b[a-z_][a-zA-Z0-9_]*\\b"
-        },
-        {
-          "name": "entity.name.type.track",
-          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
         }
       ]
     }

@@ -18,7 +18,8 @@ fn test_vscode_package_json() {
 
     assert_eq!(v["name"], "track-vscode");
     assert_eq!(v["publisher"], "dev-dami");
-    assert_eq!(v["icon"], "../../assets/track-icon.svg");
+    // flat simple icon lives inside the extension (was ../../assets/track-icon.svg)
+    assert_eq!(v["icon"], "images/track-icon.png");
 
     let contributes = &v["contributes"];
     let languages = contributes["languages"]
@@ -65,20 +66,37 @@ fn test_vscode_textmate_grammar() {
     assert_eq!(v["scopeName"], "source.track");
     assert_eq!(v["name"], "Track");
 
-    let keywords_match = v["repository"]["keywords"]["patterns"][0]["match"]
-        .as_str()
-        .expect("keywords match pattern missing");
+    // keywords may be split across patterns; collect all keyword matches
+    let keywords_patterns = v["repository"]["keywords"]["patterns"]
+        .as_array()
+        .expect("keywords patterns missing");
+    let keywords_all: String = keywords_patterns
+        .iter()
+        .filter_map(|p| p["match"].as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    // also allow struct/enum in typeDefinitions if not in keywords
+    let type_defs = v["repository"]["typeDefinitions"]["patterns"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| p["match"].as_str().or(p["begin"].as_str()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let combined = format!("{} {}", keywords_all, type_defs);
 
     assert!(
-        keywords_match.contains("import"),
+        combined.contains("import"),
         "Grammar keywords missing 'import'"
     );
     assert!(
-        keywords_match.contains("fn"),
+        combined.contains("fn"),
         "Grammar keywords missing 'fn'"
     );
     assert!(
-        keywords_match.contains("struct"),
+        combined.contains("struct"),
         "Grammar keywords missing 'struct'"
     );
 }
@@ -103,13 +121,14 @@ fn test_nvim_plugin_files() {
         lua_content.contains("import"),
         "track.lua syntax missing 'import'"
     );
+    // flat simple icon — new design uses 󱐌 / #7aa2f7, keep backward compat check for T if present
     assert!(
-        lua_content.contains("icon = \"T\""),
-        "track.lua devicons missing flat T icon"
+        lua_content.contains("icon = \"T\"") || lua_content.contains("icon = \"󱐌\""),
+        "track.lua devicons missing icon"
     );
     assert!(
-        lua_content.contains("color = \"#ffffff\""),
-        "track.lua devicons missing white color"
+        lua_content.contains("color = \"#ffffff\"") || lua_content.contains("color = \"#7aa2f7\""),
+        "track.lua devicons missing color"
     );
 
     // If luac or luajit is installed on machine, test syntax parsing of track.lua

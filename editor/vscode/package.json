@@ -1,24 +1,36 @@
 {
   "name": "track-vscode",
-  "displayName": "Track Language Support",
-  "description": "Syntax highlighting and LSP language server support for Track programming language.",
-  "version": "0.1.0",
+  "displayName": "Track",
+  "description": "Flat, fast syntax highlighting + LSP for Track — a low-level systems language with linear ownership and Cranelift backend.",
+  "version": "0.2.0",
   "publisher": "dev-dami",
-  "icon": "../../assets/track-icon.svg",
+  "license": "MIT",
+  "icon": "images/track-icon.png",
   "engines": {
-
-    "vscode": "^1.75.0"
+    "vscode": "^1.80.0"
   },
-  "categories": [
-    "Programming Languages"
-  ],
+  "categories": ["Programming Languages"],
+  "keywords": ["track", "systems", "cranelift", "linear types", "lsp"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dev-dami/track"
+  },
+  "homepage": "https://github.com/dev-dami/track",
+  "bugs": {
+    "url": "https://github.com/dev-dami/track/issues"
+  },
+  "activationEvents": ["onLanguage:track"],
   "contributes": {
     "languages": [
       {
         "id": "track",
         "aliases": ["Track", "track"],
         "extensions": [".trk"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/track-icon.png",
+          "dark": "./images/track-icon.png"
+        }
       }
     ],
     "grammars": [
@@ -27,6 +39,25 @@
         "scopeName": "source.track",
         "path": "./syntaxes/track.tmLanguage.json"
       }
-    ]
+    ],
+    "iconThemes": [],
+    "configuration": {
+      "title": "Track",
+      "properties": {
+        "track.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Track language server (track-lsp) if installed and on PATH."
+        },
+        "track.lsp.path": {
+          "type": "string",
+          "default": "track-lsp",
+          "description": "Path to track-lsp binary."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "echo \"no build step\""
   }
 }
