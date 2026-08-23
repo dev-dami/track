@@ -63,8 +63,8 @@ fn test_cli_version_reports_0_6() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let combined = format!("{}{}", stdout, stderr);
     assert!(
-        combined.contains("0.6.0"),
-        "version output missing 0.6.0: {}",
+        combined.contains("0.7.0"),
+        "version output missing 0.7.0: {}",
         combined
     );
 }

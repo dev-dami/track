@@ -132,7 +132,7 @@ fn test_yard_version_reports() {
             String::from_utf8_lossy(&o.stdout),
             String::from_utf8_lossy(&o.stderr)
         );
-        assert!(s.contains("0.6.0"), "yard version missing 0.6.0: {}", s);
+        assert!(s.contains("0.7.0"), "yard version missing 0.7.0: {}", s);
     } else {
         // fallback via cargo run
         let o = std::process::Command::new("cargo")
@@ -144,7 +144,7 @@ fn test_yard_version_reports() {
             String::from_utf8_lossy(&o.stdout),
             String::from_utf8_lossy(&o.stderr)
         );
-        assert!(s.contains("0.6.0"), "yard version missing: {}", s);
+        assert!(s.contains("0.7.0"), "yard version missing: {}", s);
     }
 }
 

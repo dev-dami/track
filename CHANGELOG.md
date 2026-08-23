@@ -5,6 +5,22 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-08-23
+
+### Added
+- **Self-hosted lexer** (`compiler/src/token.trk` + `compiler/src/lexer.trk`): native `union Token` (50+ variants), `lex_next`/`lex_string`/`lex_number`/`lex_ident`/`skip_ws_and_comments` via `str_char_at`/`str_len`/`str_substr`/`char_is_*`. `compiler/` is a `yard` package (`compiler/Track.toml` → `compiler/target/trackc`), split from monolithic `compiler/lexer.trk` into `token` (types) + `lexer` (scanning) + `main` (demo). `compiler/src/lexer_test.trk` with 10 native tests (`count_tokens` for let/import/fn/if-else/ops/cmp/logic/shift/string+comment).
+- **`yard test`**: discovers `src/*_test.trk` + `tests/**/*.trk`, builds each as temp package (links `token`+`lexer`+test `main`), runs and reports. `compiler: yard test` ✓ `All 1 Track test(s) passed`.
+- Local `import "lexer"` / `import "token"` fallback in `src/checker/mod.rs:1090` (resolves `src/*.trk`, `compiler/src/*.trk`).
+
+### Fixed
+- **Variant constructors used as values were linear**: `is_copy_var` now treats `::` qualified names as copy (`src/checker/mod.rs:78`), fixing `enum`/`union` reuse and `if/else` merge `Spent/Active` for `Color::Red` etc.
+- **Missing runtime symbols**: added `str_len`/`str_eq` in `src/lib.rs:462` (were declared in checker but not defined, caused `ld: undefined reference`).
+- **Match with early `return` inside arms miscompiled as `block already filled`**: rewrote `token_kind_name` to `out` variable + wildcard `_` patterns.
+
+### Changed
+- `src/yard/builder.rs:65` — `yard build` excludes `*_test.trk` / `tests/` from main package link (tests built separately via `yard test`).
+- `Cargo.toml` version `0.6.0` → `0.7.0`.
+
 ## [0.6.0] — 2026-08-22
 
 ### Added

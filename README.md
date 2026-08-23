@@ -91,6 +91,23 @@ yard build
 
 # Build and execute project
 yard run
+
+# Run native Track tests (src/*_test.trk, tests/**/*.trk)
+yard test
+```
+
+### Self-Hosted Compiler (`compiler/`)
+
+`compiler/` is a `yard` package that hosts the native Track lexer (`v0.7.0`):
+
+```bash
+# Check / build the self-hosted lexer
+yard check  # in compiler/
+yard build  # -> compiler/target/trackc
+yard test   # 10 lexer tests
+
+# Dump tokens for a string (oracle vs src/lexer/mod.rs)
+compiler/target/trackc "let x = 42;"
 ```
 
 ## Testing

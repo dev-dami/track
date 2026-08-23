@@ -13,7 +13,7 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 [v0.4.0] Tuples & Pattern Matching  ✅ DONE
 [v0.5.0] Explicit Error Handling    ✅ DONE
 [v0.6.0] Monomorphized Generics     ✅ DONE
-[v0.7.0] Track Lexer in Track       ⏳ PLANNED
+[v0.7.0] Track Lexer in Track       ✅ DONE
 [v0.8.0] Track Parser, Checker & Codegen ⏳ PLANNED
 [v0.9.0] Self-Bootstrapping Verified 🎯 MILESTONE
 ```
@@ -101,11 +101,18 @@ values that live on the call stack and are passed around explicitly.
 
 ---
 
-### v0.7.0 — Self-Hosted Compiler Component 1: Track Lexer in Track (`compiler/lexer.trk`)
-- **Native Tokenizer**:
-  - Port Lexer from Rust to 100% native Track code in `compiler/lexer.trk`.
-  - Token stream representation using `union Token` and `[]u8` string slices.
-  - Native unit test suite (`yard test`).
+### v0.7.0 — Self-Hosted Compiler Component 1: Track Lexer in Track (`compiler/src/`) ✅
+- **Native Tokenizer** (`compiler/src/token.trk` + `compiler/src/lexer.trk`):
+  - Ported `src/lexer/mod.rs` (logos) to 100% native Track: `union Token` (50+ variants), `lex_next`/`lex_string`/`lex_number`/`lex_ident` with `str_char_at`/`str_len`/`str_substr`/`char_is_*`.
+  - `compiler` is a `yard` package (`compiler/Track.toml` → `compiler/target/trackc`); artifacts isolated from repo root.
+  - Split from monolithic `compiler/lexer.trk` into `token.trk` (types) + `lexer.trk` (scanning) + `main.trk` (demo/count/dump).
+- **Checker & Runtime Fixes**:
+  - `src/checker/mod.rs:78` — `is_copy_var` treats `::` variant ctors as copy (no Spent/Active merge).
+  - `src/checker/mod.rs:1090` — local `import "lexer"` fallback loading `src/*.trk` / `compiler/src/*.trk` for split modules.
+  - `src/lib.rs:462` — missing `str_len`/`str_eq` runtime (were declared but not linked).
+  - `src/yard/*` — `yard test` (discovers `src/*_test.trk` + `tests/**/*.trk`, builds temp package per test, runs).
+- **Native Unit Test Suite** (`compiler/src/lexer_test.trk` + `yard test`):
+  - 10 tests via `count_tokens` (let/import/fn/if-else/ops/cmp/logic/shift/string+comment) + `lex_next` kind check; `yard test` ✓ `All 1 Track test(s) passed`.
 
 ---
 
