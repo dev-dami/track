@@ -94,7 +94,18 @@ impl TrackLsp {
             }
         };
 
-        // Try to type check
+        // Monomorphize generics (same as compile_source) then type check
+        let mut program = program;
+        if let Err(e) = crate::mono::monomorphize(&mut program) {
+            diagnostics.push(Diagnostic {
+                range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: e,
+                ..Default::default()
+            });
+            return (None, diagnostics);
+        }
+
         let mut checker = LinearChecker::new();
         if let Err(e) = checker.check_program(&program) {
             diagnostics.push(Diagnostic {

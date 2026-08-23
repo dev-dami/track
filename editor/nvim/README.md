@@ -48,7 +48,13 @@ echo 'augroup track_ft | au! | au BufNewFile,BufRead *.trk setf track | augroup 
 - **Filetype** `*.trk` → `track` (`vim.filetype.add` + autocmd fallback)
 - **Flat syntax** keywords, types, macros (`@macro` / `@call`), functions, strings/escapes, numbers (`0x`/`0b`), operators (`->` `=>` `::` `..`), `//` + `/* */` comments with `TODO` highlight
 - **LSP** `track-lsp` via `nvim-lspconfig` — hover/`gd`/`gr`/`K`/`<leader>ca`/`<leader>rn` on attach; warns if binary missing
-- **Devicons** `nvim-web-devicons` → `trk` icon (`󱐌`, `#7aa2f7`)
+- **Devicons** `nvim-web-devicons` → `trk` icon (`󱐌`, `#7aa2f7`) — *requires Nerd Font; falls back to `T` if missing*
+
+## Why no SVG in Neovim?
+
+Neovim is a **terminal UI** — it cannot render SVG/PNG images inline.  
+`assets/track-icon.svg` and `editor/vscode/images/*.{svg,png}` are **for VS Code’s file-icon theme, GitHub, and docs** (graphical environments that can draw vectors).  
+In the terminal, `nvim-web-devicons` uses a **font glyph** (`󱐌` from Nerd Fonts) instead. If you don’t have a Nerd Font, you’ll see `□` — install one (e.g. JetBrainsMono Nerd Font) or set `icon = "T"` in `editor/nvim/track.lua:89`.
 
 ## Commands
 
