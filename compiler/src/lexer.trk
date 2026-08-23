@@ -1,0 +1,446 @@
+// lexer.trk — Native tokenizer core (v0.7)
+// Self-contained for `yard build` — duplicates `Token` from `token.trk`
+// so codegen sees the union in this compilation unit. `token.trk` remains
+// the canonical definition; this copy must stay in sync.
+
+union Token {
+    Import, Let, Mut, With, Fn, Return, If, Else, While, True, False,
+    Struct, Enum, Union, Match, As, AtMacro, Const, TypeDef, At,
+    TyU8, TyI8, TyI32, TyU32, TyI64, TyU64, TyBool, TyVoid, TyPtr,
+    Int(i64), StrLit(Str), Ident(Str),
+    Eq, EqEq, Neq, Bang, LBrace, RBrace, LParen, RParen, LBracket, RBracket,
+    Comma, Colon, ColonColon, Arrow, FatArrow, Semicolon, DotDot, Dot,
+    Underscore, Amp, Pipe, Star, Plus, Minus, Slash, Percent, Lt, Gt, Lte, Gte,
+    AmpAmp, PipePipe, Shl, Shr, Eof, Unknown,
+}
+
+fn keyword_or_ident(lex: Str) -> Token {
+    let eq_import = str_eq(&lex, "import");
+    if eq_import {
+        let _c = lex;
+        return Token::Import;
+    } else {
+        let eq_let = str_eq(&lex, "let");
+        if eq_let {
+            let _c2 = lex;
+            return Token::Let;
+        } else {
+            let eq_mut = str_eq(&lex, "mut");
+            if eq_mut {
+                let _c3 = lex;
+                return Token::Mut;
+            } else {
+                let eq_fn = str_eq(&lex, "fn");
+                if eq_fn {
+                    let _c4 = lex;
+                    return Token::Fn;
+                } else {
+                    let eq_return = str_eq(&lex, "return");
+                    if eq_return {
+                        let _c5 = lex;
+                        return Token::Return;
+                    } else {
+                        let eq_if = str_eq(&lex, "if");
+                        if eq_if {
+                            let _c6 = lex;
+                            return Token::If;
+                        } else {
+                            let eq_else = str_eq(&lex, "else");
+                            if eq_else {
+                                let _c7 = lex;
+                                return Token::Else;
+                            } else {
+                                let eq_while = str_eq(&lex, "while");
+                                if eq_while {
+                                    let _c8 = lex;
+                                    return Token::While;
+                                } else {
+                                    let eq_true = str_eq(&lex, "true");
+                                    if eq_true {
+                                        let _c9 = lex;
+                                        return Token::True;
+                                    } else {
+                                        let eq_false = str_eq(&lex, "false");
+                                        if eq_false {
+                                            let _c10 = lex;
+                                            return Token::False;
+                                        } else {
+                                            let eq_struct = str_eq(&lex, "struct");
+                                            if eq_struct {
+                                                let _c11 = lex;
+                                                return Token::Struct;
+                                            } else {
+                                                let eq_enum = str_eq(&lex, "enum");
+                                                if eq_enum {
+                                                    let _c12 = lex;
+                                                    return Token::Enum;
+                                                } else {
+                                                    let eq_union = str_eq(&lex, "union");
+                                                    if eq_union {
+                                                        let _c13 = lex;
+                                                        return Token::Union;
+                                                    } else {
+                                                        let eq_match = str_eq(&lex, "match");
+                                                        if eq_match {
+                                                            let _c14 = lex;
+                                                            return Token::Match;
+                                                        } else {
+                                                            return Token::Ident(lex);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn token_kind_name(tok: Token) -> Str {
+    let mut out = "Other";
+    match tok {
+        Token::Import => out = "Import",
+        Token::Let => out = "Let",
+        Token::Mut => out = "Mut",
+        Token::With => out = "With",
+        Token::Fn => out = "Fn",
+        Token::Return => out = "Return",
+        Token::If => out = "If",
+        Token::Else => out = "Else",
+        Token::While => out = "While",
+        Token::True => out = "True",
+        Token::False => out = "False",
+        Token::Struct => out = "Struct",
+        Token::Enum => out = "Enum",
+        Token::Union => out = "Union",
+        Token::Match => out = "Match",
+        Token::Eof => out = "Eof",
+        Token::Unknown => out = "Unknown",
+        Token::Int(_) => out = "Int",
+        Token::StrLit(_) => out = "StrLit",
+        Token::Ident(_) => out = "Ident",
+        _ => out = "Other",
+    }
+    return out;
+}
+
+fn is_alpha_char(c: u8) -> bool {
+    return char_is_alpha(c);
+}
+
+fn is_digit_char(c: u8) -> bool {
+    return char_is_digit(c);
+}
+
+fn is_ident_start(c: u8) -> bool {
+    if char_is_alpha(c) {
+        return true;
+    }
+    if c == 95 {
+        return true;
+    }
+    return false;
+}
+
+fn is_ident_continue(c: u8) -> bool {
+    if char_is_alphanumeric(c) {
+        return true;
+    }
+    if c == 95 {
+        return true;
+    }
+    return false;
+}
+
+fn skip_ws_and_comments(src: &Str, pos: i64) -> i64 {
+    let len = str_len(src);
+    let mut p = pos;
+    let mut skipping = true;
+    while p < len && skipping {
+        let ch = str_char_at(src, p);
+        if char_is_space(ch) {
+            p = p + 1;
+        } else {
+            if ch == 47 {
+                let nxt = str_char_at(src, p + 1);
+                if nxt == 47 {
+                    p = p + 2;
+                    let mut in_comment = true;
+                    while p < len && in_comment {
+                        let c2 = str_char_at(src, p);
+                        if c2 == 10 {
+                            in_comment = false;
+                            p = p + 1;
+                        } else {
+                            p = p + 1;
+                        }
+                    }
+                } else {
+                    skipping = false;
+                }
+            } else {
+                skipping = false;
+            }
+        }
+    }
+    return p;
+}
+
+fn lex_number(src: &Str, start: i64) -> (Token, i64) {
+    let len = str_len(src);
+    let mut p = start;
+    let mut val: i64 = 0;
+    let mut cont = true;
+    while p < len && cont {
+        let ch = str_char_at(src, p);
+        if char_is_digit(ch) {
+            let digit: i64 = ch - 48;
+            val = val * 10 + digit;
+            p = p + 1;
+        } else {
+            cont = false;
+        }
+    }
+    let tok = Token::Int(val);
+    return (tok, p);
+}
+
+fn lex_ident(src: &Str, start: i64) -> (Token, i64) {
+    let len = str_len(src);
+    let mut p = start;
+    let mut cont = true;
+    while p < len && cont {
+        let ch = str_char_at(src, p);
+        if is_ident_continue(ch) {
+            p = p + 1;
+        } else {
+            cont = false;
+        }
+    }
+    let slice_len = p - start;
+    let lexeme = str_substr(src, start, slice_len);
+    let tok = keyword_or_ident(lexeme);
+    return (tok, p);
+}
+
+fn lex_string(src: &Str, start: i64) -> (Token, i64) {
+    let len = str_len(src);
+    let mut p = start + 1;
+    let mut open = true;
+    while p < len && open {
+        let ch = str_char_at(src, p);
+        if ch == 92 {
+            p = p + 2;
+        } else {
+            if ch == 34 {
+                p = p + 1;
+                open = false;
+            } else {
+                p = p + 1;
+            }
+        }
+    }
+    let inner_len = p - start - 2;
+    let inner = str_substr(src, start + 1, inner_len);
+    let tok = Token::StrLit(inner);
+    return (tok, p);
+}
+
+fn lex_next(src: &Str, pos: i64) -> (Token, i64) {
+    let p0 = skip_ws_and_comments(src, pos);
+    let len = str_len(src);
+    if p0 >= len {
+        return (Token::Eof, p0);
+    }
+    let ch = str_char_at(src, p0);
+    let ch2 = str_char_at(src, p0 + 1);
+
+    if ch == 34 {
+        return lex_string(src, p0);
+    }
+    if char_is_digit(ch) {
+        return lex_number(src, p0);
+    }
+    if is_ident_start(ch) {
+        return lex_ident(src, p0);
+    }
+
+    if ch == 58 {
+        if ch2 == 58 {
+            return (Token::ColonColon, p0 + 2);
+        }
+        return (Token::Colon, p0 + 1);
+    }
+    if ch == 61 {
+        if ch2 == 61 {
+            return (Token::EqEq, p0 + 2);
+        }
+        if ch2 == 62 {
+            return (Token::FatArrow, p0 + 2);
+        }
+        return (Token::Eq, p0 + 1);
+    }
+    if ch == 33 {
+        if ch2 == 61 {
+            return (Token::Neq, p0 + 2);
+        }
+        return (Token::Bang, p0 + 1);
+    }
+    if ch == 60 {
+        if ch2 == 61 {
+            return (Token::Lte, p0 + 2);
+        }
+        if ch2 == 60 {
+            return (Token::Shl, p0 + 2);
+        }
+        return (Token::Lt, p0 + 1);
+    }
+    if ch == 62 {
+        if ch2 == 61 {
+            return (Token::Gte, p0 + 2);
+        }
+        if ch2 == 62 {
+            return (Token::Shr, p0 + 2);
+        }
+        return (Token::Gt, p0 + 1);
+    }
+    if ch == 45 {
+        if ch2 == 62 {
+            return (Token::Arrow, p0 + 2);
+        }
+        return (Token::Minus, p0 + 1);
+    }
+    if ch == 46 {
+        if ch2 == 46 {
+            return (Token::DotDot, p0 + 2);
+        }
+        return (Token::Dot, p0 + 1);
+    }
+    if ch == 38 {
+        if ch2 == 38 {
+            return (Token::AmpAmp, p0 + 2);
+        }
+        return (Token::Amp, p0 + 1);
+    }
+    if ch == 124 {
+        if ch2 == 124 {
+            return (Token::PipePipe, p0 + 2);
+        }
+        return (Token::Pipe, p0 + 1);
+    }
+
+    if ch == 123 {
+        return (Token::LBrace, p0 + 1);
+    }
+    if ch == 125 {
+        return (Token::RBrace, p0 + 1);
+    }
+    if ch == 40 {
+        return (Token::LParen, p0 + 1);
+    }
+    if ch == 41 {
+        return (Token::RParen, p0 + 1);
+    }
+    if ch == 91 {
+        return (Token::LBracket, p0 + 1);
+    }
+    if ch == 93 {
+        return (Token::RBracket, p0 + 1);
+    }
+    if ch == 44 {
+        return (Token::Comma, p0 + 1);
+    }
+    if ch == 59 {
+        return (Token::Semicolon, p0 + 1);
+    }
+    if ch == 42 {
+        return (Token::Star, p0 + 1);
+    }
+    if ch == 43 {
+        return (Token::Plus, p0 + 1);
+    }
+    if ch == 47 {
+        return (Token::Slash, p0 + 1);
+    }
+    if ch == 37 {
+        return (Token::Percent, p0 + 1);
+    }
+    if ch == 95 {
+        return (Token::Underscore, p0 + 1);
+    }
+    if ch == 64 {
+        let maybe = str_substr(src, p0, 6);
+        let is_macro = str_eq(&maybe, "@macro");
+        if is_macro {
+            let _c = maybe;
+            return (Token::AtMacro, p0 + 6);
+        } else {
+            let _c2 = maybe;
+            return (Token::At, p0 + 1);
+        }
+    }
+
+    return (Token::Unknown, p0 + 1);
+}
+
+fn is_eof_token(tok: Token) -> bool {
+    let mut out = false;
+    match tok {
+        Token::Eof => out = true,
+        _ => out = false,
+    }
+    return out;
+}
+
+fn count_tokens(src: &Str) -> i64 {
+    let len = str_len(src);
+    let mut pos: i64 = 0;
+    let mut count: i64 = 0;
+    let mut done = false;
+    while pos < len {
+        if done {
+            pos = len;
+        } else {
+            let (tok, next) = lex_next(src, pos);
+            let eof = is_eof_token(tok);
+            if eof {
+                done = true;
+            } else {
+                count = count + 1;
+                pos = next;
+                if count > 100 {
+                    done = true;
+                }
+            }
+        }
+    }
+    return count;
+}
+
+fn dump_tokens(src: &Str) -> void {
+    let len = str_len(src);
+    let mut pos: i64 = 0;
+    let mut done = false;
+    while pos < len {
+        if done {
+            pos = len;
+        } else {
+            let (tok, next) = lex_next(src, pos);
+            let kind = token_kind_name(tok);
+            let is_eof = str_eq(&kind, "Eof");
+            if is_eof {
+                let _c = kind;
+                done = true;
+            } else {
+                print(kind);
+                pos = next;
+            }
+        }
+    }
+}

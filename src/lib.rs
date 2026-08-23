@@ -458,6 +458,14 @@ unsigned char str_char_at(const char* s, long long idx) {
     if ((size_t)idx >= len) return 0;
     return (unsigned char)s[idx];
 }
+unsigned int str_len(const char* s) {
+    if (!s) return 0;
+    return (unsigned int)strlen(s);
+}
+int str_eq(const char* a, const char* b) {
+    if (!a || !b) return a == b ? 1 : 0;
+    return strcmp(a, b) == 0 ? 1 : 0;
+}
 
 // Memory & Vec Extensions
 void* mem_realloc(void* ptr, size_t new_size) {

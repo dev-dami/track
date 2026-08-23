@@ -1,0 +1,19 @@
+// main.trk — Demo driver for the self-hosted lexer (v0.7)
+// Keeps `main` tiny; all heavy lifting lives in `lexer.trk`.
+// Build via `yard` so artifacts land in `compiler/target/` (no root clutter).
+// When invoked with an argument, dumps the token stream for that input
+// (oracle mode for diffing against the Rust lexer).
+
+import "lexer";
+
+fn main() -> void {
+    let argc = os_args_count();
+    if argc > 1 {
+        let src = os_arg(1);
+        dump_tokens(&src);
+    } else {
+        let src2 = "import \"std/io\"; fn main() -> void { let x = 42; // comment\n let s = \"hello\"; }";
+        let c = count_tokens(&src2);
+        print(c);
+    }
+}

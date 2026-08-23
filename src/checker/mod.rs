@@ -22,6 +22,7 @@ pub struct LinearChecker {
     pub current_params: std::collections::HashSet<String>,
     pub current_return_type: Option<TrackType>,
     pub barebones: bool,
+    pub loaded_modules: std::collections::HashSet<String>,
 }
 
 impl LinearChecker {
@@ -68,6 +69,7 @@ impl LinearChecker {
             current_params: std::collections::HashSet::new(),
             current_return_type: None,
             barebones: false,
+            loaded_modules: std::collections::HashSet::new(),
         }
     }
 
@@ -76,6 +78,14 @@ impl LinearChecker {
     }
 
     pub fn is_copy_var(&self, name: &str) -> bool {
+        // Enum/union variant constructors (e.g. `Color::Red`, `Token::Import`) are
+        // semantically value constants — reusing the same variant must not
+        // consume a linear resource. Treat any `::`-qualified name that was
+        // introduced as an enum/union variant as copy so `read_or_move`
+        // remains `Active` across uses and CFG merges.
+        if name.contains("::") {
+            return true;
+        }
         if let Some(ty) = self.types.get(name) {
             is_copy_type(ty)
         } else {
@@ -1077,7 +1087,65 @@ impl LinearChecker {
                         ("dot".to_string(), Some(TrackType::I64)),
                         ("cross".to_string(), Some(TrackType::I64)),
                     ],
-                    _ => return Err(format!("Compile Error: Unknown module '{}'", path)),
+                    _ => {
+                        // Local file import fallback — try to resolve `path` as a
+                        // `.trk` file relative to the project. Candidates mirror
+                        // yard's `src/` layout and the `compiler/` self-hosting
+                        // directory.
+                        let candidates = vec![
+                            format!("src/{}.trk", norm_path),
+                            format!("{}.trk", norm_path),
+                            format!("compiler/src/{}.trk", norm_path),
+                            format!("compiler/{}.trk", norm_path),
+                            format!("src/{}/mod.trk", norm_path),
+                        ];
+                        let mut found: Option<String> = None;
+                        for cand in &candidates {
+                            if std::path::Path::new(cand).exists() {
+                                found = Some(cand.clone());
+                                break;
+                            }
+                        }
+                        // Also try relative to current compiler package when
+                        // checking from repository root: the import `token`
+                        // inside `compiler/src/main.trk` should resolve to
+                        // `compiler/src/token.trk` even when the candidate
+                        // `src/token.trk` is tried first.
+                        if found.is_none() {
+                            for cand in &[
+                                format!("compiler/src/{}.trk", path),
+                                format!("compiler/{}.trk", path),
+                            ] {
+                                if std::path::Path::new(cand).exists() {
+                                    found = Some(cand.clone());
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(cand) = found {
+                            if self.loaded_modules.contains(&cand) {
+                                return Ok(());
+                            }
+                            self.loaded_modules.insert(cand.clone());
+                            let src = std::fs::read_to_string(&cand).map_err(|e| {
+                                format!("Failed to read module '{}' ({}): {}", path, cand, e)
+                            })?;
+                            let tokens = crate::lexer::Lexer::tokenize(&src)
+                                .map_err(|e| format!("Lexer error in '{}': {}", cand, e))?;
+                            let mut p = crate::parser::Parser::new(tokens, src.clone());
+                            let prog = p
+                                .parse_program()
+                                .map_err(|e| format!("Parse error in '{}': {}", cand, e))?;
+                            // Run monomorphization then checker on the imported program
+                            // so its types/functions become visible to the importer.
+                            let mut prog_owned = prog;
+                            crate::mono::monomorphize(&mut prog_owned)
+                                .map_err(|e| format!("Monomorphize error in '{}': {}", cand, e))?;
+                            self.check_program(&prog_owned)?;
+                            return Ok(());
+                        }
+                        return Err(format!("Compile Error: Unknown module '{}'", path));
+                    }
                 };
 
                 let default_ns = path.split('/').next_back().unwrap_or(path);

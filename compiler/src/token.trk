@@ -1,0 +1,15 @@
+// token.trk — Token definitions for the Track self-hosted lexer (v0.7)
+// Pure type definitions; no logic. Kept separate so `lexer.trk` can stay
+// focused on scanning. Both files define the same `union Token` for
+// codegen (yard links them as separate objects, types are nominally equal).
+
+union Token {
+    Import, Let, Mut, With, Fn, Return, If, Else, While, True, False,
+    Struct, Enum, Union, Match, As, AtMacro, Const, TypeDef, At,
+    TyU8, TyI8, TyI32, TyU32, TyI64, TyU64, TyBool, TyVoid, TyPtr,
+    Int(i64), StrLit(Str), Ident(Str),
+    Eq, EqEq, Neq, Bang, LBrace, RBrace, LParen, RParen, LBracket, RBracket,
+    Comma, Colon, ColonColon, Arrow, FatArrow, Semicolon, DotDot, Dot,
+    Underscore, Amp, Pipe, Star, Plus, Minus, Slash, Percent, Lt, Gt, Lte, Gte,
+    AmpAmp, PipePipe, Shl, Shr, Eof, Unknown,
+}
