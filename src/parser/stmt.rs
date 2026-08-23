@@ -254,13 +254,23 @@ impl Parser {
 
     fn parse_import(&mut self) -> Result<Expr, String> {
         self.advance(); // consume 'import'
+        // Accept both quoted paths ("std/io") and bare identifiers (std / std::io)
         let path = match self.advance() {
             Some((Token::Str(s), _)) => s,
+            Some((Token::Ident(s), _)) => {
+                let mut p = s;
+                while self.peek() == Some(&Token::ColonColon) {
+                    self.advance();
+                    p.push_str("::");
+                    p.push_str(&self.expect_ident()?);
+                }
+                p
+            }
             other => {
                 return Err(format!(
                     "Expected string path after import, got {:?}",
                     other.map(|(t, _)| t)
-                ))
+                ));
             }
         };
 

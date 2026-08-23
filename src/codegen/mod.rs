@@ -7,7 +7,7 @@ use cranelift_codegen::ir::{self, AbiParam, InstBuilder, StackSlotData, StackSlo
 use cranelift_codegen::isa;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
+use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use target_lexicon::Triple;
 
@@ -44,8 +44,7 @@ impl CodeGen {
     }
 
     pub fn new_with_isa(module_name: &str, isa: Arc<dyn isa::TargetIsa>) -> Self {
-        let object_builder =
-            ObjectBuilder::new(isa, module_name, default_libcall_names()).unwrap();
+        let object_builder = ObjectBuilder::new(isa, module_name, default_libcall_names()).unwrap();
         let module = ObjectModule::new(object_builder);
 
         let mut variant_map = HashMap::new();
@@ -114,13 +113,15 @@ impl CodeGen {
                 Expr::EnumDef { name, variants, .. } => {
                     for (idx, (vname, _)) in variants.iter().enumerate() {
                         self.variant_map.insert(vname.clone(), idx as i64);
-                        self.variant_map.insert(format!("{}::{}", name, vname), idx as i64);
+                        self.variant_map
+                            .insert(format!("{}::{}", name, vname), idx as i64);
                     }
                 }
                 Expr::UnionDef { name, variants } => {
                     for (idx, (vname, _)) in variants.iter().enumerate() {
                         self.variant_map.insert(vname.clone(), idx as i64);
-                        self.variant_map.insert(format!("{}::{}", name, vname), idx as i64);
+                        self.variant_map
+                            .insert(format!("{}::{}", name, vname), idx as i64);
                     }
                 }
                 Expr::FnDef {
@@ -142,9 +143,10 @@ impl CodeGen {
                     if name == "main" {
                         sig.returns.push(AbiParam::new(ir::types::I32));
                     } else if let Some(rty) = return_type
-                        && *rty != TrackType::Void {
-                            sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
-                        }
+                        && *rty != TrackType::Void
+                    {
+                        sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+                    }
 
                     let func_id = self
                         .module
@@ -165,9 +167,10 @@ impl CodeGen {
                     if name == "main" {
                         sig.returns.push(AbiParam::new(ir::types::I32));
                     } else if let Some(rty) = return_type
-                        && *rty != TrackType::Void {
-                            sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
-                        }
+                        && *rty != TrackType::Void
+                    {
+                        sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+                    }
 
                     let func_id = self
                         .module
@@ -186,7 +189,9 @@ impl CodeGen {
             .module
             .declare_function("print", Linkage::Import, &print_sig)
             .unwrap_or_else(|_| self.module.declare_anonymous_function(&print_sig).unwrap());
-        self.functions.entry("print".to_string()).or_insert(print_id);
+        self.functions
+            .entry("print".to_string())
+            .or_insert(print_id);
 
         let mut has_main = false;
 
@@ -252,9 +257,10 @@ impl CodeGen {
         if is_main {
             sig.returns.push(AbiParam::new(ir::types::I32));
         } else if let Some(rty) = return_type
-            && *rty != TrackType::Void {
-                sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
-            }
+            && *rty != TrackType::Void
+        {
+            sig.returns.push(AbiParam::new(track_type_to_cl(rty)));
+        }
         ctx.func.signature = sig;
 
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut self.fn_builder_ctx);
@@ -373,8 +379,13 @@ impl CodeGen {
         let bytes = product
             .emit()
             .map_err(|e| format!("Failed to emit Cranelift object module: {}", e))?;
-        fs::write(output_path, bytes)
-            .map_err(|e| format!("Failed to write object file '{}': {}", output_path.display(), e))
+        fs::write(output_path, bytes).map_err(|e| {
+            format!(
+                "Failed to write object file '{}': {}",
+                output_path.display(),
+                e
+            )
+        })
     }
 }
 
@@ -402,7 +413,11 @@ impl<'a> FnContext<'a> {
         match expr {
             Expr::IntLiteral(val) => Some(builder.ins().iconst(ir::types::I64, *val)),
 
-            Expr::BoolLiteral(val) => Some(builder.ins().iconst(ir::types::I8, if *val { 1 } else { 0 })),
+            Expr::BoolLiteral(val) => Some(
+                builder
+                    .ins()
+                    .iconst(ir::types::I8, if *val { 1 } else { 0 }),
+            ),
 
             Expr::StringLiteral(s) => {
                 let mut data_ctx = cranelift_module::DataDescription::new();
@@ -410,9 +425,7 @@ impl<'a> FnContext<'a> {
                 bytes.push(0); // null terminate
                 data_ctx.define(bytes.into_boxed_slice());
 
-                let data_id = module
-                    .declare_anonymous_data(true, false)
-                    .unwrap();
+                let data_id = module.declare_anonymous_data(true, false).unwrap();
                 module.define_data(data_id, &data_ctx).unwrap();
 
                 let local_data = module.declare_data_in_func(data_id, builder.func);
@@ -453,9 +466,10 @@ impl<'a> FnContext<'a> {
             Expr::Assign { target, value } => {
                 let val = self.compile_expr(builder, module, value)?;
                 if let Expr::Variable(name) = &**target
-                    && let Some(&var) = self.var_map.get(name) {
-                        builder.def_var(var, val);
-                    }
+                    && let Some(&var) = self.var_map.get(name)
+                {
+                    builder.def_var(var, val);
+                }
                 Some(val)
             }
 
@@ -471,10 +485,24 @@ impl<'a> FnContext<'a> {
                     BinOp::Mod => builder.ins().srem(lhs, rhs),
                     BinOp::Eq => builder.ins().icmp(ir::condcodes::IntCC::Equal, lhs, rhs),
                     BinOp::Neq => builder.ins().icmp(ir::condcodes::IntCC::NotEqual, lhs, rhs),
-                    BinOp::Lt => builder.ins().icmp(ir::condcodes::IntCC::SignedLessThan, lhs, rhs),
-                    BinOp::Gt => builder.ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, lhs, rhs),
-                    BinOp::Lte => builder.ins().icmp(ir::condcodes::IntCC::SignedLessThanOrEqual, lhs, rhs),
-                    BinOp::Gte => builder.ins().icmp(ir::condcodes::IntCC::SignedGreaterThanOrEqual, lhs, rhs),
+                    BinOp::Lt => builder
+                        .ins()
+                        .icmp(ir::condcodes::IntCC::SignedLessThan, lhs, rhs),
+                    BinOp::Gt => {
+                        builder
+                            .ins()
+                            .icmp(ir::condcodes::IntCC::SignedGreaterThan, lhs, rhs)
+                    }
+                    BinOp::Lte => {
+                        builder
+                            .ins()
+                            .icmp(ir::condcodes::IntCC::SignedLessThanOrEqual, lhs, rhs)
+                    }
+                    BinOp::Gte => {
+                        builder
+                            .ins()
+                            .icmp(ir::condcodes::IntCC::SignedGreaterThanOrEqual, lhs, rhs)
+                    }
                     BinOp::And => builder.ins().band(lhs, rhs),
                     BinOp::Or => builder.ins().bor(lhs, rhs),
                     BinOp::BitAnd => builder.ins().band(lhs, rhs),
@@ -494,11 +522,7 @@ impl<'a> FnContext<'a> {
                     UnaryOp::Not => {
                         let ty = builder.func.dfg.value_type(val);
                         let zero = builder.ins().iconst(ty, 0);
-                        Some(
-                            builder
-                                .ins()
-                                .icmp(ir::condcodes::IntCC::Equal, val, zero),
-                        )
+                        Some(builder.ins().icmp(ir::condcodes::IntCC::Equal, val, zero))
                     }
                     UnaryOp::Deref => Some(val),
                 }
@@ -509,9 +533,9 @@ impl<'a> FnContext<'a> {
             Expr::FunctionCall { name, args } | Expr::MacroCall { name, args, .. } => {
                 let mut arg_vals = Vec::new();
                 for arg in args {
-                    let v = self.compile_expr(builder, module, arg).unwrap_or_else(|| {
-                        builder.ins().iconst(ir::types::I64, 0)
-                    });
+                    let v = self
+                        .compile_expr(builder, module, arg)
+                        .unwrap_or_else(|| builder.ins().iconst(ir::types::I64, 0));
                     arg_vals.push(v);
                 }
 
@@ -527,9 +551,10 @@ impl<'a> FnContext<'a> {
                     .get(name)
                     .or_else(|| self.variant_map.get(target_name))
                 {
-                    return arg_vals.first().copied().or_else(|| {
-                        Some(builder.ins().iconst(ir::types::I64, disc))
-                    });
+                    return arg_vals
+                        .first()
+                        .copied()
+                        .or_else(|| Some(builder.ins().iconst(ir::types::I64, disc)));
                 }
 
                 // Map Track-level builtin names to their C runtime symbols.
@@ -562,7 +587,10 @@ impl<'a> FnContext<'a> {
 
                 let mut fixed_args = Vec::new();
                 for (idx, &arg_val) in arg_vals.iter().enumerate() {
-                    let expected_ty_opt = builder.func.dfg.signatures[sig_ref].params.get(idx).map(|p| p.value_type);
+                    let expected_ty_opt = builder.func.dfg.signatures[sig_ref]
+                        .params
+                        .get(idx)
+                        .map(|p| p.value_type);
                     if let Some(expected_ty) = expected_ty_opt {
                         let actual_ty = builder.func.dfg.value_type(arg_val);
                         if actual_ty != expected_ty {
@@ -606,7 +634,9 @@ impl<'a> FnContext<'a> {
                 let else_block = builder.create_block();
                 let merge_block = builder.create_block();
 
-                builder.ins().brif(cond_val, then_block, &[], else_block, &[]);
+                builder
+                    .ins()
+                    .brif(cond_val, then_block, &[], else_block, &[]);
 
                 // Compile then block
                 builder.switch_to_block(then_block);
@@ -647,7 +677,9 @@ impl<'a> FnContext<'a> {
                 // Header block
                 builder.switch_to_block(header_block);
                 let cond_val = self.compile_expr(builder, module, condition)?;
-                builder.ins().brif(cond_val, body_block, &[], exit_block, &[]);
+                builder
+                    .ins()
+                    .brif(cond_val, body_block, &[], exit_block, &[]);
 
                 // Body block
                 builder.switch_to_block(body_block);
@@ -669,13 +701,19 @@ impl<'a> FnContext<'a> {
             Expr::ForIn { var, iter, body } => {
                 let (start_val, end_val) = match iter.as_ref() {
                     Expr::Range { start, end } => {
-                        let s = self.compile_expr(builder, module, start).unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
-                        let e = self.compile_expr(builder, module, end).unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
+                        let s = self
+                            .compile_expr(builder, module, start)
+                            .unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
+                        let e = self
+                            .compile_expr(builder, module, end)
+                            .unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
                         (s, e)
                     }
                     _ => {
                         let s = builder.ins().iconst(ir::types::I32, 0);
-                        let e = self.compile_expr(builder, module, iter).unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
+                        let e = self
+                            .compile_expr(builder, module, iter)
+                            .unwrap_or_else(|| builder.ins().iconst(ir::types::I32, 0));
                         (s, e)
                     }
                 };
@@ -707,8 +745,14 @@ impl<'a> FnContext<'a> {
 
                 builder.switch_to_block(header_block);
                 let cur_val = builder.use_var(loop_var);
-                let cond_val = builder.ins().icmp(ir::condcodes::IntCC::SignedLessThan, cur_val, fixed_end_val);
-                builder.ins().brif(cond_val, body_block, &[], exit_block, &[]);
+                let cond_val = builder.ins().icmp(
+                    ir::condcodes::IntCC::SignedLessThan,
+                    cur_val,
+                    fixed_end_val,
+                );
+                builder
+                    .ins()
+                    .brif(cond_val, body_block, &[], exit_block, &[]);
 
                 builder.switch_to_block(body_block);
                 builder.seal_block(body_block);
@@ -732,14 +776,18 @@ impl<'a> FnContext<'a> {
                     // Returning a tuple must heap-allocate (stack slot would dangle).
                     let v_opt = if let Expr::TupleLiteral { elements } = v_expr.as_ref() {
                         let elem_count = elements.len();
-                        let size_val = builder.ins().iconst(ir::types::I64, (elem_count * 8) as i64);
+                        let size_val = builder
+                            .ins()
+                            .iconst(ir::types::I64, (elem_count * 8) as i64);
                         let alloc_fid = if let Some(&fid) = self.functions.get("alloc") {
                             fid
                         } else {
                             let mut sig = module.make_signature();
                             sig.params.push(AbiParam::new(ir::types::I64));
                             sig.returns.push(AbiParam::new(ir::types::I64));
-                            let fid = module.declare_function("alloc", Linkage::Import, &sig).unwrap();
+                            let fid = module
+                                .declare_function("alloc", Linkage::Import, &sig)
+                                .unwrap();
                             self.functions.insert("alloc".to_string(), fid);
                             fid
                         };
@@ -821,7 +869,9 @@ impl<'a> FnContext<'a> {
             Expr::TupleIndex { target, index } => {
                 let ptr = self.compile_expr(builder, module, target)?;
                 let offset = (*index * 8) as i32;
-                let val = builder.ins().load(ir::types::I64, ir::MemFlags::new(), ptr, offset);
+                let val = builder
+                    .ins()
+                    .load(ir::types::I64, ir::MemFlags::new(), ptr, offset);
                 Some(val)
             }
 
@@ -829,14 +879,15 @@ impl<'a> FnContext<'a> {
                 // Fast path: let (a,b) = (x, y) without allocating a tuple.
                 if let Expr::TupleLiteral { elements } = value.as_ref()
                     && let Pattern::Tuple(pats) = pattern
-                        && pats.len() == elements.len() {
-                            for (pat, elem) in pats.iter().zip(elements.iter()) {
-                                if let Some(val) = self.compile_expr(builder, module, elem) {
-                                    self.bind_pattern_codegen(builder, module, pat, val);
-                                }
-                            }
-                            return None;
+                    && pats.len() == elements.len()
+                {
+                    for (pat, elem) in pats.iter().zip(elements.iter()) {
+                        if let Some(val) = self.compile_expr(builder, module, elem) {
+                            self.bind_pattern_codegen(builder, module, pat, val);
                         }
+                    }
+                    return None;
+                }
                 if let Some(val) = self.compile_expr(builder, module, value) {
                     self.bind_pattern_codegen(builder, module, pattern, val);
                 }
@@ -852,11 +903,14 @@ impl<'a> FnContext<'a> {
                     let arm_block = builder.create_block();
                     let next_arm_block = builder.create_block();
 
-                    let mut matched = self.compile_pattern_match(builder, module, &arm.pattern, disc);
+                    let mut matched =
+                        self.compile_pattern_match(builder, module, &arm.pattern, disc);
 
                     if let Some(ref guard) = arm.guard {
                         let guard_block = builder.create_block();
-                        builder.ins().brif(matched, guard_block, &[], next_arm_block, &[]);
+                        builder
+                            .ins()
+                            .brif(matched, guard_block, &[], next_arm_block, &[]);
 
                         builder.switch_to_block(guard_block);
                         builder.seal_block(guard_block);
@@ -872,7 +926,9 @@ impl<'a> FnContext<'a> {
                         self.bind_pattern_codegen(builder, module, &arm.pattern, disc);
                     }
 
-                    builder.ins().brif(matched, arm_block, &[], next_arm_block, &[]);
+                    builder
+                        .ins()
+                        .brif(matched, arm_block, &[], next_arm_block, &[]);
 
                     builder.switch_to_block(arm_block);
                     builder.seal_block(arm_block);
@@ -893,9 +949,10 @@ impl<'a> FnContext<'a> {
             Expr::SliceIndex { target, start, .. } => {
                 let ptr = self.compile_expr(builder, module, target)?;
                 if let Some(s) = start
-                    && let Some(start_val) = self.compile_expr(builder, module, s) {
-                        return Some(builder.ins().iadd(ptr, start_val));
-                    }
+                    && let Some(start_val) = self.compile_expr(builder, module, s)
+                {
+                    return Some(builder.ins().iadd(ptr, start_val));
+                }
                 Some(ptr)
             }
 
@@ -927,7 +984,10 @@ impl<'a> FnContext<'a> {
             Pattern::Tuple(pats) => {
                 for (i, p) in pats.iter().enumerate() {
                     let offset = (i * 8) as i32;
-                    let elem_val = builder.ins().load(ir::types::I64, ir::MemFlags::new(), val, offset);
+                    let elem_val =
+                        builder
+                            .ins()
+                            .load(ir::types::I64, ir::MemFlags::new(), val, offset);
                     self.bind_pattern_codegen(builder, _module, p, elem_val);
                 }
             }
@@ -955,7 +1015,9 @@ impl<'a> FnContext<'a> {
             Pattern::Ident(_) | Pattern::Wildcard => builder.ins().iconst(ir::types::I8, 1),
             Pattern::Literal(lit_expr) => {
                 if let Some(lit_val) = self.compile_expr(builder, module, lit_expr) {
-                    builder.ins().icmp(ir::condcodes::IntCC::Equal, val, lit_val)
+                    builder
+                        .ins()
+                        .icmp(ir::condcodes::IntCC::Equal, val, lit_val)
                 } else {
                     builder.ins().iconst(ir::types::I8, 1)
                 }
@@ -963,13 +1025,18 @@ impl<'a> FnContext<'a> {
             Pattern::Variant { variant, .. } => {
                 let target_disc = self.variant_map.get(variant).copied().unwrap_or(0i64);
                 let expected = builder.ins().iconst(ir::types::I64, target_disc);
-                builder.ins().icmp(ir::condcodes::IntCC::Equal, val, expected)
+                builder
+                    .ins()
+                    .icmp(ir::condcodes::IntCC::Equal, val, expected)
             }
             Pattern::Tuple(pats) => {
                 let mut cond = builder.ins().iconst(ir::types::I8, 1);
                 for (i, p) in pats.iter().enumerate() {
                     let offset = (i * 8) as i32;
-                    let elem_val = builder.ins().load(ir::types::I64, ir::MemFlags::new(), val, offset);
+                    let elem_val =
+                        builder
+                            .ins()
+                            .load(ir::types::I64, ir::MemFlags::new(), val, offset);
                     let elem_cond = self.compile_pattern_match(builder, module, p, elem_val);
                     cond = builder.ins().band(cond, elem_cond);
                 }
@@ -987,7 +1054,9 @@ fn track_type_to_cl(ty: &TrackType) -> ir::Type {
         TrackType::I64 | TrackType::U64 => ir::types::I64,
         TrackType::Bool => ir::types::I8,
         TrackType::Void => ir::types::I32,
-        TrackType::Ptr(_) | TrackType::Ref(_) | TrackType::Slice(_) | TrackType::Tuple(_) => ir::types::I64,
+        TrackType::Ptr(_) | TrackType::Ref(_) | TrackType::Slice(_) | TrackType::Tuple(_) => {
+            ir::types::I64
+        }
         TrackType::Array(_, _) => ir::types::I64,
         TrackType::Custom(_) => ir::types::I64,
     }

@@ -15,9 +15,10 @@ impl BuildCache {
     pub fn load(target_dir: &Path) -> Self {
         let cache_path = Self::cache_file_path(target_dir);
         if let Ok(data) = fs::read_to_string(&cache_path)
-            && let Ok(cache) = serde_json::from_str(&data) {
-                return cache;
-            }
+            && let Ok(cache) = serde_json::from_str(&data)
+        {
+            return cache;
+        }
         Self::default()
     }
 
@@ -25,8 +26,7 @@ impl BuildCache {
         let cache_path = Self::cache_file_path(target_dir);
         let data = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize build cache: {}", e))?;
-        fs::write(&cache_path, data)
-            .map_err(|e| format!("Failed to write build cache: {}", e))?;
+        fs::write(&cache_path, data).map_err(|e| format!("Failed to write build cache: {}", e))?;
         Ok(())
     }
 

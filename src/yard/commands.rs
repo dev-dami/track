@@ -98,8 +98,7 @@ pub fn add(args: &[String]) -> Result<(), String> {
 pub fn add_at(project_root: &Path, args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         return Err(
-            "Usage: yard add <package> [--version <ver>] [--path <path>] [--git <url>]"
-                .to_string(),
+            "Usage: yard add <package> [--version <ver>] [--path <path>] [--git <url>]".to_string(),
         );
     }
 

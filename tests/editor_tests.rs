@@ -91,10 +91,7 @@ fn test_vscode_textmate_grammar() {
         combined.contains("import"),
         "Grammar keywords missing 'import'"
     );
-    assert!(
-        combined.contains("fn"),
-        "Grammar keywords missing 'fn'"
-    );
+    assert!(combined.contains("fn"), "Grammar keywords missing 'fn'");
     assert!(
         combined.contains("struct"),
         "Grammar keywords missing 'struct'"

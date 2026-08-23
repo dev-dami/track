@@ -299,7 +299,9 @@ impl LanguageServer for TrackLsp {
         }
 
         // Types
-        let types = vec!["i8", "u8", "i32", "u32", "i64", "u64", "bool", "void", "ptr"];
+        let types = vec![
+            "i8", "u8", "i32", "u32", "i64", "u64", "bool", "void", "ptr",
+        ];
 
         for ty in types {
             if ty.starts_with(word) {
@@ -380,44 +382,44 @@ impl LanguageServer for TrackLsp {
         };
 
         for stmt in &program {
-                match stmt {
-                    crate::ast::Expr::EnumDef { name, variants, .. } => {
-                        for (variant, _) in variants {
-                            let full = format!("{}::{}", name, variant);
-                            if full.starts_with(word) {
-                                completions.push(CompletionItem {
-                                    label: full,
-                                    kind: Some(CompletionItemKind::ENUM_MEMBER),
-                                    detail: Some(format!("Enum variant of {}", name)),
-                                    ..Default::default()
-                                });
-                            }
+            match stmt {
+                crate::ast::Expr::EnumDef { name, variants, .. } => {
+                    for (variant, _) in variants {
+                        let full = format!("{}::{}", name, variant);
+                        if full.starts_with(word) {
+                            completions.push(CompletionItem {
+                                label: full,
+                                kind: Some(CompletionItemKind::ENUM_MEMBER),
+                                detail: Some(format!("Enum variant of {}", name)),
+                                ..Default::default()
+                            });
                         }
                     }
-                    crate::ast::Expr::UnionDef { name, variants, .. } => {
-                        for (variant, _) in variants {
-                            let full = format!("{}::{}", name, variant);
-                            if full.starts_with(word) {
-                                completions.push(CompletionItem {
-                                    label: full,
-                                    kind: Some(CompletionItemKind::ENUM_MEMBER),
-                                    detail: Some(format!("Union variant of {}", name)),
-                                    ..Default::default()
-                                });
-                            }
-                        }
-                    }
-                    crate::ast::Expr::FnDef { name, .. } if name.starts_with(word) => {
-                        completions.push(CompletionItem {
-                            label: name.clone(),
-                            kind: Some(CompletionItemKind::FUNCTION),
-                            detail: Some("User-defined function".to_string()),
-                            ..Default::default()
-                        });
-                    }
-                    _ => {}
                 }
+                crate::ast::Expr::UnionDef { name, variants, .. } => {
+                    for (variant, _) in variants {
+                        let full = format!("{}::{}", name, variant);
+                        if full.starts_with(word) {
+                            completions.push(CompletionItem {
+                                label: full,
+                                kind: Some(CompletionItemKind::ENUM_MEMBER),
+                                detail: Some(format!("Union variant of {}", name)),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
+                crate::ast::Expr::FnDef { name, .. } if name.starts_with(word) => {
+                    completions.push(CompletionItem {
+                        label: name.clone(),
+                        kind: Some(CompletionItemKind::FUNCTION),
+                        detail: Some("User-defined function".to_string()),
+                        ..Default::default()
+                    });
+                }
+                _ => {}
             }
+        }
 
         Ok(Some(CompletionResponse::Array(completions)))
     }
@@ -461,19 +463,37 @@ impl LanguageServer for TrackLsp {
         // Check keywords
         let keyword_docs = HashMap::from([
             ("let", "Declare a variable\n\n```track\nlet x = 42;\n```"),
-            ("mut", "Declare a mutable variable\n\n```track\nlet mut x = 42;\n```"),
-            ("fn", "Define a function\n\n```track\nfn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n```"),
+            (
+                "mut",
+                "Declare a mutable variable\n\n```track\nlet mut x = 42;\n```",
+            ),
+            (
+                "fn",
+                "Define a function\n\n```track\nfn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n```",
+            ),
             ("return", "Return from function"),
             ("if", "Conditional expression"),
             ("else", "Else branch"),
             ("while", "Loop"),
-            ("for", "For-in loop\n\n```track\nfor i in 0..10 {\n    print(i);\n}\n```"),
+            (
+                "for",
+                "For-in loop\n\n```track\nfor i in 0..10 {\n    print(i);\n}\n```",
+            ),
             ("in", "Iteration in a for-in loop"),
             ("use", "Import items from a module (synonym for `import`)"),
-            ("type", "Define a type alias\n\n```track\ntype Matrix = [i32; 16];\n```"),
+            (
+                "type",
+                "Define a type alias\n\n```track\ntype Matrix = [i32; 16];\n```",
+            ),
             ("struct", "Define a struct"),
-            ("enum", "Define an enum\n\n```track\nenum Color {\n    Red,\n    Green,\n    Blue,\n}\n```"),
-            ("union", "Define a tagged union\n\n```track\nunion Value {\n    Int(i32),\n    Float(f64),\n}\n```"),
+            (
+                "enum",
+                "Define an enum\n\n```track\nenum Color {\n    Red,\n    Green,\n    Blue,\n}\n```",
+            ),
+            (
+                "union",
+                "Define a tagged union\n\n```track\nunion Value {\n    Int(i32),\n    Float(f64),\n}\n```",
+            ),
             ("match", "Pattern matching"),
             ("with", "Lexical lens block"),
             ("const", "Compile-time constant"),

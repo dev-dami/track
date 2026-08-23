@@ -117,7 +117,9 @@ impl ParallelBuilder {
             .map(|n| n.get())
             .unwrap_or(4);
 
-        let shared_tasks = Arc::new(Mutex::new(tasks.into_iter().enumerate().collect::<Vec<_>>()));
+        let shared_tasks = Arc::new(Mutex::new(
+            tasks.into_iter().enumerate().collect::<Vec<_>>(),
+        ));
         let results = Arc::new(Mutex::new(Vec::new()));
 
         let mut handles = Vec::new();
@@ -141,7 +143,10 @@ impl ParallelBuilder {
                     };
 
                     if task.is_cached {
-                        results.lock().unwrap().push(Ok((task.rel_path, task.hash, task.obj_path)));
+                        results
+                            .lock()
+                            .unwrap()
+                            .push(Ok((task.rel_path, task.hash, task.obj_path)));
                         continue;
                     }
 
@@ -163,8 +168,13 @@ impl ParallelBuilder {
                             .check_program(&program)
                             .map_err(|e| format!("{}: {}", task.trk_file.display(), e))?;
 
-                        let mod_name = task.trk_file.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
-                        let mut codegen = crate::codegen::CodeGen::new_with_isa(mod_name, target_isa.clone());
+                        let mod_name = task
+                            .trk_file
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("module");
+                        let mut codegen =
+                            crate::codegen::CodeGen::new_with_isa(mod_name, target_isa.clone());
                         codegen.compile_program(&program);
 
                         codegen.write_object_file(&task.obj_path)?;
@@ -258,62 +268,67 @@ impl ParallelBuilder {
             let shared_files = Arc::clone(&shared_files);
             let errors = Arc::clone(&errors);
 
-            let handle = thread::spawn(move || loop {
-                let file_option = {
-                    let mut lock = shared_files.lock().unwrap();
-                    lock.pop()
-                };
+            let handle = thread::spawn(move || {
+                loop {
+                    let file_option = {
+                        let mut lock = shared_files.lock().unwrap();
+                        lock.pop()
+                    };
 
-                let trk_file = match file_option {
-                    Some(f) => f,
-                    None => break,
-                };
+                    let trk_file = match file_option {
+                        Some(f) => f,
+                        None => break,
+                    };
 
-                let source = match fs::read_to_string(&trk_file) {
-                    Ok(s) => s,
-                    Err(e) => {
+                    let source = match fs::read_to_string(&trk_file) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            errors
+                                .lock()
+                                .unwrap()
+                                .push(format!("{}: {}", trk_file.display(), e));
+                            continue;
+                        }
+                    };
+
+                    let tokens = match crate::lexer::Lexer::tokenize(&source) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            errors
+                                .lock()
+                                .unwrap()
+                                .push(format!("{}: {}", trk_file.display(), e));
+                            continue;
+                        }
+                    };
+
+                    let mut parser = crate::parser::Parser::new(tokens, source.clone());
+                    let mut program = match parser.parse_program() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            errors
+                                .lock()
+                                .unwrap()
+                                .push(format!("{}: {}", trk_file.display(), e));
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = crate::mono::monomorphize(&mut program) {
                         errors
                             .lock()
                             .unwrap()
                             .push(format!("{}: {}", trk_file.display(), e));
                         continue;
                     }
-                };
 
-                let tokens = match crate::lexer::Lexer::tokenize(&source) {
-                    Ok(t) => t,
-                    Err(e) => {
+                    let mut checker = crate::checker::LinearChecker::new();
+                    if let Err(e) = checker.check_program(&program) {
                         errors
                             .lock()
                             .unwrap()
                             .push(format!("{}: {}", trk_file.display(), e));
-                        continue;
                     }
-                };
-
-                let mut parser = crate::parser::Parser::new(tokens, source.clone());
-                let mut program = match parser.parse_program() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        errors
-                            .lock()
-                            .unwrap()
-                            .push(format!("{}: {}", trk_file.display(), e));
-                        continue;
-                    }
-                };
-
-                if let Err(e) = crate::mono::monomorphize(&mut program) {
-                    errors.lock().unwrap().push(format!("{}: {}", trk_file.display(), e));
-                    continue;
-                }
-
-                let mut checker = crate::checker::LinearChecker::new();
-                if let Err(e) = checker.check_program(&program) {
-                    errors
-                        .lock()
-                        .unwrap()
-                        .push(format!("{}: {}", trk_file.display(), e));
                 }
             });
 

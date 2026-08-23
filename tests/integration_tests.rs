@@ -72,7 +72,10 @@ fn test_memory_boundary_exceeded_crash() {
     let exe_path = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
     let output = Command::new(&exe_path).output().unwrap();
 
-    assert!(!output.status.success(), "Memory boundary exceeded program should fail");
+    assert!(
+        !output.status.success(),
+        "Memory boundary exceeded program should fail"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("Process memory boundary limit exceeded"),
@@ -226,7 +229,12 @@ fn test_logical_not_operator() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "42", "Logical NOT miscompiled; got: {}", stdout);
+    assert_eq!(
+        stdout.trim(),
+        "42",
+        "Logical NOT miscompiled; got: {}",
+        stdout
+    );
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
@@ -258,8 +266,18 @@ fn test_const_resolution_across_functions() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.first().copied().unwrap_or(""), "100", "got: {}", stdout);
-    assert_eq!(lines.get(1).copied().unwrap_or(""), "123", "got: {}", stdout);
+    assert_eq!(
+        lines.first().copied().unwrap_or(""),
+        "100",
+        "got: {}",
+        stdout
+    );
+    assert_eq!(
+        lines.get(1).copied().unwrap_or(""),
+        "123",
+        "got: {}",
+        stdout
+    );
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
@@ -293,7 +311,12 @@ fn test_error_predicates_disambiguate_sentinels() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.first().copied().unwrap_or(""), "42", "got: {}", stdout);
+    assert_eq!(
+        lines.first().copied().unwrap_or(""),
+        "42",
+        "got: {}",
+        stdout
+    );
     assert!(lines.contains(&"111"), "got: {}", stdout);
     assert!(lines.contains(&"222"), "got: {}", stdout);
     assert!(lines.contains(&"333"), "got: {}", stdout);
@@ -329,6 +352,11 @@ fn test_generics_monomorphization() {
     assert!(output.status.success(), "generics test failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines, vec!["5","10","1","2","1","2"], "got: {}", stdout);
+    assert_eq!(
+        lines,
+        vec!["5", "10", "1", "2", "1", "2"],
+        "got: {}",
+        stdout
+    );
     let _ = fs::remove_dir_all(&temp_dir);
 }

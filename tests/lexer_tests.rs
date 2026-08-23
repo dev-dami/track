@@ -2,8 +2,7 @@ use track::lexer::{Lexer, Token};
 
 #[test]
 fn test_tokenize_keywords() {
-    let source =
-        "import let mut with fn return if else while true false struct enum union match as const @ @macro";
+    let source = "import let mut with fn return if else while true false struct enum union match as const @ @macro";
     let tokens = Lexer::tokenize(source).unwrap();
     let token_kinds: Vec<Token> = tokens.into_iter().map(|(t, _)| t).collect();
 

@@ -1,7 +1,7 @@
+use regex::Regex;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use regex::Regex;
 
 // ── VS Code — headless grammar validation (no UI needed) ─────────
 // Uses regex crate already in the project to prove each grammar pattern actually matches
@@ -81,9 +81,15 @@ fn main() -> void {
                     break;
                 }
             }
-            if matched { break; }
+            if matched {
+                break;
+            }
         }
-        assert!(matched, "headless VS Code: pattern for {} ({:?}) not matched by any grammar regex", label, needles);
+        assert!(
+            matched,
+            "headless VS Code: pattern for {} ({:?}) not matched by any grammar regex",
+            label, needles
+        );
     }
 
     // scopeName must survive
@@ -93,16 +99,25 @@ fn main() -> void {
 #[test]
 fn test_vscode_grammar_valid_json_headless() {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    for p in ["grammars/track.tmLanguage.json", "editor/vscode/syntaxes/track.tmLanguage.json"] {
+    for p in [
+        "grammars/track.tmLanguage.json",
+        "editor/vscode/syntaxes/track.tmLanguage.json",
+    ] {
         let path = Path::new(&manifest).join(p);
         let src = fs::read_to_string(&path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&src).unwrap();
-        assert_eq!(v["scopeName"], "source.track", "scopeName mismatch in {}", p);
+        assert_eq!(
+            v["scopeName"], "source.track",
+            "scopeName mismatch in {}",
+            p
+        );
         assert!(v["repository"].is_object(), "repository missing in {}", p);
         // each repository entry must have at least one pattern
         let repo = v["repository"].as_object().unwrap();
         for (k, entry) in repo {
-            let arr = entry["patterns"].as_array().unwrap_or_else(|| panic!("{} patterns not array", k));
+            let arr = entry["patterns"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{} patterns not array", k));
             assert!(!arr.is_empty(), "{} has no patterns", k);
         }
     }
@@ -110,7 +125,11 @@ fn test_vscode_grammar_valid_json_headless() {
 
 // ── Neovim — headless filetype + syntax ───────────────────────────
 fn nvim_available() -> bool {
-    Command::new("nvim").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("nvim")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[test]
@@ -124,12 +143,20 @@ fn test_nvim_headless_filetype_and_syntax() {
     // 1) filetype detection + setup() headless
     let out = Command::new("nvim")
         .args([
-            "--headless", "-u", "NONE", "-n",
-            "-c", &format!("set rtp+={}/editor/nvim", manifest),
-            "-c", "lua require('track').setup()",
-            "-c", "edit examples/hello.trk",
-            "-c", "lua print('FT='..vim.bo.filetype)",
-            "-c", "qa!",
+            "--headless",
+            "-u",
+            "NONE",
+            "-n",
+            "-c",
+            &format!("set rtp+={}/editor/nvim", manifest),
+            "-c",
+            "lua require('track').setup()",
+            "-c",
+            "edit examples/hello.trk",
+            "-c",
+            "lua print('FT='..vim.bo.filetype)",
+            "-c",
+            "qa!",
         ])
         .output()
         .expect("spawn nvim");
@@ -145,21 +172,40 @@ fn test_nvim_headless_filetype_and_syntax() {
     // 2) syntax groups exist after FileType
     let out2 = Command::new("nvim")
         .args([
-            "--headless", "-u", "NONE", "-n",
-            "-c", &format!("set rtp+={}/editor/nvim", manifest),
-            "-c", "lua require('track').setup()",
-            "-c", "edit examples/hello.trk",
-            "-c", "doautocmd FileType track",
-            "-c", "redir => g:__syn | silent syn list | redir END | silent put =g:__syn | %print | qa!",
+            "--headless",
+            "-u",
+            "NONE",
+            "-n",
+            "-c",
+            &format!("set rtp+={}/editor/nvim", manifest),
+            "-c",
+            "lua require('track').setup()",
+            "-c",
+            "edit examples/hello.trk",
+            "-c",
+            "doautocmd FileType track",
+            "-c",
+            "redir => g:__syn | silent syn list | redir END | silent put =g:__syn | %print | qa!",
         ])
         .output()
         .expect("spawn nvim syn");
-    let combined2 = format!("{} {}", String::from_utf8_lossy(&out2.stdout), String::from_utf8_lossy(&out2.stderr));
-    for grp in ["trackKeyword", "trackType", "trackString", "trackComment", "trackNumber"] {
+    let combined2 = format!(
+        "{} {}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    for grp in [
+        "trackKeyword",
+        "trackType",
+        "trackString",
+        "trackComment",
+        "trackNumber",
+    ] {
         assert!(
             combined2.contains(grp),
             "nvim syntax group {} missing in headless output: {}",
-            grp, combined2
+            grp,
+            combined2
         );
     }
 
@@ -175,7 +221,11 @@ fn test_nvim_headless_filetype_and_syntax() {
         ])
         .output()
         .expect("spawn nvim hi");
-    let combined3 = format!("{} {}", String::from_utf8_lossy(&out3.stdout), String::from_utf8_lossy(&out3.stderr));
+    let combined3 = format!(
+        "{} {}",
+        String::from_utf8_lossy(&out3.stdout),
+        String::from_utf8_lossy(&out3.stderr)
+    );
     assert!(
         combined3.contains("trackKeyword") && combined3.contains("Keyword"),
         "highlight link for trackKeyword missing: {}",
@@ -193,15 +243,29 @@ fn test_nvim_headless_lua_syntax_ok() {
     let lua_file = Path::new(&manifest).join("editor/nvim/track.lua");
     let out = Command::new("nvim")
         .args([
-            "--headless", "-u", "NONE", "-n",
-            "-c", &format!("luafile {}", lua_file.display()),
-            "-c", "lua print('lua_ok')",
-            "-c", "qa!",
+            "--headless",
+            "-u",
+            "NONE",
+            "-n",
+            "-c",
+            &format!("luafile {}", lua_file.display()),
+            "-c",
+            "lua print('lua_ok')",
+            "-c",
+            "qa!",
         ])
         .output()
         .expect("nvim luafile");
-    let combined = format!("{} {}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(combined.contains("lua_ok"), "nvim luafile failed: {}", combined);
+    let combined = format!(
+        "{} {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        combined.contains("lua_ok"),
+        "nvim luafile failed: {}",
+        combined
+    );
 }
 
 #[test]
@@ -217,14 +281,20 @@ fn test_nvim_devicon_svg_not_needed_headless() {
     );
     // must not actually reference an SVG file path (e.g. load .svg); comment mentioning SVG is ok if it says "cannot render"
     // ensure no code tries to load SVG — check for 'load.*svg' or 'track-icon.svg' in code (allow comment)
-    let code_lines: Vec<&str> = lua_src.lines().filter(|l| !l.trim_start().starts_with("--")).collect();
+    let code_lines: Vec<&str> = lua_src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("--"))
+        .collect();
     let code = code_lines.join("\n");
     assert!(
         !code.contains(".svg"),
         "nvim track.lua code should not reference .svg — it uses font glyphs (comment ok)"
     );
     let pkg = fs::read_to_string(Path::new(&manifest).join("editor/vscode/package.json")).unwrap();
-    assert!(pkg.contains("track-icon.png"), "vscode package.json should reference PNG icon");
+    assert!(
+        pkg.contains("track-icon.png"),
+        "vscode package.json should reference PNG icon"
+    );
     assert!(Path::new(&manifest).join("assets/track-icon.svg").exists());
 }
 
@@ -249,10 +319,16 @@ fn test_nvim_syntax_highlight_sample_headless() {
         ])
         .output()
         .expect("nvim synID");
-    let combined = format!("{} {}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let combined = format!(
+        "{} {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     // At least one syntax group should be reported for hello.trk (which contains fn, print)
     assert!(
-        combined.contains("trackKeyword") || combined.contains("trackFunction") || combined.contains("trackString"),
+        combined.contains("trackKeyword")
+            || combined.contains("trackFunction")
+            || combined.contains("trackString"),
         "nvim headless synID produced no Track syntax: {}",
         combined
     );

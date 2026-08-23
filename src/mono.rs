@@ -78,9 +78,10 @@ pub fn monomorphize(program: &mut Vec<Expr>) -> Result<(), String> {
             return_type,
             ..
         } = stmt
-            && generics.is_empty() {
-                concrete_sigs.insert(name.clone(), return_type.clone());
-            }
+            && generics.is_empty()
+        {
+            concrete_sigs.insert(name.clone(), return_type.clone());
+        }
     }
 
     // Generated instances, keyed by mangled name to guarantee one emission each.
@@ -93,7 +94,8 @@ pub fn monomorphize(program: &mut Vec<Expr>) -> Result<(), String> {
     let mut top_env: Env = HashMap::new();
     let mut i = 0;
     while i < program.len() {
-        let is_template = matches!(&program[i], Expr::FnDef { generics, .. } if !generics.is_empty());
+        let is_template =
+            matches!(&program[i], Expr::FnDef { generics, .. } if !generics.is_empty());
         if is_template {
             // Templates stay symbolic — their bodies are never emitted as-is.
             i += 1;
@@ -131,10 +133,19 @@ fn walk(
                 inner.insert(n.clone(), ty.clone());
             }
             for stmt in body.iter_mut() {
-                walk(stmt, &mut inner, templates, concrete_sigs, generated, in_progress)?;
+                walk(
+                    stmt,
+                    &mut inner,
+                    templates,
+                    concrete_sigs,
+                    generated,
+                    in_progress,
+                )?;
             }
         }
-        Expr::LetDef { name, ty, value, .. } => {
+        Expr::LetDef {
+            name, ty, value, ..
+        } => {
             walk(value, env, templates, concrete_sigs, generated, in_progress)?;
             let inferred = infer_shallow(value, env, templates, concrete_sigs, generated);
             let final_ty = ty.clone().or(inferred);
@@ -144,7 +155,9 @@ fn walk(
         }
         Expr::LetDestructure { pattern, value, .. } => {
             walk(value, env, templates, concrete_sigs, generated, in_progress)?;
-            if let Ok(TrackType::Tuple(elems)) = infer_tuple_shape(value, env, templates, concrete_sigs, generated) {
+            if let Ok(TrackType::Tuple(elems)) =
+                infer_tuple_shape(value, env, templates, concrete_sigs, generated)
+            {
                 bind_pattern(pattern, &elems, env);
             }
         }
@@ -161,21 +174,56 @@ fn walk(
             then_body,
             else_body,
         } => {
-            walk(condition, env, templates, concrete_sigs, generated, in_progress)?;
+            walk(
+                condition,
+                env,
+                templates,
+                concrete_sigs,
+                generated,
+                in_progress,
+            )?;
             for stmt in then_body.iter_mut() {
                 let mut branch = env.clone();
-                walk(stmt, &mut branch, templates, concrete_sigs, generated, in_progress)?;
+                walk(
+                    stmt,
+                    &mut branch,
+                    templates,
+                    concrete_sigs,
+                    generated,
+                    in_progress,
+                )?;
             }
             for stmt in else_body.iter_mut() {
                 let mut branch = env.clone();
-                walk(stmt, &mut branch, templates, concrete_sigs, generated, in_progress)?;
+                walk(
+                    stmt,
+                    &mut branch,
+                    templates,
+                    concrete_sigs,
+                    generated,
+                    in_progress,
+                )?;
             }
         }
         Expr::WhileLoop { condition, body } => {
-            walk(condition, env, templates, concrete_sigs, generated, in_progress)?;
+            walk(
+                condition,
+                env,
+                templates,
+                concrete_sigs,
+                generated,
+                in_progress,
+            )?;
             for stmt in body.iter_mut() {
                 let mut branch = env.clone();
-                walk(stmt, &mut branch, templates, concrete_sigs, generated, in_progress)?;
+                walk(
+                    stmt,
+                    &mut branch,
+                    templates,
+                    concrete_sigs,
+                    generated,
+                    in_progress,
+                )?;
             }
         }
         Expr::ForIn { var, iter, body } => {
@@ -189,30 +237,66 @@ fn walk(
                 inner.insert(var.clone(), TrackType::I64);
             }
             for stmt in body.iter_mut() {
-                walk(stmt, &mut inner, templates, concrete_sigs, generated, in_progress)?;
+                walk(
+                    stmt,
+                    &mut inner,
+                    templates,
+                    concrete_sigs,
+                    generated,
+                    in_progress,
+                )?;
             }
         }
         Expr::LensBlock { body, .. } => {
             for stmt in body.iter_mut() {
                 let mut branch = env.clone();
-                walk(stmt, &mut branch, templates, concrete_sigs, generated, in_progress)?;
+                walk(
+                    stmt,
+                    &mut branch,
+                    templates,
+                    concrete_sigs,
+                    generated,
+                    in_progress,
+                )?;
             }
         }
         Expr::Match { target, arms } => {
-            walk(target, env, templates, concrete_sigs, generated, in_progress)?;
+            walk(
+                target,
+                env,
+                templates,
+                concrete_sigs,
+                generated,
+                in_progress,
+            )?;
             for arm in arms.iter_mut() {
                 if let Some(guard) = arm.guard.as_mut() {
                     walk(guard, env, templates, concrete_sigs, generated, in_progress)?;
                 }
                 let mut branch = env.clone();
-                walk(&mut arm.body, &mut branch, templates, concrete_sigs, generated, in_progress)?;
+                walk(
+                    &mut arm.body,
+                    &mut branch,
+                    templates,
+                    concrete_sigs,
+                    generated,
+                    in_progress,
+                )?;
             }
         }
         Expr::FunctionCall { name, args } => {
             for arg in args.iter_mut() {
                 walk(arg, env, templates, concrete_sigs, generated, in_progress)?;
             }
-            specialize_call(name, args, env, templates, concrete_sigs, generated, in_progress)?;
+            specialize_call(
+                name,
+                args,
+                env,
+                templates,
+                concrete_sigs,
+                generated,
+                in_progress,
+            )?;
         }
         Expr::MacroCall { args, body, .. } => {
             for arg in args.iter_mut() {
@@ -221,7 +305,14 @@ fn walk(
             if let Some(b) = body.as_mut() {
                 for stmt in b.iter_mut() {
                     let mut branch = env.clone();
-                    walk(stmt, &mut branch, templates, concrete_sigs, generated, in_progress)?;
+                    walk(
+                        stmt,
+                        &mut branch,
+                        templates,
+                        concrete_sigs,
+                        generated,
+                        in_progress,
+                    )?;
                 }
             }
         }
@@ -290,7 +381,8 @@ fn specialize_call(
     // Unify inferred argument types against declared parameter types.
     let mut subst: HashMap<String, TrackType> = HashMap::new();
     for (arg, (_, pty)) in args.iter().zip(tpl.params.iter()) {
-        let Some(mut concrete) = infer_shallow(arg, env, templates, concrete_sigs, generated) else {
+        let Some(mut concrete) = infer_shallow(arg, env, templates, concrete_sigs, generated)
+        else {
             return Err(format!(
                 "Compile Error: cannot infer type parameter for an argument of '{}' — annotate it first, e.g. `let x: i64 = ...`",
                 tpl_name
@@ -336,7 +428,14 @@ fn specialize_call(
         }
         for stmt in inst_body.iter_mut() {
             substitute_stmt_types(stmt, &subst);
-            walk(stmt, &mut inst_env, templates, concrete_sigs, generated, in_progress)?;
+            walk(
+                stmt,
+                &mut inst_env,
+                templates,
+                concrete_sigs,
+                generated,
+                in_progress,
+            )?;
         }
         Ok(())
     })();
@@ -389,7 +488,13 @@ fn type_tag(ty: &TrackType) -> String {
 
 fn sanitize(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -555,7 +660,13 @@ fn bind_pattern(pattern: &crate::ast::Pattern, elems: &[TrackType], env: &mut En
     }
 }
 
-fn infer_tuple_shape(expr: &Expr, env: &Env, templates: &HashMap<String, Template>, concrete_sigs: &HashMap<String, Option<TrackType>>, generated: &HashMap<String, Expr>) -> Result<TrackType, ()> {
+fn infer_tuple_shape(
+    expr: &Expr,
+    env: &Env,
+    templates: &HashMap<String, Template>,
+    concrete_sigs: &HashMap<String, Option<TrackType>>,
+    generated: &HashMap<String, Expr>,
+) -> Result<TrackType, ()> {
     infer_shallow(expr, env, templates, concrete_sigs, generated).ok_or(())
 }
 
@@ -584,17 +695,24 @@ fn infer_shallow(
         }
         Expr::UnaryOp { op, expr } => match op {
             crate::ast::UnaryOp::Not => Some(TrackType::Bool),
-            crate::ast::UnaryOp::Neg => infer_shallow(expr, env, templates, concrete_sigs, generated),
-            crate::ast::UnaryOp::Deref => match infer_shallow(expr, env, templates, concrete_sigs, generated) {
-                Some(TrackType::Ptr(inner)) | Some(TrackType::Ref(inner)) => Some(*inner),
-                _ => None,
-            },
+            crate::ast::UnaryOp::Neg => {
+                infer_shallow(expr, env, templates, concrete_sigs, generated)
+            }
+            crate::ast::UnaryOp::Deref => {
+                match infer_shallow(expr, env, templates, concrete_sigs, generated) {
+                    Some(TrackType::Ptr(inner)) | Some(TrackType::Ref(inner)) => Some(*inner),
+                    _ => None,
+                }
+            }
         },
         Expr::AddressOf { target } => {
-            infer_shallow(target, env, templates, concrete_sigs, generated).map(|inner| TrackType::Ref(Box::new(inner)))
+            infer_shallow(target, env, templates, concrete_sigs, generated)
+                .map(|inner| TrackType::Ref(Box::new(inner)))
         }
         Expr::ArrayLiteral { elements } => {
-            let elem = elements.first().and_then(|e| infer_shallow(e, env, templates, concrete_sigs, generated))?;
+            let elem = elements
+                .first()
+                .and_then(|e| infer_shallow(e, env, templates, concrete_sigs, generated))?;
             Some(TrackType::Array(Box::new(elem), elements.len()))
         }
         Expr::TupleLiteral { elements } => {
@@ -604,23 +722,31 @@ fn infer_shallow(
             }
             Some(TrackType::Tuple(tys))
         }
-        Expr::TupleIndex { target, index } => match infer_shallow(target, env, templates, concrete_sigs, generated)? {
-            TrackType::Tuple(mut elems) => {
-                if *index < elems.len() {
-                    Some(elems.swap_remove(*index))
-                } else {
-                    None
+        Expr::TupleIndex { target, index } => {
+            match infer_shallow(target, env, templates, concrete_sigs, generated)? {
+                TrackType::Tuple(mut elems) => {
+                    if *index < elems.len() {
+                        Some(elems.swap_remove(*index))
+                    } else {
+                        None
+                    }
                 }
+                _ => None,
             }
-            _ => None,
-        },
-        Expr::ArrayIndex { target, .. } => match infer_shallow(target, env, templates, concrete_sigs, generated)? {
-            TrackType::Array(inner, _) | TrackType::Slice(inner) => Some(*inner),
-            _ => None,
-        },
+        }
+        Expr::ArrayIndex { target, .. } => {
+            match infer_shallow(target, env, templates, concrete_sigs, generated)? {
+                TrackType::Array(inner, _) | TrackType::Slice(inner) => Some(*inner),
+                _ => None,
+            }
+        }
         Expr::StructInitialization { ty_name, .. } => Some(TrackType::Custom(ty_name.clone())),
-        Expr::LetDef { value, .. } => infer_shallow(value, env, templates, concrete_sigs, generated),
-        Expr::IfElse { then_body, .. } => then_body.last().and_then(|e| infer_shallow(e, env, templates, concrete_sigs, generated)),
+        Expr::LetDef { value, .. } => {
+            infer_shallow(value, env, templates, concrete_sigs, generated)
+        }
+        Expr::IfElse { then_body, .. } => then_body
+            .last()
+            .and_then(|e| infer_shallow(e, env, templates, concrete_sigs, generated)),
         Expr::FunctionCall { name, args } => {
             // Already-specialized instance?
             if let Expr::FnDef { return_type, .. } = generated.get(name)? {

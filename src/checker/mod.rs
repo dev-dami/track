@@ -21,6 +21,16 @@ pub struct LinearChecker {
     pub type_aliases: HashMap<String, TrackType>,
     pub current_params: std::collections::HashSet<String>,
     pub current_return_type: Option<TrackType>,
+    pub barebones: bool,
+}
+
+impl LinearChecker {
+    pub fn new_barebones() -> Self {
+        let mut c = Self::new();
+        c.barebones = true;
+        c.functions.clear();
+        c
+    }
 }
 
 fn is_copy_type(ty: &TrackType) -> bool {
@@ -57,6 +67,7 @@ impl LinearChecker {
             type_aliases: HashMap::new(),
             current_params: std::collections::HashSet::new(),
             current_return_type: None,
+            barebones: false,
         }
     }
 
@@ -147,251 +158,253 @@ impl LinearChecker {
     }
 
     pub fn check_program(&mut self, program: &[Expr]) -> Result<(), String> {
-        // print is built-in and returns Void
-        self.functions
-            .insert("print".to_string(), Some(TrackType::Void));
+        if !self.barebones {
+            // print is built-in and returns Void — barebones disables the implicit prelude
+            self.functions
+                .insert("print".to_string(), Some(TrackType::Void));
 
-        // Memory functions
-        self.functions.insert(
-            "alloc".to_string(),
-            Some(TrackType::Ptr(Box::new(TrackType::Custom(
-                "u8".to_string(),
-            )))),
-        );
-        self.functions
-            .insert("memset".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("memcpy".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("memcmp".to_string(), Some(TrackType::I32));
+            // Memory functions
+            self.functions.insert(
+                "alloc".to_string(),
+                Some(TrackType::Ptr(Box::new(TrackType::Custom(
+                    "u8".to_string(),
+                )))),
+            );
+            self.functions
+                .insert("memset".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("memcpy".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("memcmp".to_string(), Some(TrackType::I32));
 
-        // String functions
-        self.functions
-            .insert("str_len".to_string(), Some(TrackType::U32));
-        self.functions
-            .insert("str_eq".to_string(), Some(TrackType::Bool));
-        self.functions.insert(
-            "str_from_literal".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions.insert(
-            "str_concat".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
+            // String functions
+            self.functions
+                .insert("str_len".to_string(), Some(TrackType::U32));
+            self.functions
+                .insert("str_eq".to_string(), Some(TrackType::Bool));
+            self.functions.insert(
+                "str_from_literal".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions.insert(
+                "str_concat".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
 
-        // Vec functions
-        self.functions.insert(
-            "vec_init".to_string(),
-            Some(TrackType::Custom("Vec".to_string())),
-        );
-        self.functions
-            .insert("vec_push".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("vec_get".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("vec_set".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("vec_pop".to_string(), Some(TrackType::I32));
+            // Vec functions
+            self.functions.insert(
+                "vec_init".to_string(),
+                Some(TrackType::Custom("Vec".to_string())),
+            );
+            self.functions
+                .insert("vec_push".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("vec_get".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("vec_set".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("vec_pop".to_string(), Some(TrackType::I32));
 
-        // I/O functions
-        self.functions
-            .insert("print_str".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("print_int".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("print_hex".to_string(), Some(TrackType::Void));
-        self.functions.insert(
-            "read_line".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions.insert(
-            "file_open".to_string(),
-            Some(TrackType::Ptr(Box::new(TrackType::Custom(
-                "File".to_string(),
-            )))),
-        );
-        self.functions.insert(
-            "file_read_all".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions
-            .insert("file_write".to_string(), Some(TrackType::Void));
+            // I/O functions
+            self.functions
+                .insert("print_str".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("print_int".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("print_hex".to_string(), Some(TrackType::Void));
+            self.functions.insert(
+                "read_line".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions.insert(
+                "file_open".to_string(),
+                Some(TrackType::Ptr(Box::new(TrackType::Custom(
+                    "File".to_string(),
+                )))),
+            );
+            self.functions.insert(
+                "file_read_all".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions
+                .insert("file_write".to_string(), Some(TrackType::Void));
 
-        // Ring buffer functions
-        self.functions.insert(
-            "ring_init".to_string(),
-            Some(TrackType::Custom("Ring".to_string())),
-        );
-        self.functions
-            .insert("ring_push".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("ring_pop".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("ring_peek".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("ring_full".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("ring_empty".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("ring_count".to_string(), Some(TrackType::U32));
+            // Ring buffer functions
+            self.functions.insert(
+                "ring_init".to_string(),
+                Some(TrackType::Custom("Ring".to_string())),
+            );
+            self.functions
+                .insert("ring_push".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("ring_pop".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("ring_peek".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("ring_full".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("ring_empty".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("ring_count".to_string(), Some(TrackType::U32));
 
-        // Math functions
-        self.functions
-            .insert("math_abs".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("math_max".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("math_min".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("math_pow".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_sqrt".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_clamp".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_random".to_string(), Some(TrackType::U64));
+            // Math functions
+            self.functions
+                .insert("math_abs".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("math_max".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("math_min".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("math_pow".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_sqrt".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_clamp".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_random".to_string(), Some(TrackType::U64));
 
-        // Extended String & File & Sys functions
-        self.functions
-            .insert("str_find".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("str_to_int".to_string(), Some(TrackType::I64));
-        self.functions.insert(
-            "int_to_str".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions
-            .insert("file_remove".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("file_size".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("sys_exec".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("sys_set_memory_limit".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("sys_get_memory_used".to_string(), Some(TrackType::I64));
-        self.functions.insert(
-            "env_get".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
+            // Extended String & File & Sys functions
+            self.functions
+                .insert("str_find".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("str_to_int".to_string(), Some(TrackType::I64));
+            self.functions.insert(
+                "int_to_str".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions
+                .insert("file_remove".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("file_size".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("sys_exec".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("sys_set_memory_limit".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("sys_get_memory_used".to_string(), Some(TrackType::I64));
+            self.functions.insert(
+                "env_get".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
 
-        // Math Extensions
-        self.functions
-            .insert("math_abs".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_min".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_max".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_pow".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_sqrt".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_floor".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_ceil".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("math_round".to_string(), Some(TrackType::I64));
+            // Math Extensions
+            self.functions
+                .insert("math_abs".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_min".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_max".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_pow".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_sqrt".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_floor".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_ceil".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("math_round".to_string(), Some(TrackType::I64));
 
-        // Extra String & IO Extensions
-        self.functions
-            .insert("print_err".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("eprint".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("str_contains".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("str_is_int".to_string(), Some(TrackType::I32));
+            // Extra String & IO Extensions
+            self.functions
+                .insert("print_err".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("eprint".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("str_contains".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("str_is_int".to_string(), Some(TrackType::I32));
 
-        // Explicit error handling primitives (v0.5)
-        self.functions
-            .insert("abort".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("env_exists".to_string(), Some(TrackType::I32));
+            // Explicit error handling primitives (v0.5)
+            self.functions
+                .insert("abort".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("env_exists".to_string(), Some(TrackType::I32));
 
-        // TCP Socket Net API
-        self.functions
-            .insert("net_socket_tcp_listen".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("net_socket_accept".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("net_socket_connect".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("net_socket_send".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("net_socket_recv".to_string(), Some(TrackType::I64));
-        self.functions
-            .insert("net_socket_close".to_string(), Some(TrackType::Void));
+            // TCP Socket Net API
+            self.functions
+                .insert("net_socket_tcp_listen".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("net_socket_accept".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("net_socket_connect".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("net_socket_send".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("net_socket_recv".to_string(), Some(TrackType::I64));
+            self.functions
+                .insert("net_socket_close".to_string(), Some(TrackType::Void));
 
-        // OS & FS Extensions (v0.2.0)
-        self.functions
-            .insert("os_args_count".to_string(), Some(TrackType::I32));
-        self.functions.insert(
-            "os_arg".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions
-            .insert("dir_exists".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("file_copy".to_string(), Some(TrackType::I32));
-        self.functions
-            .insert("process_spawn".to_string(), Some(TrackType::I32));
+            // OS & FS Extensions (v0.2.0)
+            self.functions
+                .insert("os_args_count".to_string(), Some(TrackType::I32));
+            self.functions.insert(
+                "os_arg".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions
+                .insert("dir_exists".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("file_copy".to_string(), Some(TrackType::I32));
+            self.functions
+                .insert("process_spawn".to_string(), Some(TrackType::I32));
 
-        // Char & Byte Operations
-        self.functions
-            .insert("char_is_digit".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("char_is_alpha".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("char_is_alphanumeric".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("char_is_space".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("char_to_upper".to_string(), Some(TrackType::U8));
-        self.functions
-            .insert("char_to_lower".to_string(), Some(TrackType::U8));
+            // Char & Byte Operations
+            self.functions
+                .insert("char_is_digit".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("char_is_alpha".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("char_is_alphanumeric".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("char_is_space".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("char_to_upper".to_string(), Some(TrackType::U8));
+            self.functions
+                .insert("char_to_lower".to_string(), Some(TrackType::U8));
 
-        // Extended String & Memory
-        self.functions
-            .insert("str_starts_with".to_string(), Some(TrackType::Bool));
-        self.functions
-            .insert("str_ends_with".to_string(), Some(TrackType::Bool));
-        self.functions.insert(
-            "str_substr".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions.insert(
-            "str_trim".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions
-            .insert("str_char_at".to_string(), Some(TrackType::U8));
-        self.functions.insert(
-            "mem_realloc".to_string(),
-            Some(TrackType::Ptr(Box::new(TrackType::Custom(
-                "u8".to_string(),
-            )))),
-        );
-        self.functions
-            .insert("vec_reserve".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("vec_clear".to_string(), Some(TrackType::Void));
-        self.functions
-            .insert("vec_len".to_string(), Some(TrackType::I32));
+            // Extended String & Memory
+            self.functions
+                .insert("str_starts_with".to_string(), Some(TrackType::Bool));
+            self.functions
+                .insert("str_ends_with".to_string(), Some(TrackType::Bool));
+            self.functions.insert(
+                "str_substr".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions.insert(
+                "str_trim".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions
+                .insert("str_char_at".to_string(), Some(TrackType::U8));
+            self.functions.insert(
+                "mem_realloc".to_string(),
+                Some(TrackType::Ptr(Box::new(TrackType::Custom(
+                    "u8".to_string(),
+                )))),
+            );
+            self.functions
+                .insert("vec_reserve".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("vec_clear".to_string(), Some(TrackType::Void));
+            self.functions
+                .insert("vec_len".to_string(), Some(TrackType::I32));
 
-        // Path Operations
-        self.functions.insert(
-            "path_basename".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions.insert(
-            "path_ext".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
-        self.functions.insert(
-            "path_join".to_string(),
-            Some(TrackType::Custom("Str".to_string())),
-        );
+            // Path Operations
+            self.functions.insert(
+                "path_basename".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions.insert(
+                "path_ext".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+            self.functions.insert(
+                "path_join".to_string(),
+                Some(TrackType::Custom("Str".to_string())),
+            );
+        } // end if !barebones — std package (import "std") still works via Use handling
 
         for stmt in program {
             match stmt {
@@ -420,7 +433,12 @@ impl LinearChecker {
                         }
                     }
                 }
-                Expr::FnDef { name, generics, return_type, .. } => {
+                Expr::FnDef {
+                    name,
+                    generics,
+                    return_type,
+                    ..
+                } => {
                     if !generics.is_empty() {
                         // Generic templates are checked via their instances.
                         continue;
@@ -952,18 +970,17 @@ impl LinearChecker {
                 if let Some(TrackType::Ref(_)) = return_type {
                     let has_explicit_return =
                         body.iter().any(|stmt| matches!(stmt, Expr::Return { .. }));
-                    if !has_explicit_return
-                        && let Some(last_stmt) = body.last() {
-                            let prov = self.get_provenance(last_stmt);
-                            for v in &prov {
-                                if !self.current_params.contains(v) {
-                                    return Err(format!(
-                                        "Compile Error: Cannot return reference to local variable '{}' (escapes function scope).",
-                                        v
-                                    ));
-                                }
+                    if !has_explicit_return && let Some(last_stmt) = body.last() {
+                        let prov = self.get_provenance(last_stmt);
+                        for v in &prov {
+                            if !self.current_params.contains(v) {
+                                return Err(format!(
+                                    "Compile Error: Cannot return reference to local variable '{}' (escapes function scope).",
+                                    v
+                                ));
                             }
                         }
+                    }
                 }
 
                 // Restore outer scope
@@ -984,6 +1001,50 @@ impl LinearChecker {
             } => {
                 let norm_path = path.replace("::", "/");
                 let provided = match norm_path.as_str() {
+                    // Unified std package: `import "std"` → std::print, std::alloc, std::io::print, …
+                    "std" => vec![
+                        ("print".to_string(), Some(TrackType::Void)),
+                        ("println".to_string(), Some(TrackType::Void)),
+                        ("eprint".to_string(), Some(TrackType::Void)),
+                        ("read".to_string(), Some(TrackType::I64)),
+                        (
+                            "alloc".to_string(),
+                            Some(TrackType::Ptr(Box::new(TrackType::Void))),
+                        ),
+                        ("dealloc".to_string(), Some(TrackType::Void)),
+                        ("exit".to_string(), Some(TrackType::Void)),
+                        ("abort".to_string(), Some(TrackType::Void)),
+                        ("clock_ms".to_string(), Some(TrackType::I64)),
+                        // sub-namespaces under std::
+                        ("io::print".to_string(), Some(TrackType::Void)),
+                        ("io::println".to_string(), Some(TrackType::Void)),
+                        ("io::read".to_string(), Some(TrackType::I64)),
+                        ("io::eprint".to_string(), Some(TrackType::Void)),
+                        (
+                            "fs::file_open".to_string(),
+                            Some(TrackType::Ptr(Box::new(TrackType::Void))),
+                        ),
+                        ("fs::file_close".to_string(), Some(TrackType::Void)),
+                        ("fs::file_exists".to_string(), Some(TrackType::I32)),
+                        ("fs::file_copy".to_string(), Some(TrackType::I32)),
+                        ("fs::file_size".to_string(), Some(TrackType::I64)),
+                        ("fs::dir_exists".to_string(), Some(TrackType::Bool)),
+                        (
+                            "mem::alloc".to_string(),
+                            Some(TrackType::Ptr(Box::new(TrackType::Void))),
+                        ),
+                        ("mem::dealloc".to_string(), Some(TrackType::Void)),
+                        ("sys::exit".to_string(), Some(TrackType::Void)),
+                        ("sys::abort".to_string(), Some(TrackType::Void)),
+                        ("sys::clock_ms".to_string(), Some(TrackType::I64)),
+                        ("char::char_is_digit".to_string(), Some(TrackType::Bool)),
+                        ("str::str_find".to_string(), Some(TrackType::I64)),
+                        ("process::process_spawn".to_string(), Some(TrackType::I32)),
+                        (
+                            "net::net_socket_tcp_listen".to_string(),
+                            Some(TrackType::I32),
+                        ),
+                    ],
                     "std/io" => vec![
                         ("print".to_string(), Some(TrackType::Void)),
                         ("println".to_string(), Some(TrackType::Void)),
@@ -1327,9 +1388,10 @@ impl LinearChecker {
                 let mut prov = Vec::new();
                 for arg in args {
                     if let Some(ty) = self.infer_type(arg)
-                        && matches!(ty, TrackType::Ref(_)) {
-                            prov.extend(self.get_provenance(arg));
-                        }
+                        && matches!(ty, TrackType::Ref(_))
+                    {
+                        prov.extend(self.get_provenance(arg));
+                    }
                 }
                 if prov.len() > 1 {
                     prov.sort();
@@ -1416,10 +1478,12 @@ impl LinearChecker {
             Expr::Assign { target, value } => self
                 .find_lens_alias(target)
                 .or_else(|| self.find_lens_alias(value)),
-            Expr::LetDef { value, .. } | Expr::ConstDef { value, .. } | Expr::LetDestructure { value, .. } => {
-                self.find_lens_alias(value)
+            Expr::LetDef { value, .. }
+            | Expr::ConstDef { value, .. }
+            | Expr::LetDestructure { value, .. } => self.find_lens_alias(value),
+            Expr::TupleLiteral { elements } => {
+                elements.iter().find_map(|e| self.find_lens_alias(e))
             }
-            Expr::TupleLiteral { elements } => elements.iter().find_map(|e| self.find_lens_alias(e)),
             Expr::TupleIndex { target, .. } => self.find_lens_alias(target),
             Expr::FunctionCall { .. } => None,
             Expr::MacroCall { args, body, .. } => args
@@ -1475,7 +1539,11 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 
     for i in 1..=a_chars.len() {
         for j in 1..=b_chars.len() {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
             distances[i][j] = (distances[i - 1][j] + 1)
                 .min(distances[i][j - 1] + 1)
                 .min(distances[i - 1][j - 1] + cost);

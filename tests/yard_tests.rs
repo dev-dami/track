@@ -83,13 +83,21 @@ fn test_yard_parallel_build_and_incremental_cache() {
 
     // Initial parallel build
     let build_res = commands::build_at(&proj_dir, &[]);
-    assert!(build_res.is_ok(), "yard build failed: {:?}", build_res.err());
+    assert!(
+        build_res.is_ok(),
+        "yard build failed: {:?}",
+        build_res.err()
+    );
     assert!(proj_dir.join("target/multi_app").exists());
     assert!(proj_dir.join("target/.cache_meta.json").exists());
 
     // Second build (should hit cache)
     let rebuild_res = commands::build_at(&proj_dir, &[]);
-    assert!(rebuild_res.is_ok(), "yard rebuild failed: {:?}", rebuild_res.err());
+    assert!(
+        rebuild_res.is_ok(),
+        "yard rebuild failed: {:?}",
+        rebuild_res.err()
+    );
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
@@ -119,12 +127,23 @@ fn test_yard_version_reports() {
         .arg("--version")
         .output();
     if let Ok(o) = out {
-        let s = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        let s = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
         assert!(s.contains("0.6.0"), "yard version missing 0.6.0: {}", s);
     } else {
         // fallback via cargo run
-        let o = std::process::Command::new("cargo").args(&["run","--bin","yard","--","--version"]).output().unwrap();
-        let s = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        let o = std::process::Command::new("cargo")
+            .args(["run", "--bin", "yard", "--", "--version"])
+            .output()
+            .unwrap();
+        let s = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
         assert!(s.contains("0.6.0"), "yard version missing: {}", s);
     }
 }

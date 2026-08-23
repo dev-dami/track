@@ -39,14 +39,21 @@ impl LinkerEngine {
         let _ = fs::remove_file(&runtime_c_path);
 
         if !status.success() {
-            return Err(format!("Runtime helper compilation failed with code: {:?}", status.code()));
+            return Err(format!(
+                "Runtime helper compilation failed with code: {:?}",
+                status.code()
+            ));
         }
 
         Ok(runtime_obj_path)
     }
 
     /// Link all compiled object files + runtime object into the final native executable.
-    pub fn link_binary(obj_files: &[PathBuf], exe_path: &Path, target_dir: &Path) -> Result<(), String> {
+    pub fn link_binary(
+        obj_files: &[PathBuf],
+        exe_path: &Path,
+        target_dir: &Path,
+    ) -> Result<(), String> {
         let runtime_obj = Self::get_or_compile_runtime(target_dir)?;
 
         let mut cmd = Command::new("cc");
@@ -62,7 +69,9 @@ impl LinkerEngine {
         cmd.arg(&runtime_obj);
         cmd.arg("-o").arg(exe_path).arg("-lm").arg("-no-pie");
 
-        let status = cmd.status().map_err(|e| format!("Linker invocation failed: {}", e))?;
+        let status = cmd
+            .status()
+            .map_err(|e| format!("Linker invocation failed: {}", e))?;
 
         if !status.success() {
             return Err(format!("Linker failed with exit code: {:?}", status.code()));

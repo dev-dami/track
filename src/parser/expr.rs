@@ -358,7 +358,9 @@ impl Parser {
                 self.advance();
                 if self.peek() == Some(&Token::RParen) {
                     self.advance();
-                    Ok(Expr::TupleLiteral { elements: Vec::new() })
+                    Ok(Expr::TupleLiteral {
+                        elements: Vec::new(),
+                    })
                 } else {
                     let first = self.parse_expr()?;
                     if self.peek() == Some(&Token::Comma) {
@@ -523,19 +525,27 @@ impl Parser {
             }
             Some(Token::Int(val)) => {
                 self.advance();
-                Ok(crate::ast::Pattern::Literal(Box::new(Expr::IntLiteral(val))))
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::IntLiteral(
+                    val,
+                ))))
             }
             Some(Token::True) => {
                 self.advance();
-                Ok(crate::ast::Pattern::Literal(Box::new(Expr::BoolLiteral(true))))
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::BoolLiteral(
+                    true,
+                ))))
             }
             Some(Token::False) => {
                 self.advance();
-                Ok(crate::ast::Pattern::Literal(Box::new(Expr::BoolLiteral(false))))
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::BoolLiteral(
+                    false,
+                ))))
             }
             Some(Token::Str(s)) => {
                 self.advance();
-                Ok(crate::ast::Pattern::Literal(Box::new(Expr::StringLiteral(s))))
+                Ok(crate::ast::Pattern::Literal(Box::new(Expr::StringLiteral(
+                    s,
+                ))))
             }
             Some(Token::LParen) => {
                 self.advance();

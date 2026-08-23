@@ -307,7 +307,14 @@ fn test_parse_generic_fn_multi_params() {
     let source = "fn pair<T, U>(a: T, b: U) -> (T, U) { return (a, b); }";
     let ast = parse(source);
     assert_eq!(ast.len(), 1);
-    if let Expr::FnDef { name, generics, params, return_type, .. } = &ast[0] {
+    if let Expr::FnDef {
+        name,
+        generics,
+        params,
+        return_type,
+        ..
+    } = &ast[0]
+    {
         assert_eq!(name, "pair");
         assert_eq!(generics, &vec!["T".to_string(), "U".to_string()]);
         assert_eq!(params.len(), 2);
