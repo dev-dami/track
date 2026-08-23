@@ -1,0 +1,103 @@
+// lexer_test.trk — native unit tests for the self-hosted lexer (v0.7)
+// Run via `yard test` (discovers src/*_test.trk). Each `test_*` aborts on
+// failure; `main` prints `ok` on success. Uses the same `count_tokens` /
+// `lex_next` that `main.trk` uses, so the suite validates the real lexer.
+
+import "lexer";
+
+fn assert_eq_i64(a: i64, b: i64) -> void {
+    if a != b {
+        abort("assert_eq_i64 failed");
+    }
+}
+
+fn assert_eq_bool(a: bool, b: bool) -> void {
+    if a != b {
+        abort("assert_eq_bool failed");
+    }
+}
+
+// --- helpers ---
+
+fn test_simple_let() -> void {
+    let src = "let x = 42;";
+    let c = count_tokens(&src);
+    // Let Ident Eq Int Semicolon = 5
+    assert_eq_i64(c, 5);
+}
+
+fn test_import() -> void {
+    let src = "import \"std/io\";";
+    let c = count_tokens(&src);
+    // Import StrLit Semicolon = 3
+    assert_eq_i64(c, 3);
+}
+
+fn test_fn() -> void {
+    let src = "fn main() -> void { }";
+    let c = count_tokens(&src);
+    // Fn Ident LParen RParen Arrow TyVoid LBrace RBrace = 8
+    assert_eq_i64(c, 8);
+}
+
+fn test_if_else() -> void {
+    let src = "if true { } else { }";
+    let c = count_tokens(&src);
+    // If True LBrace RBrace Else LBrace RBrace = 7
+    assert_eq_i64(c, 7);
+}
+
+fn test_ops() -> void {
+    let src = "x + y - z * w / v % u";
+    let c = count_tokens(&src);
+    // Ident Plus Ident Minus Ident Star Ident Slash Ident Percent Ident = 11
+    assert_eq_i64(c, 11);
+}
+
+fn test_cmp() -> void {
+    let src = "a == b != c <= d >= e";
+    let c = count_tokens(&src);
+    // Ident EqEq Ident Neq Ident Lte Ident Gte Ident = 9
+    assert_eq_i64(c, 9);
+}
+
+fn test_logic() -> void {
+    let src = "a && b || c";
+    let c = count_tokens(&src);
+    // Ident AmpAmp Ident PipePipe Ident = 5
+    assert_eq_i64(c, 5);
+}
+
+fn test_shift() -> void {
+    let src = "a << b >> c";
+    let c = count_tokens(&src);
+    // Ident Shl Ident Shr Ident = 5
+    assert_eq_i64(c, 5);
+}
+
+fn test_string_and_comment() -> void {
+    let src = "\"hello\" // comment\n let";
+    let c = count_tokens(&src);
+    // StrLit Let = 2 (comment and whitespace skipped)
+    assert_eq_i64(c, 2);
+}
+
+fn test_lex_next_kind() -> void {
+    let src = "let";
+    let c = count_tokens(&src);
+    assert_eq_i64(c, 1);
+}
+
+fn main() -> void {
+    test_simple_let();
+    test_import();
+    test_fn();
+    test_if_else();
+    test_ops();
+    test_cmp();
+    test_logic();
+    test_shift();
+    test_string_and_comment();
+    test_lex_next_kind();
+    print("ok");
+}

@@ -191,6 +191,18 @@ pub fn clean_at(project_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// ── yard test ────────────────────────────────────────────────────────
+
+pub fn test(_args: &[String]) -> Result<(), String> {
+    let project_root = find_project_root()?;
+    test_at(&project_root, _args)
+}
+
+pub fn test_at(project_root: &Path, _args: &[String]) -> Result<(), String> {
+    let manifest = Manifest::load(&project_root.join("Track.toml"))?;
+    super::builder::ParallelBuilder::test(project_root, &manifest)
+}
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 fn find_project_root() -> Result<PathBuf, String> {

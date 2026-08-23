@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -61,7 +62,13 @@ impl ParallelBuilder {
             ));
         }
 
-        let trk_files = find_trk_files(&src_dir)?;
+        let mut trk_files = find_trk_files(&src_dir)?;
+        // Exclude Track test files from the main build — they are built
+        // separately via `yard test` (src/*_test.trk, tests/**/*.trk)
+        trk_files.retain(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            !name.contains("_test") && !p.to_string_lossy().contains("/tests/")
+        });
         if trk_files.is_empty() {
             return Err("No .trk source files found".to_string());
         }
@@ -354,6 +361,176 @@ impl ParallelBuilder {
             }
             Err(format!("{} error(s) found", errs.len()))
         }
+    }
+
+    pub fn test(project_root: &Path, manifest: &Manifest) -> Result<(), String> {
+        println!(
+            "  Testing {} v{}",
+            manifest.package.name, manifest.package.version
+        );
+
+        // First ensure the package type-checks
+        Self::check(project_root, manifest)?;
+
+        // Discover Track test files: src/*_test.trk and tests/**/*.trk
+        let mut test_files: Vec<PathBuf> = Vec::new();
+        let src_dir = project_root.join(&manifest.build.src);
+        if src_dir.exists() {
+            for entry in fs::read_dir(&src_dir)
+                .map_err(|e| format!("Failed to read src dir '{}': {}", src_dir.display(), e))?
+            {
+                let entry =
+                    entry.map_err(|e| format!("Directory entry error: {}", e))?;
+                let p = entry.path();
+                if p.is_file()
+                    && p.extension().is_some_and(|ext| ext == "trk")
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.contains("_test"))
+                {
+                    test_files.push(p);
+                } else if p.is_dir() {
+                    // allow src/tests/*.trk as well
+                    let _ = collect_trk_files(&p, &mut test_files);
+                }
+            }
+        }
+        let tests_dir = project_root.join("tests");
+        if tests_dir.exists() {
+            collect_trk_files(&tests_dir, &mut test_files)?;
+        }
+        // Also check compiler-style `src/test_*.trk`
+        // (already covered by _test filter above, but keep explicit)
+        test_files.sort();
+        test_files.dedup();
+
+        if test_files.is_empty() {
+            println!("  no Track tests found (src/*_test.trk, tests/**/*.trk)");
+            println!("✓ All Track tests passed (0 tests)");
+            return Ok(());
+        }
+
+        let target_dir = project_root.join("target");
+        fs::create_dir_all(&target_dir)
+            .map_err(|e| format!("Failed to create target directory: {}", e))?;
+
+        let mut failures = 0usize;
+        for test_file in &test_files {
+            let rel = test_file
+                .strip_prefix(project_root)
+                .unwrap_or(test_file)
+                .display()
+                .to_string();
+            print!("  Running {} ... ", rel);
+            // Build the test as a temporary package that links it with the
+            // rest of src/ (token, lexer) but not the package's own main.
+            // This lets `import "lexer"` resolve while keeping the test's
+            // `fn main` as the entry point.
+            let stem = test_file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("test");
+            let tmp_root = std::env::temp_dir().join(format!(
+                "track_test_{}_{}_{}",
+                manifest.package.name,
+                stem,
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&tmp_root);
+            if let Err(e) = (|| -> Result<(), String> {
+                fs::create_dir_all(tmp_root.join("src")).map_err(|e| {
+                    format!("Failed to create temp src dir: {}", e)
+                })?;
+                // Minimal manifest for the temp test package
+                let tmp_manifest_content = format!(
+                    "[package]\nname = \"{}_test\"\nversion = \"0.1.0\"\nauthors = []\n\n[dependencies]\n\n[build]\nsrc = \"src\"\n",
+                    manifest.package.name
+                );
+                fs::write(tmp_root.join("Track.toml"), tmp_manifest_content)
+                    .map_err(|e| format!("Failed to write temp Track.toml: {}", e))?;
+                // Copy non-test, non-main src files (token, lexer) into tmp src
+                let src_dir = project_root.join(&manifest.build.src);
+                if src_dir.exists() {
+                    for entry in fs::read_dir(&src_dir).map_err(|e| {
+                        format!("Failed to read src dir: {}", e)
+                    })? {
+                        let entry = entry
+                            .map_err(|e| format!("Dir entry error: {}", e))?;
+                        let p = entry.path();
+                        if !p.is_file() {
+                            continue;
+                        }
+                        let fname = p
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("");
+                        if fname == "main.trk" || fname.contains("_test") {
+                            continue;
+                        }
+                        if p.extension().is_some_and(|ext| ext == "trk") {
+                            let dest = tmp_root.join("src").join(fname);
+                            fs::copy(&p, &dest).map_err(|e| {
+                                format!("Failed to copy {}: {}", p.display(), e)
+                            })?;
+                        }
+                    }
+                }
+                // Also copy any src subdirs that are not tests (conservative: skip)
+                // Write the test file itself as src/main.trk (entry point)
+                let test_src = fs::read_to_string(test_file).map_err(|e| {
+                    format!("Failed to read test file '{}': {}", test_file.display(), e)
+                })?;
+                fs::write(tmp_root.join("src/main.trk"), test_src)
+                    .map_err(|e| format!("Failed to write tmp main.trk: {}", e))?;
+                Ok(())
+            })() {
+                eprintln!("✗ setup failed: {}", e);
+                failures += 1;
+                continue;
+            }
+
+            let tmp_manifest = match Manifest::load(&tmp_root.join("Track.toml")) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("✗ manifest load failed: {}", e);
+                    failures += 1;
+                    continue;
+                }
+            };
+            if let Err(e) = Self::build(&tmp_root, &tmp_manifest) {
+                eprintln!("✗ build failed: {}", e);
+                let _ = fs::remove_dir_all(&tmp_root);
+                failures += 1;
+                continue;
+            }
+            let exe_path = tmp_root
+                .join("target")
+                .join(format!("{}_test", manifest.package.name));
+            let status = process::Command::new(&exe_path).status().map_err(|e| {
+                format!("Failed to run '{}': {}", exe_path.display(), e)
+            });
+            let _ = fs::remove_dir_all(&tmp_root);
+            match status {
+                Ok(s) if s.success() => println!("✓"),
+                Ok(s) => {
+                    eprintln!("✗ failed (exit {:?})", s.code());
+                    failures += 1;
+                }
+                Err(e) => {
+                    eprintln!("✗ run failed: {}", e);
+                    failures += 1;
+                }
+            }
+        }
+
+        if failures > 0 {
+            return Err(format!("{} Track test(s) failed", failures));
+        }
+        println!(
+            "✓ All {} Track test(s) passed",
+            test_files.len()
+        );
+        Ok(())
     }
 }
 

@@ -18,6 +18,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "check" => commands::check(&args[1..]),
         "lint" => commands::lint(&args[1..]),
         "clean" => commands::clean(&args[1..]),
+        "test" => commands::test(&args[1..]),
         "--version" | "-v" | "version" => {
             println!("yard {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -44,5 +45,6 @@ fn print_usage() {
     eprintln!("    check           Check the project for errors");
     eprintln!("    lint            Lint the project without building");
     eprintln!("    clean           Clean target build directory");
+    eprintln!("    test            Run native Track tests (src/*_test.trk, tests/**/*.trk)");
     eprintln!("    help            Show this help");
 }
