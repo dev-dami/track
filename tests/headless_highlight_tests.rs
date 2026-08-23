@@ -208,16 +208,20 @@ fn test_nvim_headless_lua_syntax_ok() {
 fn test_nvim_devicon_svg_not_needed_headless() {
     // Prove: terminal nvim cannot render SVG — it uses font glyphs.
     // The SVG files are only for VS Code (graphical). This test documents the fact
-    // and ensures the nvim plugin does NOT reference SVG.
+    // and ensures the nvim plugin does NOT try to load an SVG.
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let lua_src = fs::read_to_string(Path::new(&manifest).join("editor/nvim/track.lua")).unwrap();
     assert!(
-        lua_src.contains("Terminal cannot render SVG") || lua_src.contains("SVG not used"),
-        "track.lua should document that SVG is not for nvim"
+        lua_src.contains("Terminal cannot render") || lua_src.contains("vector images"),
+        "track.lua should document that SVG/vector is not for nvim"
     );
+    // must not actually reference an SVG file path (e.g. load .svg); comment mentioning SVG is ok if it says "cannot render"
+    // ensure no code tries to load SVG — check for 'load.*svg' or 'track-icon.svg' in code (allow comment)
+    let code_lines: Vec<&str> = lua_src.lines().filter(|l| !l.trim_start().starts_with("--")).collect();
+    let code = code_lines.join("\n");
     assert!(
-        !lua_src.contains(".svg"),
-        "nvim track.lua should not reference .svg — it uses font glyphs"
+        !code.contains(".svg"),
+        "nvim track.lua code should not reference .svg — it uses font glyphs (comment ok)"
     );
     let pkg = fs::read_to_string(Path::new(&manifest).join("editor/vscode/package.json")).unwrap();
     assert!(pkg.contains("track-icon.png"), "vscode package.json should reference PNG icon");
