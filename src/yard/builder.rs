@@ -379,8 +379,7 @@ impl ParallelBuilder {
             for entry in fs::read_dir(&src_dir)
                 .map_err(|e| format!("Failed to read src dir '{}': {}", src_dir.display(), e))?
             {
-                let entry =
-                    entry.map_err(|e| format!("Directory entry error: {}", e))?;
+                let entry = entry.map_err(|e| format!("Directory entry error: {}", e))?;
                 let p = entry.path();
                 if p.is_file()
                     && p.extension().is_some_and(|ext| ext == "trk")
@@ -438,9 +437,8 @@ impl ParallelBuilder {
             ));
             let _ = fs::remove_dir_all(&tmp_root);
             if let Err(e) = (|| -> Result<(), String> {
-                fs::create_dir_all(tmp_root.join("src")).map_err(|e| {
-                    format!("Failed to create temp src dir: {}", e)
-                })?;
+                fs::create_dir_all(tmp_root.join("src"))
+                    .map_err(|e| format!("Failed to create temp src dir: {}", e))?;
                 // Minimal manifest for the temp test package
                 let tmp_manifest_content = format!(
                     "[package]\nname = \"{}_test\"\nversion = \"0.1.0\"\nauthors = []\n\n[dependencies]\n\n[build]\nsrc = \"src\"\n",
@@ -451,27 +449,22 @@ impl ParallelBuilder {
                 // Copy non-test, non-main src files (token, lexer) into tmp src
                 let src_dir = project_root.join(&manifest.build.src);
                 if src_dir.exists() {
-                    for entry in fs::read_dir(&src_dir).map_err(|e| {
-                        format!("Failed to read src dir: {}", e)
-                    })? {
-                        let entry = entry
-                            .map_err(|e| format!("Dir entry error: {}", e))?;
+                    for entry in fs::read_dir(&src_dir)
+                        .map_err(|e| format!("Failed to read src dir: {}", e))?
+                    {
+                        let entry = entry.map_err(|e| format!("Dir entry error: {}", e))?;
                         let p = entry.path();
                         if !p.is_file() {
                             continue;
                         }
-                        let fname = p
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("");
+                        let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
                         if fname == "main.trk" || fname.contains("_test") {
                             continue;
                         }
                         if p.extension().is_some_and(|ext| ext == "trk") {
                             let dest = tmp_root.join("src").join(fname);
-                            fs::copy(&p, &dest).map_err(|e| {
-                                format!("Failed to copy {}: {}", p.display(), e)
-                            })?;
+                            fs::copy(&p, &dest)
+                                .map_err(|e| format!("Failed to copy {}: {}", p.display(), e))?;
                         }
                     }
                 }
@@ -506,9 +499,9 @@ impl ParallelBuilder {
             let exe_path = tmp_root
                 .join("target")
                 .join(format!("{}_test", manifest.package.name));
-            let status = process::Command::new(&exe_path).status().map_err(|e| {
-                format!("Failed to run '{}': {}", exe_path.display(), e)
-            });
+            let status = process::Command::new(&exe_path)
+                .status()
+                .map_err(|e| format!("Failed to run '{}': {}", exe_path.display(), e));
             let _ = fs::remove_dir_all(&tmp_root);
             match status {
                 Ok(s) if s.success() => println!("✓"),
@@ -526,10 +519,7 @@ impl ParallelBuilder {
         if failures > 0 {
             return Err(format!("{} Track test(s) failed", failures));
         }
-        println!(
-            "✓ All {} Track test(s) passed",
-            test_files.len()
-        );
+        println!("✓ All {} Track test(s) passed", test_files.len());
         Ok(())
     }
 }
