@@ -4,7 +4,7 @@
 // codegen (yard links them as separate objects, types are nominally equal).
 
 union Token {
-    Import, Let, Mut, With, Fn, Return, If, Else, While, True, False,
+    Import, Use, Let, Mut, With, Fn, Return, If, Else, While, For, In, True, False,
     Struct, Enum, Union, Match, As, AtMacro, Const, TypeDef, At,
     TyU8, TyI8, TyI32, TyU32, TyI64, TyU64, TyBool, TyVoid, TyPtr,
     Int(i64), StrLit(Str), Ident(Str),

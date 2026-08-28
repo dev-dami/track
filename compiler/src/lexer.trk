@@ -4,7 +4,7 @@
 // the canonical definition; this copy must stay in sync.
 
 union Token {
-    Import, Let, Mut, With, Fn, Return, If, Else, While, True, False,
+    Import, Use, Let, Mut, With, Fn, Return, If, Else, While, For, In, True, False,
     Struct, Enum, Union, Match, As, AtMacro, Const, TypeDef, At,
     TyU8, TyI8, TyI32, TyU32, TyI64, TyU64, TyBool, TyVoid, TyPtr,
     Int(i64), StrLit(Str), Ident(Str),
@@ -14,7 +14,46 @@ union Token {
     AmpAmp, PipePipe, Shl, Shr, Eof, Unknown,
 }
 
+fn keyword_or_ident_extended(lex: Str) -> Token {
+    let eq_use = str_eq(&lex, "use");
+    if eq_use { let _used = lex; return Token::Use; } else {
+    let eq_with = str_eq(&lex, "with");
+    if eq_with { let _used = lex; return Token::With; } else {
+    let eq_for = str_eq(&lex, "for");
+    if eq_for { let _used = lex; return Token::For; } else {
+    let eq_in = str_eq(&lex, "in");
+    if eq_in { let _used = lex; return Token::In; } else {
+    let eq_as = str_eq(&lex, "as");
+    if eq_as { let _used = lex; return Token::As; } else {
+    let eq_const = str_eq(&lex, "const");
+    if eq_const { let _used = lex; return Token::Const; } else {
+    let eq_type = str_eq(&lex, "type");
+    if eq_type { let _used = lex; return Token::TypeDef; } else {
+    let eq_u8 = str_eq(&lex, "u8");
+    if eq_u8 { let _used = lex; return Token::TyU8; } else {
+    let eq_i8 = str_eq(&lex, "i8");
+    if eq_i8 { let _used = lex; return Token::TyI8; } else {
+    let eq_i32 = str_eq(&lex, "i32");
+    if eq_i32 { let _used = lex; return Token::TyI32; } else {
+    let eq_u32 = str_eq(&lex, "u32");
+    if eq_u32 { let _used = lex; return Token::TyU32; } else {
+    let eq_i64 = str_eq(&lex, "i64");
+    if eq_i64 { let _used = lex; return Token::TyI64; } else {
+    let eq_u64 = str_eq(&lex, "u64");
+    if eq_u64 { let _used = lex; return Token::TyU64; } else {
+    let eq_bool = str_eq(&lex, "bool");
+    if eq_bool { let _used = lex; return Token::TyBool; } else {
+    let eq_void = str_eq(&lex, "void");
+    if eq_void { let _used = lex; return Token::TyVoid; } else {
+    let eq_ptr = str_eq(&lex, "ptr");
+    if eq_ptr { let _used = lex; return Token::TyPtr; } else {
+        return keyword_or_ident(lex);
+    } } } } } } } } } } } } } } } }
+}
+
 fn keyword_or_ident(lex: Str) -> Token {
+    // Keep this table in lock-step with src/lexer/mod.rs. Parser work depends
+    // on every reserved word being classified before it reaches the AST.
     let eq_import = str_eq(&lex, "import");
     if eq_import {
         let _c = lex;
@@ -106,6 +145,7 @@ fn token_kind_name(tok: Token) -> Str {
     let mut out = "Other";
     match tok {
         Token::Import => out = "Import",
+        Token::Use => out = "Use",
         Token::Let => out = "Let",
         Token::Mut => out = "Mut",
         Token::With => out = "With",
@@ -114,18 +154,52 @@ fn token_kind_name(tok: Token) -> Str {
         Token::If => out = "If",
         Token::Else => out = "Else",
         Token::While => out = "While",
+        Token::For => out = "For",
+        Token::In => out = "In",
         Token::True => out = "True",
         Token::False => out = "False",
         Token::Struct => out = "Struct",
         Token::Enum => out = "Enum",
         Token::Union => out = "Union",
         Token::Match => out = "Match",
+        Token::As => out = "As",
+        Token::Const => out = "Const",
+        Token::TypeDef => out = "TypeDef",
+        Token::TyU8 => out = "TyU8",
+        Token::TyI8 => out = "TyI8",
+        Token::TyI32 => out = "TyI32",
+        Token::TyU32 => out = "TyU32",
+        Token::TyI64 => out = "TyI64",
+        Token::TyU64 => out = "TyU64",
+        Token::TyBool => out = "TyBool",
+        Token::TyVoid => out = "TyVoid",
+        Token::TyPtr => out = "TyPtr",
         Token::Eof => out = "Eof",
         Token::Unknown => out = "Unknown",
         Token::Int(_) => out = "Int",
         Token::StrLit(_) => out = "StrLit",
         Token::Ident(_) => out = "Ident",
         _ => out = "Other",
+    }
+    return out;
+}
+
+fn token_kind_code(tok: Token) -> i64 {
+    let mut out: i64 = 0;
+    match tok {
+        Token::Use => out = 1,
+        Token::With => out = 2,
+        Token::For => out = 3,
+        Token::In => out = 4,
+        Token::As => out = 5,
+        Token::Const => out = 6,
+        Token::TypeDef => out = 7,
+        Token::TyI32 => out = 8,
+        Token::TyU64 => out = 9,
+        Token::TyBool => out = 10,
+        Token::TyVoid => out = 11,
+        Token::TyPtr => out = 12,
+        _ => out = 0,
     }
     return out;
 }
@@ -225,7 +299,7 @@ fn lex_ident(src: &Str, start: i64) -> (Token, i64) {
     }
     let slice_len = p - start;
     let lexeme = str_substr(src, start, slice_len);
-    let tok = keyword_or_ident(lexeme);
+    let tok = keyword_or_ident_extended(lexeme);
     return (tok, p);
 }
 

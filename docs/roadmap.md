@@ -116,14 +116,28 @@ values that live on the call stack and are passed around explicitly.
 
 ---
 
-### v0.8.0 — Self-Hosted Compiler Components 2 & 3: Parser, Checker & Codegen in Track (`compiler/parser.trk`, `compiler/checker.trk` & `compiler/codegen.trk`)
+### v0.8.0a — Native Compiler Foundations ⏳ IN PROGRESS
+- **Lexer parity gate**: native lexer recognizes every host reserved word and
+  primitive type before parser work begins; native tests prevent regressions.
+- **Compiler representation**: introduce source spans, diagnostics, AST and
+  collection modules under `compiler/src/` as independently testable units.
+- **Backend contract**: the self-hosted compiler emits portable C as its first
+  backend and invokes the platform C compiler through the existing explicit OS
+  process API. Cranelift remains the bootstrap compiler backend, not a library
+  to reimplement in Track.
+- **Bootstrap determinism**: define stable module order, generated-file names,
+  and build metadata before the Stage 0 build is added.
+
+### v0.8.0b — Native Parser ⏳ PLANNED
 - **Native Parser**:
   - Port AST representation (`union Expr`) and recursive descent parser to native Track code in `compiler/parser.trk`.
   - Detailed compile-time error reporting with source code line/column highlighting.
+### v0.8.0c — Native Checker ⏳ PLANNED
 - **Native Checker**:
   - Port `LinearChecker` borrow-checker, escape analysis, and type inference to Track in `compiler/checker.trk`.
+### v0.8.0d — Native Codegen ⏳ PLANNED
 - **Native Codegen**:
-  - Port Cranelift / C code emitter to Track in `compiler/codegen.trk`.
+  - Implement the portable C emitter in Track and invoke the system C compiler.
 
 ---
 
