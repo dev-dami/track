@@ -23,7 +23,7 @@ allowing Stage 1 to compile Track sources without Rust compiler logic.
 
 1. Lexer parity and span representation. ✅
 2. Diagnostic formatting and native test fixtures. ✅
-3. AST and parser subset.
+3. AST, collections, and parser subset. ✅
 4. C-emitter interface, followed by checker and complete code generation.
 
 ## Phase 2 contract
@@ -53,3 +53,35 @@ Run the native gate from `compiler/`:
 ```sh
 ../target/debug/yard test
 ```
+
+## Phase 3 contract
+
+The native compiler now has three independently testable representation layers:
+
+- `collections.trk` provides a bounds-checked, growable, opaque 64-bit
+  collection. Its pointer-only ABI avoids coupling compiler records to the
+  legacy `Vec<i32>` layout.
+- `ast.trk` defines the native `Expr` variants and stores compact six-word
+  nodes: kind, value, auxiliary value, start byte, end byte, and a
+  variant-specific extra value.
+- `parser.trk` consumes stable lexer records `(tag, start, end, next)` and
+  builds the AST without copying token text. Identifiers and strings retain
+  source ranges so later checker phases can recover their text on demand.
+
+The Phase 3 grammar subset is deliberately bounded:
+
+```text
+program    := statement* EOF
+statement  := "let" "mut"? IDENT "=" expression ";"
+            | "return" expression? ";"
+            | expression ";"
+expression := factor (("+" | "-") factor)*
+factor     := unary (("*" | "/" | "%") unary)*
+unary      := ("!" | "-") unary | primary
+primary    := INT | STRING | BOOL | IDENT | "(" expression ")"
+```
+
+Every parser failure returns an error code and end-exclusive byte range that
+feeds directly into the Phase 2 diagnostic formatter. The complete Track
+grammar—including functions, blocks, types, control flow, aggregates, and
+patterns—remains the v0.8.0b parser milestone.

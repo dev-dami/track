@@ -98,6 +98,29 @@ fn test_lex_next_spanned_skips_trivia() -> void {
     assert_eq_i64(end, 13);
 }
 
+fn test_parser_token_records() -> void {
+    let src = "let value = 42;";
+    let let_record = lex_next_record(&src, 0);
+    assert_eq_i64(let_record.0, token_tag_let());
+    assert_eq_i64(let_record.1, 0);
+    assert_eq_i64(let_record.2, 3);
+
+    let ident_record = lex_next_record(&src, let_record.3);
+    assert_eq_i64(ident_record.0, token_tag_identifier());
+    let eq_record = lex_next_record(&src, ident_record.3);
+    assert_eq_i64(eq_record.0, token_tag_eq());
+    let int_record = lex_next_record(&src, eq_record.3);
+    assert_eq_i64(int_record.0, token_tag_int());
+}
+
+fn test_standalone_underscore_record() -> void {
+    let src = "_ name";
+    let underscore = lex_next_record(&src, 0);
+    assert_eq_i64(underscore.0, token_tag_underscore());
+    let name = lex_next_record(&src, underscore.3);
+    assert_eq_i64(name.0, token_tag_identifier());
+}
+
 fn main() -> void {
     test_simple_let();
     test_import();
@@ -110,5 +133,7 @@ fn main() -> void {
     test_string_and_comment();
     test_lex_next_kind();
     test_lex_next_spanned_skips_trivia();
+    test_parser_token_records();
+    test_standalone_underscore_record();
     print("ok");
 }

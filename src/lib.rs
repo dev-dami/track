@@ -560,6 +560,62 @@ int vec_len(const Vec* v) {
     return v ? v->len : 0;
 }
 
+// Opaque 64-bit collection used by the self-hosted compiler. Track only
+// carries the stable pointer handle; layout and capacity management stay in
+// this bootstrap runtime until native generic collections are available.
+typedef struct {
+    long long* data;
+    long long len;
+    long long cap;
+} TrackI64Collection;
+
+void* track_i64_collection_new(long long requested_cap) {
+    long long cap = requested_cap > 0 ? requested_cap : 16;
+    if ((unsigned long long)cap > SIZE_MAX / sizeof(long long)) return NULL;
+    TrackI64Collection* collection = (TrackI64Collection*)alloc(sizeof(TrackI64Collection));
+    if (!collection) return NULL;
+    collection->data = (long long*)alloc((size_t)cap * sizeof(long long));
+    collection->len = 0;
+    collection->cap = cap;
+    return collection;
+}
+
+long long track_i64_collection_len(const void* handle) {
+    const TrackI64Collection* collection = (const TrackI64Collection*)handle;
+    return collection ? collection->len : 0;
+}
+
+long long track_i64_collection_push(void* handle, long long value) {
+    TrackI64Collection* collection = (TrackI64Collection*)handle;
+    if (!collection) return -1;
+    if (collection->len == collection->cap) {
+        if (collection->cap > (long long)(SIZE_MAX / sizeof(long long) / 2)) return -1;
+        long long next_cap = collection->cap * 2;
+        collection->data = (long long*)mem_realloc(
+            collection->data,
+            (size_t)next_cap * sizeof(long long)
+        );
+        collection->cap = next_cap;
+    }
+    long long index = collection->len;
+    collection->data[index] = value;
+    collection->len += 1;
+    return index;
+}
+
+long long track_i64_collection_get(const void* handle, long long index) {
+    const TrackI64Collection* collection = (const TrackI64Collection*)handle;
+    if (!collection || index < 0 || index >= collection->len) return 0;
+    return collection->data[index];
+}
+
+int track_i64_collection_set(void* handle, long long index, long long value) {
+    TrackI64Collection* collection = (TrackI64Collection*)handle;
+    if (!collection || index < 0 || index >= collection->len) return 0;
+    collection->data[index] = value;
+    return 1;
+}
+
 // Path Extensions
 Str path_basename(const char* path) {
     Str s;

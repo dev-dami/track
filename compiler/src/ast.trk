@@ -1,0 +1,128 @@
+// ast.trk — compact native AST representation for the Phase 3 parser subset.
+//
+// `Expr` names the semantic node variants. `AstNode` is the bootstrap storage
+// form used until Track supports generic, field-addressable native structs.
+// Layout: (kind, value, auxiliary, start byte, end byte, extra).
+
+import "collections";
+
+union Expr {
+    IntLiteral, StringLiteral, BoolLiteral, Identifier,
+    Unary, Binary, Let, Return, ExpressionStatement, Error,
+}
+
+type Ast = ptr<i64>;
+type AstNode = (i64, i64, i64, i64, i64, i64);
+
+fn ast_kind_int() -> i64 { return 1; }
+fn ast_kind_string() -> i64 { return 2; }
+fn ast_kind_bool() -> i64 { return 3; }
+fn ast_kind_identifier() -> i64 { return 4; }
+fn ast_kind_unary() -> i64 { return 5; }
+fn ast_kind_binary() -> i64 { return 6; }
+fn ast_kind_let() -> i64 { return 7; }
+fn ast_kind_return() -> i64 { return 8; }
+fn ast_kind_expression_statement() -> i64 { return 9; }
+fn ast_kind_error() -> i64 { return 10; }
+
+fn ast_new(initial_nodes: i64) -> ptr<i64> {
+    return collection_new(initial_nodes * 6);
+}
+
+fn ast_node_count(ast: &ptr<i64>) -> i64 {
+    return collection_len(ast) / 6;
+}
+
+fn ast_push_node(ast: &ptr<i64>, node: &AstNode) -> i64 {
+    let node_index = ast_node_count(ast);
+    let kind: i64 = node.0;
+    let value: i64 = node.1;
+    let auxiliary: i64 = node.2;
+    let start: i64 = node.3;
+    let end: i64 = node.4;
+    let flags: i64 = node.5;
+    let _kind_slot = collection_push(ast, kind);
+    let _value_slot = collection_push(ast, value);
+    let _auxiliary_slot = collection_push(ast, auxiliary);
+    let _start_slot = collection_push(ast, start);
+    let _end_slot = collection_push(ast, end);
+    let _flags_slot = collection_push(ast, flags);
+    return node_index;
+}
+
+fn ast_node_field(ast: &ptr<i64>, node_index: i64, field: i64) -> i64 {
+    if node_index < 0 {
+        return 0;
+    }
+    if node_index >= ast_node_count(ast) {
+        return 0;
+    }
+    if field < 0 || field >= 6 {
+        return 0;
+    }
+    return collection_get(ast, node_index * 6 + field);
+}
+
+fn ast_node_kind(ast: &ptr<i64>, node_index: i64) -> i64 {
+    return ast_node_field(ast, node_index, 0);
+}
+
+fn ast_node_value(ast: &ptr<i64>, node_index: i64) -> i64 {
+    return ast_node_field(ast, node_index, 1);
+}
+
+fn ast_node_auxiliary(ast: &ptr<i64>, node_index: i64) -> i64 {
+    return ast_node_field(ast, node_index, 2);
+}
+
+fn ast_node_start(ast: &ptr<i64>, node_index: i64) -> i64 {
+    return ast_node_field(ast, node_index, 3);
+}
+
+fn ast_node_end(ast: &ptr<i64>, node_index: i64) -> i64 {
+    return ast_node_field(ast, node_index, 4);
+}
+
+fn ast_node_flags(ast: &ptr<i64>, node_index: i64) -> i64 {
+    return ast_node_field(ast, node_index, 5);
+}
+
+fn ast_node_extra(ast: &ptr<i64>, node_index: i64) -> i64 {
+    return ast_node_field(ast, node_index, 5);
+}
+
+fn ast_literal_node(kind: i64, value: i64, start: i64, end: i64) -> AstNode {
+    return (kind, value, -1, start, end, 0);
+}
+
+fn ast_identifier_node(start: i64, end: i64) -> AstNode {
+    return (ast_kind_identifier(), 0, -1, start, end, 0);
+}
+
+fn ast_unary_node(operator: i64, operand: i64, start: i64, end: i64) -> AstNode {
+    return (ast_kind_unary(), operator, operand, start, end, 0);
+}
+
+fn ast_binary_node(operator: i64, left: i64, right: i64, start: i64, end: i64) -> AstNode {
+    return (ast_kind_binary(), operator, right, start, end, left);
+}
+
+fn ast_let_node(name: i64, initializer: i64, mutable: bool, start: i64, end: i64) -> AstNode {
+    let mut flags: i64 = 0;
+    if mutable {
+        flags = 1;
+    }
+    return (ast_kind_let(), name, initializer, start, end, flags);
+}
+
+fn ast_return_node(value: i64, start: i64, end: i64) -> AstNode {
+    return (ast_kind_return(), value, -1, start, end, 0);
+}
+
+fn ast_expression_statement_node(value: i64, start: i64, end: i64) -> AstNode {
+    return (ast_kind_expression_statement(), value, -1, start, end, 0);
+}
+
+fn ast_error_node(start: i64, end: i64, error_code: i64) -> AstNode {
+    return (ast_kind_error(), error_code, -1, start, end, 0);
+}

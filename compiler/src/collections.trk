@@ -1,0 +1,30 @@
+// collections.trk — opaque 64-bit storage for native compiler records.
+// The handle is intentionally layout-free at the Track boundary. This keeps
+// compiler data deterministic without coupling it to the v0.7 `Vec<i32>` ABI.
+
+type I64Collection = ptr<i64>;
+
+fn collection_new(initial_capacity: i64) -> ptr<i64> {
+    return track_i64_collection_new(initial_capacity);
+}
+
+fn collection_len(collection: &ptr<i64>) -> i64 {
+    return track_i64_collection_len(collection);
+}
+
+fn collection_push(collection: &ptr<i64>, value: i64) -> i64 {
+    return track_i64_collection_push(collection, value);
+}
+
+fn collection_get(collection: &ptr<i64>, index: i64) -> i64 {
+    return track_i64_collection_get(collection, index);
+}
+
+fn collection_set(collection: &ptr<i64>, index: i64, value: i64) -> bool {
+    let updated = track_i64_collection_set(collection, index, value);
+    return updated == 1;
+}
+
+fn collection_is_empty(collection: &ptr<i64>) -> bool {
+    return collection_len(collection) == 0;
+}

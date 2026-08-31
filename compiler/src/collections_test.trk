@@ -1,0 +1,43 @@
+import "collections";
+
+fn assert_i64(actual: i64, expected: i64) -> void {
+    if actual != expected {
+        abort("collection integer assertion failed");
+    }
+}
+
+fn assert_bool(actual: bool, expected: bool) -> void {
+    if actual != expected {
+        abort("collection boolean assertion failed");
+    }
+}
+
+fn test_collection_growth_and_access() -> void {
+    let values = collection_new(2);
+    assert_bool(collection_is_empty(&values), true);
+    let first = collection_push(&values, 11);
+    let second = collection_push(&values, 22);
+    let third = collection_push(&values, 33);
+    assert_i64(first, 0);
+    assert_i64(second, 1);
+    assert_i64(third, 2);
+    assert_i64(collection_len(&values), 3);
+    assert_i64(collection_get(&values, 0), 11);
+    assert_i64(collection_get(&values, 2), 33);
+}
+
+fn test_collection_update_and_bounds() -> void {
+    let values = collection_new(1);
+    let index = collection_push(&values, 7);
+    assert_i64(index, 0);
+    assert_bool(collection_set(&values, 0, 9), true);
+    assert_i64(collection_get(&values, 0), 9);
+    assert_bool(collection_set(&values, 4, 1), false);
+    assert_i64(collection_get(&values, 4), 0);
+}
+
+fn main() -> void {
+    test_collection_growth_and_access();
+    test_collection_update_and_bounds();
+    print("ok");
+}

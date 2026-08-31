@@ -1,0 +1,101 @@
+import "parser";
+import "ast";
+import "lexer";
+
+fn assert_i64(actual: i64, expected: i64) -> void {
+    if actual != expected {
+        abort("parser integer assertion failed");
+    }
+}
+
+fn assert_bool(actual: bool, expected: bool) -> void {
+    if actual != expected {
+        abort("parser boolean assertion failed");
+    }
+}
+
+fn assert_string(actual: &Str, expected: &Str) -> void {
+    if !str_eq(actual, expected) {
+        eprint(actual);
+        abort("parser string assertion failed");
+    }
+}
+
+fn read_parser_fixture(path: &Str) -> Str {
+    let file = file_open(path, "r");
+    return file_read_all(file);
+}
+
+fn test_let_return_and_precedence() -> void {
+    let source = read_parser_fixture("tests/fixtures/parser-subset.txt");
+    let result = parse_subset(&source);
+    assert_bool(parse_result_ok(&result), true);
+    let ast = parse_result_ast(&result);
+    assert_i64(ast_node_count(&ast), 9);
+
+    assert_i64(ast_node_kind(&ast, 4), ast_kind_binary());
+    assert_i64(ast_node_value(&ast, 4), token_tag_star());
+    assert_i64(ast_node_extra(&ast, 4), 2);
+    assert_i64(ast_node_auxiliary(&ast, 4), 3);
+
+    assert_i64(ast_node_kind(&ast, 5), ast_kind_binary());
+    assert_i64(ast_node_value(&ast, 5), token_tag_plus());
+    assert_i64(ast_node_extra(&ast, 5), 1);
+    assert_i64(ast_node_auxiliary(&ast, 5), 4);
+
+    assert_i64(ast_node_kind(&ast, 6), ast_kind_let());
+    assert_i64(ast_node_value(&ast, 6), 0);
+    assert_i64(ast_node_auxiliary(&ast, 6), 5);
+    assert_i64(ast_node_kind(&ast, 8), ast_kind_return());
+    assert_i64(ast_node_value(&ast, 8), 7);
+}
+
+fn test_unary_bool_string_and_mutability() -> void {
+    let source = "let mut flag = !false; let text = \"ok\";";
+    let result = parse_subset(&source);
+    assert_bool(parse_result_ok(&result), true);
+    let ast = parse_result_ast(&result);
+    assert_i64(ast_node_count(&ast), 7);
+    assert_i64(ast_node_kind(&ast, 2), ast_kind_unary());
+    assert_i64(ast_node_value(&ast, 2), token_tag_bang());
+    assert_i64(ast_node_kind(&ast, 3), ast_kind_let());
+    assert_i64(ast_node_flags(&ast, 3), 1);
+    assert_i64(ast_node_kind(&ast, 5), ast_kind_string());
+    assert_i64(ast_node_start(&ast, 5), 35);
+    assert_i64(ast_node_end(&ast, 5), 37);
+}
+
+fn test_error_span_and_diagnostic() -> void {
+    let source = "let value = ;";
+    let result = parse_subset(&source);
+    assert_bool(parse_result_ok(&result), false);
+    assert_i64(result.1, 12);
+    assert_i64(result.2, 13);
+    assert_i64(result.3, 1);
+    let actual = format_parse_error(&source, "broken.trk", &result);
+    let expected = "error[P0001]: expected expression\n --> broken.trk:1:13\n  |\n1 | let value = ;\n  |             ^ expression required here";
+    assert_string(&actual, &expected);
+}
+
+fn test_parentheses_expression_statement_and_empty_return() -> void {
+    let source = "(1 + 2) * 3; return;";
+    let result = parse_subset(&source);
+    assert_bool(parse_result_ok(&result), true);
+    let ast = parse_result_ast(&result);
+    assert_i64(ast_node_count(&ast), 7);
+    assert_i64(ast_node_kind(&ast, 2), ast_kind_binary());
+    assert_i64(ast_node_value(&ast, 2), token_tag_plus());
+    assert_i64(ast_node_kind(&ast, 4), ast_kind_binary());
+    assert_i64(ast_node_value(&ast, 4), token_tag_star());
+    assert_i64(ast_node_kind(&ast, 5), ast_kind_expression_statement());
+    assert_i64(ast_node_kind(&ast, 6), ast_kind_return());
+    assert_i64(ast_node_value(&ast, 6), -1);
+}
+
+fn main() -> void {
+    test_let_return_and_precedence();
+    test_unary_bool_string_and_mutability();
+    test_error_span_and_diagnostic();
+    test_parentheses_expression_statement_and_empty_return();
+    print("ok");
+}

@@ -122,8 +122,9 @@ values that live on the call stack and are passed around explicitly.
 - **Source spans and diagnostics** ✅: normalized end-exclusive byte spans,
   one-based source positions, deterministic code-frame formatting, and native
   golden fixtures are implemented under `compiler/src/` and `compiler/tests/`.
-- **Remaining compiler representation**: introduce AST and collection modules
-  under `compiler/src/` as independently testable units.
+- **AST, collections, and parser subset** ✅: compact source-ranged AST nodes,
+  growable opaque 64-bit storage, arithmetic precedence, foundational
+  statements, and structured parser errors are implemented and natively tested.
 - **Backend contract**: the self-hosted compiler emits portable C as its first
   backend and invokes the platform C compiler through the existing explicit OS
   process API. Cranelift remains the bootstrap compiler backend, not a library

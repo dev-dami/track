@@ -1,0 +1,45 @@
+import "ast";
+
+fn assert_i64(actual: i64, expected: i64) -> void {
+    if actual != expected {
+        abort("AST integer assertion failed");
+    }
+}
+
+fn test_ast_node_storage() -> void {
+    let ast = ast_new(2);
+    let literal = ast_literal_node(ast_kind_int(), 42, 4, 6);
+    let literal_index = ast_push_node(&ast, &literal);
+    let identifier = ast_identifier_node(10, 16);
+    let identifier_index = ast_push_node(&ast, &identifier);
+
+    assert_i64(literal_index, 0);
+    assert_i64(identifier_index, 1);
+    assert_i64(ast_node_count(&ast), 2);
+    assert_i64(ast_node_kind(&ast, literal_index), ast_kind_int());
+    assert_i64(ast_node_value(&ast, literal_index), 42);
+    assert_i64(ast_node_start(&ast, literal_index), 4);
+    assert_i64(ast_node_end(&ast, literal_index), 6);
+    assert_i64(ast_node_kind(&ast, identifier_index), ast_kind_identifier());
+}
+
+fn test_ast_relationships() -> void {
+    let ast = ast_new(4);
+    let left_node = ast_literal_node(ast_kind_int(), 1, 0, 1);
+    let left = ast_push_node(&ast, &left_node);
+    let right_node = ast_literal_node(ast_kind_int(), 2, 4, 5);
+    let right = ast_push_node(&ast, &right_node);
+    let binary_node = ast_binary_node(100, left, right, 0, 5);
+    let binary = ast_push_node(&ast, &binary_node);
+
+    assert_i64(ast_node_kind(&ast, binary), ast_kind_binary());
+    assert_i64(ast_node_value(&ast, binary), 100);
+    assert_i64(ast_node_flags(&ast, binary), left);
+    assert_i64(ast_node_auxiliary(&ast, binary), right);
+}
+
+fn main() -> void {
+    test_ast_node_storage();
+    test_ast_relationships();
+    print("ok");
+}

@@ -1,0 +1,320 @@
+// parser.trk — Phase 3 recursive-descent parser subset.
+//
+// Supported expressions: integers, strings, booleans, identifiers,
+// parenthesized expressions, unary `!`/`-`, and arithmetic precedence.
+// Supported statements: untyped `let`, `let mut`, `return`, and expression
+// statements. Every result carries byte-precise error ranges.
+
+import "lexer";
+import "ast";
+import "source_span";
+import "diagnostic";
+
+// (node index, next byte, error start, error end, error code)
+type ParserStep = (i64, i64, i64, i64, i64);
+// (AST handle, error start, error end, error code)
+type ParseResult = (ptr<i64>, i64, i64, i64);
+
+fn parser_step_ok(node: i64, next: i64) -> ParserStep {
+    return (node, next, -1, -1, 0);
+}
+
+fn parser_step_error(next: i64, start: i64, end: i64, code: i64) -> ParserStep {
+    return (-1, next, start, end, code);
+}
+
+fn parser_step_failed(step: &ParserStep) -> bool {
+    return step.4 != 0;
+}
+
+fn parser_step_copy(step: &ParserStep) -> ParserStep {
+    return (step.0, step.1, step.2, step.3, step.4);
+}
+
+fn parse_error_name(code: i64) -> Str {
+    if code == 1 { return "P0001"; }
+    if code == 2 { return "P0002"; }
+    if code == 3 { return "P0003"; }
+    if code == 4 { return "P0004"; }
+    if code == 5 { return "P0005"; }
+    return "P0099";
+}
+
+fn parse_error_message(code: i64) -> Str {
+    if code == 1 { return "expected expression"; }
+    if code == 2 { return "expected identifier after 'let'"; }
+    if code == 3 { return "expected '=' after binding name"; }
+    if code == 4 { return "expected ';' after statement"; }
+    if code == 5 { return "expected ')' after expression"; }
+    return "parser made no progress";
+}
+
+fn parse_error_label(code: i64) -> Str {
+    if code == 1 { return "expression required here"; }
+    if code == 2 { return "binding name required here"; }
+    if code == 3 { return "insert '=' here"; }
+    if code == 4 { return "terminate the statement here"; }
+    if code == 5 { return "close the parenthesized expression"; }
+    return "unexpected token";
+}
+
+fn parse_primary(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
+    let record = lex_next_record(source, pos);
+    let tag: i64 = record.0;
+    let start: i64 = record.1;
+    let end: i64 = record.2;
+    let next: i64 = record.3;
+
+    if tag == token_tag_int() {
+        let text = str_substr(source, start, end - start);
+        let value = str_to_int(&text);
+        let node = ast_literal_node(ast_kind_int(), value, start, end);
+        let index = ast_push_node(ast, &node);
+        return parser_step_ok(index, next);
+    }
+    if tag == token_tag_string() {
+        let node = ast_literal_node(ast_kind_string(), 0, start + 1, end - 1);
+        let index = ast_push_node(ast, &node);
+        return parser_step_ok(index, next);
+    }
+    if tag == token_tag_true() {
+        let node = ast_literal_node(ast_kind_bool(), 1, start, end);
+        let index = ast_push_node(ast, &node);
+        return parser_step_ok(index, next);
+    }
+    if tag == token_tag_false() {
+        let node = ast_literal_node(ast_kind_bool(), 0, start, end);
+        let index = ast_push_node(ast, &node);
+        return parser_step_ok(index, next);
+    }
+    if tag == token_tag_identifier() {
+        let node = ast_identifier_node(start, end);
+        let index = ast_push_node(ast, &node);
+        return parser_step_ok(index, next);
+    }
+    if tag == token_tag_lparen() {
+        let inner = parse_expression(source, ast, next);
+        if parser_step_failed(&inner) {
+            return parser_step_copy(&inner);
+        }
+        let close = lex_next_record(source, inner.1);
+        if close.0 != token_tag_rparen() {
+            return parser_step_error(close.3, close.1, close.2, 5);
+        }
+        return parser_step_ok(inner.0, close.3);
+    }
+    return parser_step_error(next, start, end, 1);
+}
+
+fn parse_unary(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
+    let record = lex_next_record(source, pos);
+    let tag: i64 = record.0;
+    if tag == token_tag_bang() || tag == token_tag_minus() {
+        let operand = parse_unary(source, ast, record.3);
+        if parser_step_failed(&operand) {
+            return parser_step_copy(&operand);
+        }
+        let operand_index: i64 = operand.0;
+        let operand_end = ast_node_end(ast, operand_index);
+        let node = ast_unary_node(tag, operand_index, record.1, operand_end);
+        let index = ast_push_node(ast, &node);
+        return parser_step_ok(index, operand.1);
+    }
+    return parse_primary(source, ast, pos);
+}
+
+fn parser_is_factor_operator(tag: i64) -> bool {
+    if tag == token_tag_star() { return true; }
+    if tag == token_tag_slash() { return true; }
+    return tag == token_tag_percent();
+}
+
+fn parser_is_term_operator(tag: i64) -> bool {
+    if tag == token_tag_plus() { return true; }
+    return tag == token_tag_minus();
+}
+
+fn parse_factor(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
+    let initial = parse_unary(source, ast, pos);
+    if parser_step_failed(&initial) {
+        return parser_step_copy(&initial);
+    }
+    let mut left: i64 = initial.0;
+    let mut next: i64 = initial.1;
+    let mut parsing = true;
+    while parsing {
+        let operator = lex_next_record(source, next);
+        let operator_tag: i64 = operator.0;
+        if parser_is_factor_operator(operator_tag) {
+            let right_step = parse_unary(source, ast, operator.3);
+            if parser_step_failed(&right_step) {
+                return parser_step_copy(&right_step);
+            }
+            let right: i64 = right_step.0;
+            let start = ast_node_start(ast, left);
+            let end = ast_node_end(ast, right);
+            let node = ast_binary_node(operator_tag, left, right, start, end);
+            left = ast_push_node(ast, &node);
+            next = right_step.1;
+        } else {
+            parsing = false;
+        }
+    }
+    return parser_step_ok(left, next);
+}
+
+fn parse_expression(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
+    let initial = parse_factor(source, ast, pos);
+    if parser_step_failed(&initial) {
+        return parser_step_copy(&initial);
+    }
+    let mut left: i64 = initial.0;
+    let mut next: i64 = initial.1;
+    let mut parsing = true;
+    while parsing {
+        let operator = lex_next_record(source, next);
+        let operator_tag: i64 = operator.0;
+        if parser_is_term_operator(operator_tag) {
+            let right_step = parse_factor(source, ast, operator.3);
+            if parser_step_failed(&right_step) {
+                return parser_step_copy(&right_step);
+            }
+            let right: i64 = right_step.0;
+            let start = ast_node_start(ast, left);
+            let end = ast_node_end(ast, right);
+            let node = ast_binary_node(operator_tag, left, right, start, end);
+            left = ast_push_node(ast, &node);
+            next = right_step.1;
+        } else {
+            parsing = false;
+        }
+    }
+    return parser_step_ok(left, next);
+}
+
+fn parse_let_statement(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
+    let let_record = lex_next_record(source, pos);
+    let mut next: i64 = let_record.3;
+    let mut mutable = false;
+    let mut name_record = lex_next_record(source, next);
+    if name_record.0 == token_tag_mut() {
+        mutable = true;
+        next = name_record.3;
+        name_record = lex_next_record(source, next);
+    }
+    if name_record.0 != token_tag_identifier() {
+        return parser_step_error(name_record.3, name_record.1, name_record.2, 2);
+    }
+    let name_node = ast_identifier_node(name_record.1, name_record.2);
+    let name_index = ast_push_node(ast, &name_node);
+
+    let equals = lex_next_record(source, name_record.3);
+    if equals.0 != token_tag_eq() {
+        return parser_step_error(equals.3, equals.1, equals.2, 3);
+    }
+    let initializer = parse_expression(source, ast, equals.3);
+    if parser_step_failed(&initializer) {
+        return parser_step_copy(&initializer);
+    }
+    let semicolon = lex_next_record(source, initializer.1);
+    if semicolon.0 != token_tag_semicolon() {
+        return parser_step_error(semicolon.3, semicolon.1, semicolon.2, 4);
+    }
+    let node = ast_let_node(name_index, initializer.0, mutable, let_record.1, semicolon.2);
+    let index = ast_push_node(ast, &node);
+    return parser_step_ok(index, semicolon.3);
+}
+
+fn parse_return_statement(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
+    let return_record = lex_next_record(source, pos);
+    let after_return = lex_next_record(source, return_record.3);
+    if after_return.0 == token_tag_semicolon() {
+        let empty_node = ast_return_node(-1, return_record.1, after_return.2);
+        let empty_index = ast_push_node(ast, &empty_node);
+        return parser_step_ok(empty_index, after_return.3);
+    }
+    let value = parse_expression(source, ast, return_record.3);
+    if parser_step_failed(&value) {
+        return parser_step_copy(&value);
+    }
+    let semicolon = lex_next_record(source, value.1);
+    if semicolon.0 != token_tag_semicolon() {
+        return parser_step_error(semicolon.3, semicolon.1, semicolon.2, 4);
+    }
+    let node = ast_return_node(value.0, return_record.1, semicolon.2);
+    let index = ast_push_node(ast, &node);
+    return parser_step_ok(index, semicolon.3);
+}
+
+fn parse_statement(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
+    let record = lex_next_record(source, pos);
+    if record.0 == token_tag_let() {
+        return parse_let_statement(source, ast, pos);
+    }
+    if record.0 == token_tag_return() {
+        return parse_return_statement(source, ast, pos);
+    }
+    let value = parse_expression(source, ast, pos);
+    if parser_step_failed(&value) {
+        return parser_step_copy(&value);
+    }
+    let semicolon = lex_next_record(source, value.1);
+    if semicolon.0 != token_tag_semicolon() {
+        return parser_step_error(semicolon.3, semicolon.1, semicolon.2, 4);
+    }
+    let start = ast_node_start(ast, value.0);
+    let node = ast_expression_statement_node(value.0, start, semicolon.2);
+    let index = ast_push_node(ast, &node);
+    return parser_step_ok(index, semicolon.3);
+}
+
+fn parse_subset(source: &Str) -> ParseResult {
+    let ast = ast_new(32);
+    let mut pos: i64 = 0;
+    let mut error_start: i64 = -1;
+    let mut error_end: i64 = -1;
+    let mut error_code: i64 = 0;
+    let mut parsing = true;
+    while parsing {
+        let record = lex_next_record(source, pos);
+        if record.0 == token_tag_eof() {
+            parsing = false;
+        } else {
+            let statement = parse_statement(source, &ast, pos);
+            if parser_step_failed(&statement) {
+                error_start = statement.2;
+                error_end = statement.3;
+                error_code = statement.4;
+                parsing = false;
+            } else {
+                let next: i64 = statement.1;
+                if next <= pos {
+                    error_start = record.1;
+                    error_end = record.2;
+                    error_code = 99;
+                    parsing = false;
+                } else {
+                    pos = next;
+                }
+            }
+        }
+    }
+    return (ast, error_start, error_end, error_code);
+}
+
+fn parse_result_ast(result: &ParseResult) -> ptr<i64> {
+    return result.0;
+}
+
+fn parse_result_ok(result: &ParseResult) -> bool {
+    return result.3 == 0;
+}
+
+fn format_parse_error(source: &Str, path: &Str, result: &ParseResult) -> Str {
+    let code_value: i64 = result.3;
+    let span = source_span(source, result.1, result.2);
+    let code = parse_error_name(code_value);
+    let message = parse_error_message(code_value);
+    let label = parse_error_label(code_value);
+    return format_error(source, path, &code, &message, &label, span);
+}

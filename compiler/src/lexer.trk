@@ -341,6 +341,9 @@ fn lex_next(src: &Str, pos: i64) -> (Token, i64) {
     if char_is_digit(ch) {
         return lex_number(src, p0);
     }
+    if ch == 95 && !is_ident_continue(ch2) {
+        return (Token::Underscore, p0 + 1);
+    }
     if is_ident_start(ch) {
         return lex_ident(src, p0);
     }
@@ -469,6 +472,134 @@ fn lex_next_spanned(src: &Str, pos: i64) -> (Token, i64, i64) {
     let start = skip_ws_and_comments(src, pos);
     let (token, next) = lex_next(src, pos);
     return (token, start, next);
+}
+
+// Stable parser token record: (tag, start byte, end byte, next byte).
+// Payloads are recovered from the source span, avoiding ABI coupling between
+// tagged-union payloads and the bootstrap parser's object files.
+type TokenRecord = (i64, i64, i64, i64);
+
+fn token_tag_eof() -> i64 { return 0; }
+fn token_tag_let() -> i64 { return 3; }
+fn token_tag_mut() -> i64 { return 4; }
+fn token_tag_return() -> i64 { return 7; }
+fn token_tag_true() -> i64 { return 13; }
+fn token_tag_false() -> i64 { return 14; }
+fn token_tag_int() -> i64 { return 32; }
+fn token_tag_string() -> i64 { return 33; }
+fn token_tag_identifier() -> i64 { return 34; }
+fn token_tag_eq() -> i64 { return 35; }
+fn token_tag_bang() -> i64 { return 38; }
+fn token_tag_lparen() -> i64 { return 41; }
+fn token_tag_rparen() -> i64 { return 42; }
+fn token_tag_semicolon() -> i64 { return 50; }
+fn token_tag_underscore() -> i64 { return 53; }
+fn token_tag_star() -> i64 { return 56; }
+fn token_tag_plus() -> i64 { return 57; }
+fn token_tag_minus() -> i64 { return 58; }
+fn token_tag_slash() -> i64 { return 59; }
+fn token_tag_percent() -> i64 { return 60; }
+
+fn token_text_tag(text: &Str) -> i64 {
+    if str_eq(text, "import") { return 1; }
+    if str_eq(text, "use") { return 2; }
+    if str_eq(text, "let") { return 3; }
+    if str_eq(text, "mut") { return 4; }
+    if str_eq(text, "with") { return 5; }
+    if str_eq(text, "fn") { return 6; }
+    if str_eq(text, "return") { return 7; }
+    if str_eq(text, "if") { return 8; }
+    if str_eq(text, "else") { return 9; }
+    if str_eq(text, "while") { return 10; }
+    if str_eq(text, "for") { return 11; }
+    if str_eq(text, "in") { return 12; }
+    if str_eq(text, "true") { return 13; }
+    if str_eq(text, "false") { return 14; }
+    if str_eq(text, "struct") { return 15; }
+    if str_eq(text, "enum") { return 16; }
+    if str_eq(text, "union") { return 17; }
+    if str_eq(text, "match") { return 18; }
+    if str_eq(text, "as") { return 19; }
+    if str_eq(text, "const") { return 21; }
+    if str_eq(text, "type") { return 22; }
+    if str_eq(text, "u8") { return 23; }
+    if str_eq(text, "i8") { return 24; }
+    if str_eq(text, "i32") { return 25; }
+    if str_eq(text, "u32") { return 26; }
+    if str_eq(text, "i64") { return 27; }
+    if str_eq(text, "u64") { return 28; }
+    if str_eq(text, "bool") { return 29; }
+    if str_eq(text, "void") { return 30; }
+    if str_eq(text, "ptr") { return 31; }
+    if str_eq(text, "_") { return 53; }
+    return 34;
+}
+
+fn token_symbol_tag(ch: u8, ch2: u8) -> i64 {
+    if ch == 61 && ch2 == 61 { return 36; }
+    if ch == 61 && ch2 == 62 { return 49; }
+    if ch == 33 && ch2 == 61 { return 37; }
+    if ch == 58 && ch2 == 58 { return 47; }
+    if ch == 45 && ch2 == 62 { return 48; }
+    if ch == 46 && ch2 == 46 { return 51; }
+    if ch == 60 && ch2 == 61 { return 63; }
+    if ch == 62 && ch2 == 61 { return 64; }
+    if ch == 38 && ch2 == 38 { return 65; }
+    if ch == 124 && ch2 == 124 { return 66; }
+    if ch == 60 && ch2 == 60 { return 67; }
+    if ch == 62 && ch2 == 62 { return 68; }
+    if ch == 61 { return 35; }
+    if ch == 33 { return 38; }
+    if ch == 123 { return 39; }
+    if ch == 125 { return 40; }
+    if ch == 40 { return 41; }
+    if ch == 41 { return 42; }
+    if ch == 91 { return 43; }
+    if ch == 93 { return 44; }
+    if ch == 44 { return 45; }
+    if ch == 58 { return 46; }
+    if ch == 59 { return 50; }
+    if ch == 46 { return 52; }
+    if ch == 38 { return 54; }
+    if ch == 124 { return 55; }
+    if ch == 95 { return 53; }
+    if ch == 42 { return 56; }
+    if ch == 43 { return 57; }
+    if ch == 45 { return 58; }
+    if ch == 47 { return 59; }
+    if ch == 37 { return 60; }
+    if ch == 60 { return 61; }
+    if ch == 62 { return 62; }
+    if ch == 64 { return 69; }
+    return -1;
+}
+
+fn lex_next_record(src: &Str, pos: i64) -> TokenRecord {
+    let (_token, start, end) = lex_next_spanned(src, pos);
+    let length: i64 = str_len(src);
+    if start >= length {
+        return (token_tag_eof(), start, end, end);
+    }
+    let ch = str_char_at(src, start);
+    let ch2 = str_char_at(src, start + 1);
+    if char_is_digit(ch) {
+        return (token_tag_int(), start, end, end);
+    }
+    if ch == 34 {
+        return (token_tag_string(), start, end, end);
+    }
+    if is_ident_start(ch) {
+        let text = str_substr(src, start, end - start);
+        let tag = token_text_tag(&text);
+        return (tag, start, end, end);
+    }
+    if ch == 64 {
+        let macro_text = str_substr(src, start, end - start);
+        if str_eq(&macro_text, "@macro") {
+            return (20, start, end, end);
+        }
+    }
+    return (token_symbol_tag(ch, ch2), start, end, end);
 }
 
 fn is_eof_token(tok: Token) -> bool {
