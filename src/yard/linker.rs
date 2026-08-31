@@ -19,11 +19,17 @@ impl LinkerEngine {
     /// Compile and cache the C runtime helper object file into target directory.
     pub fn get_or_compile_runtime(target_dir: &Path) -> Result<PathBuf, String> {
         let runtime_obj_path = target_dir.join("_track_runtime.o");
-        if runtime_obj_path.exists() {
+        let runtime_hash_path = target_dir.join("_track_runtime.hash");
+        let runtime_hash = crate::yard::cache::BuildCache::compute_hash(crate::RUNTIME_C_SOURCE);
+        if runtime_obj_path.exists()
+            && fs::read_to_string(&runtime_hash_path)
+                .is_ok_and(|cached_hash| cached_hash.trim() == runtime_hash)
+        {
             return Ok(runtime_obj_path);
         }
 
         let runtime_c_path = target_dir.join("_track_runtime.c");
+        let runtime_obj_temp_path = target_dir.join("_track_runtime.o.tmp");
         fs::write(&runtime_c_path, crate::RUNTIME_C_SOURCE)
             .map_err(|e| format!("Failed to write runtime helper source: {}", e))?;
 
@@ -31,7 +37,7 @@ impl LinkerEngine {
             .arg("-c")
             .arg(&runtime_c_path)
             .arg("-o")
-            .arg(&runtime_obj_path)
+            .arg(&runtime_obj_temp_path)
             .arg("-O3")
             .status()
             .map_err(|e| format!("Failed to compile runtime helper: {}", e))?;
@@ -39,11 +45,17 @@ impl LinkerEngine {
         let _ = fs::remove_file(&runtime_c_path);
 
         if !status.success() {
+            let _ = fs::remove_file(&runtime_obj_temp_path);
             return Err(format!(
                 "Runtime helper compilation failed with code: {:?}",
                 status.code()
             ));
         }
+
+        fs::rename(&runtime_obj_temp_path, &runtime_obj_path)
+            .map_err(|e| format!("Failed to install runtime helper object: {}", e))?;
+        fs::write(&runtime_hash_path, runtime_hash)
+            .map_err(|e| format!("Failed to write runtime helper cache key: {}", e))?;
 
         Ok(runtime_obj_path)
     }

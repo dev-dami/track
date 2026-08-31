@@ -468,6 +468,14 @@ impl ParallelBuilder {
                         }
                     }
                 }
+                // Preserve non-source fixtures beside the temporary package so
+                // native tests can load golden inputs and outputs by a stable,
+                // project-relative path. `.trk` files remain test entry points
+                // and are deliberately not staged as fixtures.
+                let fixture_dir = project_root.join("tests").join("fixtures");
+                if fixture_dir.exists() {
+                    copy_test_fixtures(&fixture_dir, &tmp_root.join("tests/fixtures"))?;
+                }
                 // Also copy any src subdirs that are not tests (conservative: skip)
                 // Write the test file itself as src/main.trk (entry point)
                 let test_src = fs::read_to_string(test_file).map_err(|e| {
@@ -500,6 +508,7 @@ impl ParallelBuilder {
                 .join("target")
                 .join(format!("{}_test", manifest.package.name));
             let status = process::Command::new(&exe_path)
+                .current_dir(&tmp_root)
                 .status()
                 .map_err(|e| format!("Failed to run '{}': {}", exe_path.display(), e));
             let _ = fs::remove_dir_all(&tmp_root);
@@ -522,6 +531,40 @@ impl ParallelBuilder {
         println!("✓ All {} Track test(s) passed", test_files.len());
         Ok(())
     }
+}
+
+fn copy_test_fixtures(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|e| {
+        format!(
+            "Failed to create fixture directory '{}': {}",
+            destination.display(),
+            e
+        )
+    })?;
+    for entry in fs::read_dir(source).map_err(|e| {
+        format!(
+            "Failed to read fixture directory '{}': {}",
+            source.display(),
+            e
+        )
+    })? {
+        let entry = entry.map_err(|e| format!("Fixture directory entry error: {}", e))?;
+        let path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if path.is_dir() {
+            copy_test_fixtures(&path, &destination_path)?;
+        } else if path.extension().is_none_or(|extension| extension != "trk") {
+            fs::copy(&path, &destination_path).map_err(|e| {
+                format!(
+                    "Failed to copy fixture '{}' to '{}': {}",
+                    path.display(),
+                    destination_path.display(),
+                    e
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn find_trk_files(dir: &Path) -> Result<Vec<PathBuf>, String> {

@@ -117,10 +117,13 @@ values that live on the call stack and are passed around explicitly.
 ---
 
 ### v0.8.0a — Native Compiler Foundations ⏳ IN PROGRESS
-- **Lexer parity gate**: native lexer recognizes every host reserved word and
+- **Lexer parity gate** ✅: native lexer recognizes every host reserved word and
   primitive type before parser work begins; native tests prevent regressions.
-- **Compiler representation**: introduce source spans, diagnostics, AST and
-  collection modules under `compiler/src/` as independently testable units.
+- **Source spans and diagnostics** ✅: normalized end-exclusive byte spans,
+  one-based source positions, deterministic code-frame formatting, and native
+  golden fixtures are implemented under `compiler/src/` and `compiler/tests/`.
+- **Remaining compiler representation**: introduce AST and collection modules
+  under `compiler/src/` as independently testable units.
 - **Backend contract**: the self-hosted compiler emits portable C as its first
   backend and invokes the platform C compiler through the existing explicit OS
   process API. Cranelift remains the bootstrap compiler backend, not a library

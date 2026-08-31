@@ -1,0 +1,69 @@
+import "source_span";
+import "diagnostic";
+
+fn assert_string(actual: &Str, expected: &Str) -> void {
+    let equal = str_eq(actual, expected);
+    if !equal {
+        eprint("diagnostic output did not match golden fixture");
+        eprint(actual);
+        abort("diagnostic string assertion failed");
+    }
+}
+
+fn read_fixture(path: &Str) -> Str {
+    let file = file_open(path, "r");
+    return file_read_all(file);
+}
+
+fn test_error_golden_output() -> void {
+    let source = read_fixture("tests/fixtures/diagnostic-source.txt");
+    let expected_fixture = read_fixture("tests/fixtures/diagnostic-error.txt");
+    let expected = str_trim(&expected_fixture);
+    let span = source_span(&source, 32, 33);
+    let actual = format_error(
+        &source,
+        "fixture.trk",
+        "E1001",
+        "expected expression",
+        "expression required after '='",
+        span
+    );
+    assert_string(&actual, &expected);
+}
+
+fn test_multiline_span_stays_on_primary_line() -> void {
+    let source = "let value = broken\nnext line";
+    let span = source_span(&source, 12, 25);
+    let actual = format_warning(
+        &source,
+        "multi.trk",
+        "W2001",
+        "multiline selection",
+        "starts here",
+        span
+    );
+    let expected = "warning[W2001]: multiline selection\n --> multi.trk:1:13\n  |\n1 | let value = broken\n  |             ^^^^^^ starts here";
+    assert_string(&actual, &expected);
+}
+
+fn test_gutter_scales_for_multidigit_lines() -> void {
+    let source = "1\n2\n3\n4\n5\n6\n7\n8\n9\nbad";
+    let span = source_span(&source, 18, 21);
+    let actual = format_error(
+        &source,
+        "ten.trk",
+        "E1002",
+        "bad value",
+        "replace this value",
+        span
+    );
+    let expected = "error[E1002]: bad value\n --> ten.trk:10:1\n   |\n10 | bad\n   | ^^^ replace this value";
+    assert_string(&actual, &expected);
+}
+
+fn main() -> void {
+    test_error_golden_output();
+    test_multiline_span_stays_on_primary_line();
+    test_gutter_scales_for_multidigit_lines();
+    print("ok");
+}

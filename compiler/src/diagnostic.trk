@@ -1,0 +1,104 @@
+// diagnostic.trk — deterministic, allocation-explicit compiler diagnostics.
+// The formatter is intentionally terminal-neutral: no ANSI escapes and no
+// environment-dependent paths, so golden output remains byte-for-byte stable.
+
+import "source_span";
+
+fn append_text(base: Str, suffix: &Str) -> Str {
+    return str_concat(&base, suffix);
+}
+
+fn repeat_text(text: &Str, count: i64) -> Str {
+    let mut output = "";
+    let mut index: i64 = 0;
+    while index < count {
+        output = append_text(output, text);
+        index = index + 1;
+    }
+    return output;
+}
+
+fn diagnostic_header(severity: &Str, code: &Str, message: &Str) -> Str {
+    let mut output = str_concat(severity, "[");
+    output = append_text(output, code);
+    output = append_text(output, "]: ");
+    output = append_text(output, message);
+    return output;
+}
+
+fn format_diagnostic(
+    source: &Str,
+    path: &Str,
+    severity: &Str,
+    code: &Str,
+    message: &Str,
+    label: &Str,
+    span: SourceSpan
+) -> Str {
+    let start: i64 = span.0;
+    let line: i64 = span.2;
+    let column: i64 = span.3;
+    let (line_start, line_end) = source_line_bounds(source, start);
+    let line_length = line_end - line_start;
+    let source_line = str_substr(source, line_start, line_length);
+
+    let mut highlight_width = source_span_width(&span);
+    let remaining_on_line = line_end - start;
+    if highlight_width > remaining_on_line {
+        highlight_width = remaining_on_line;
+    }
+    if highlight_width < 1 {
+        highlight_width = 1;
+    }
+
+    let line_text = int_to_str(line);
+    let column_text = int_to_str(column);
+    let gutter_width: i64 = str_len(&line_text);
+    let gutter_padding = repeat_text(" ", gutter_width);
+    let padding = repeat_text(" ", column - 1);
+    let carets = repeat_text("^", highlight_width);
+
+    let mut output = diagnostic_header(severity, code, message);
+    output = append_text(output, "\n --> ");
+    output = append_text(output, path);
+    output = append_text(output, ":");
+    output = append_text(output, &line_text);
+    output = append_text(output, ":");
+    output = append_text(output, &column_text);
+    output = append_text(output, "\n");
+    output = append_text(output, &gutter_padding);
+    output = append_text(output, " |\n");
+    output = append_text(output, &line_text);
+    output = append_text(output, " | ");
+    output = append_text(output, &source_line);
+    output = append_text(output, "\n");
+    output = append_text(output, &gutter_padding);
+    output = append_text(output, " | ");
+    output = append_text(output, &padding);
+    output = append_text(output, &carets);
+    output = append_text(output, " ");
+    output = append_text(output, label);
+    return output;
+}
+
+fn format_error(
+    source: &Str,
+    path: &Str,
+    code: &Str,
+    message: &Str,
+    label: &Str,
+    span: SourceSpan
+) -> Str {
+    return format_diagnostic(source, path, "error", code, message, label, span);
+}
+
+fn format_warning(
+    source: &Str,
+    path: &Str,
+    code: &Str,
+    message: &Str,
+    label: &Str,
+    span: SourceSpan
+) -> Str {
+    return format_diagnostic(source, path, "warning", code, message, label, span);
+}

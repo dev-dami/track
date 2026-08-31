@@ -463,6 +463,14 @@ fn lex_next(src: &Str, pos: i64) -> (Token, i64) {
     return (Token::Unknown, p0 + 1);
 }
 
+// Parser-facing API: preserves the token's end-exclusive byte range while
+// retaining the existing two-value lexer API for v0.7 callers.
+fn lex_next_spanned(src: &Str, pos: i64) -> (Token, i64, i64) {
+    let start = skip_ws_and_comments(src, pos);
+    let (token, next) = lex_next(src, pos);
+    return (token, start, next);
+}
+
 fn is_eof_token(tok: Token) -> bool {
     let mut out = false;
     match tok {

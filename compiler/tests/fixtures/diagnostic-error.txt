@@ -1,0 +1,5 @@
+error[E1001]: expected expression
+ --> fixture.trk:2:13
+  |
+2 | let value = ;
+  |             ^ expression required after '='

@@ -137,6 +137,33 @@ void str_free(Str s) {
         free(s.data);
     }
 }
+Str str_from_literal(const char* raw) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    if (!raw) return s;
+    s.len = (int)strlen(raw);
+    s.data = (char*)malloc((size_t)s.len + 1);
+    if (!s.data) return s;
+    memcpy(s.data, raw, (size_t)s.len + 1);
+    return s;
+}
+Str str_concat(const char* a, const char* b) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    size_t a_len = a ? strlen(a) : 0;
+    size_t b_len = b ? strlen(b) : 0;
+    if (a_len > SIZE_MAX - b_len - 1) return s;
+    size_t len = a_len + b_len;
+    s.data = (char*)malloc(len + 1);
+    if (!s.data) return s;
+    if (a_len > 0) memcpy(s.data, a, a_len);
+    if (b_len > 0) memcpy(s.data + a_len, b, b_len);
+    s.data[len] = '\0';
+    s.len = (int)len;
+    return s;
+}
 void* file_open(const char* path, const char* mode) {
     return (void*)fopen(path, mode);
 }
@@ -144,6 +171,34 @@ void file_close(void* f) {
     if (f) {
         fclose((FILE*)f);
     }
+}
+Str file_read_all(void* handle) {
+    Str s;
+    s.data = NULL;
+    s.len = 0;
+    FILE* f = (FILE*)handle;
+    if (!f) return s;
+    if (fseek(f, 0, SEEK_END) != 0) return s;
+    long end = ftell(f);
+    if (end < 0 || fseek(f, 0, SEEK_SET) != 0) return s;
+    size_t len = (size_t)end;
+    s.data = (char*)malloc(len + 1);
+    if (!s.data) return s;
+    size_t read = fread(s.data, 1, len, f);
+    if (read < len && ferror(f)) {
+        free(s.data);
+        s.data = NULL;
+        return s;
+    }
+    s.data[read] = '\0';
+    s.len = (int)read;
+    return s;
+}
+int file_write(void* handle, const char* content) {
+    FILE* f = (FILE*)handle;
+    if (!f || !content) return -1;
+    size_t len = strlen(content);
+    return fwrite(content, 1, len, f) == len ? 0 : -1;
 }
 int file_exists(const char* path) {
     return access(path, F_OK) == 0 ? 1 : 0;

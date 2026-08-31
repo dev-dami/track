@@ -1,0 +1,96 @@
+// source_span.trk — byte-offset and source-location primitives for trackc.
+//
+// SourceSpan layout:
+//   (start byte, end byte, start line, start column, end line, end column)
+// Offsets are zero-based and end-exclusive. Lines and columns are one-based.
+
+type SourcePosition = (i64, i64);
+type SourceSpan = (i64, i64, i64, i64, i64, i64);
+
+fn clamp_source_offset(source: &Str, offset: i64) -> i64 {
+    if offset < 0 {
+        return 0;
+    }
+    let length: i64 = str_len(source);
+    if offset > length {
+        return length;
+    }
+    return offset;
+}
+
+fn source_position_at(source: &Str, offset: i64) -> SourcePosition {
+    let target = clamp_source_offset(source, offset);
+    let mut current: i64 = 0;
+    let mut line: i64 = 1;
+    let mut column: i64 = 1;
+    while current < target {
+        let ch = str_char_at(source, current);
+        if ch == 10 {
+            line = line + 1;
+            column = 1;
+        } else {
+            column = column + 1;
+        }
+        current = current + 1;
+    }
+    return (line, column);
+}
+
+fn source_span(source: &Str, start: i64, end: i64) -> SourceSpan {
+    let safe_start = clamp_source_offset(source, start);
+    let mut safe_end = clamp_source_offset(source, end);
+    if safe_end < safe_start {
+        safe_end = safe_start;
+    }
+    let (start_line, start_column) = source_position_at(source, safe_start);
+    let (end_line, end_column) = source_position_at(source, safe_end);
+    return (safe_start, safe_end, start_line, start_column, end_line, end_column);
+}
+
+fn source_span_width(span: &SourceSpan) -> i64 {
+    let start = span.0;
+    let end = span.1;
+    if end <= start {
+        return 1;
+    }
+    return end - start;
+}
+
+fn source_span_contains(span: &SourceSpan, offset: i64) -> bool {
+    let start = span.0;
+    let end = span.1;
+    if offset < start {
+        return false;
+    }
+    if offset >= end {
+        return false;
+    }
+    return true;
+}
+
+fn source_line_bounds(source: &Str, offset: i64) -> (i64, i64) {
+    let target = clamp_source_offset(source, offset);
+    let length: i64 = str_len(source);
+    let mut line_start: i64 = target;
+    let mut finding_start = true;
+    while line_start > 0 && finding_start {
+        let previous = str_char_at(source, line_start - 1);
+        if previous == 10 {
+            finding_start = false;
+        } else {
+            line_start = line_start - 1;
+        }
+    }
+
+    let mut line_end: i64 = target;
+    let mut finding_end = true;
+    while line_end < length && finding_end {
+        let current = str_char_at(source, line_end);
+        if current == 10 {
+            finding_end = false;
+        } else {
+            line_end = line_end + 1;
+        }
+    }
+    return (line_start, line_end);
+}

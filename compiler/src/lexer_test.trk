@@ -88,6 +88,16 @@ fn test_lex_next_kind() -> void {
     assert_eq_i64(c, 1);
 }
 
+fn test_lex_next_spanned_skips_trivia() -> void {
+    let src = "  // lead\nlet";
+    let (tok, start, end) = lex_next_spanned(&src, 0);
+    let kind = token_kind_name(tok);
+    let is_let = str_eq(&kind, "Let");
+    assert_eq_bool(is_let, true);
+    assert_eq_i64(start, 10);
+    assert_eq_i64(end, 13);
+}
+
 fn main() -> void {
     test_simple_let();
     test_import();
@@ -99,5 +109,6 @@ fn main() -> void {
     test_shift();
     test_string_and_comment();
     test_lex_next_kind();
+    test_lex_next_spanned_skips_trivia();
     print("ok");
 }

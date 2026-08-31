@@ -435,14 +435,13 @@ impl<'a> FnContext<'a> {
 
             Expr::Variable(name) => {
                 if name.contains("::") {
-                    let parts: Vec<&str> = name.split("::").collect();
-                    let variant_name = parts[1];
-                    let disc = match variant_name {
-                        "Red" | "Active" | "Int" | "Ok" => 0i64,
-                        "Green" | "Locked" | "Float" | "Err" => 1i64,
-                        "Blue" | "Spent" | "Bool" => 2i64,
-                        _ => 0i64,
-                    };
+                    let variant_name = name.rsplit("::").next().unwrap_or(name);
+                    let disc = self
+                        .variant_map
+                        .get(name)
+                        .or_else(|| self.variant_map.get(variant_name))
+                        .copied()
+                        .unwrap_or(0);
                     Some(builder.ins().iconst(ir::types::I64, disc))
                 } else if let Some(&var) = self.var_map.get(name) {
                     Some(builder.use_var(var))
