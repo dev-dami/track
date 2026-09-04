@@ -167,3 +167,102 @@ fn test_yard_build_generics_project() {
     assert!(lint.is_ok());
     let _ = fs::remove_dir_all(&td);
 }
+
+#[test]
+fn test_yard_nested_modules_have_isolated_stable_artifacts() {
+    let root = env::temp_dir().join(format!("track_yard_artifacts_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let manifest = Manifest::new("artifacts");
+    fs::create_dir_all(root.join("src/left")).unwrap();
+    fs::create_dir_all(root.join("src/right")).unwrap();
+    for (path, source) in [
+        ("main.trk", "fn main() -> void { print(42); }"),
+        ("left/helper.trk", "fn left_helper() -> i32 { return 10; }"),
+        (
+            "right/helper.trk",
+            "fn right_helper() -> i32 { return 20; }",
+        ),
+        (
+            "_track_runtime.trk",
+            "fn user_runtime() -> i32 { return 30; }",
+        ),
+    ] {
+        fs::write(root.join("src").join(path), source).unwrap();
+    }
+
+    let build = || track::yard::builder::ParallelBuilder::build(&root, &manifest).unwrap();
+    build();
+    let objects: Vec<_> = [
+        "main.o",
+        "left/helper.o",
+        "right/helper.o",
+        "_track_runtime.o",
+    ]
+    .iter()
+    .map(|name| root.join("target/objects").join(name))
+    .collect();
+    let original_objects: Vec<_> = objects.iter().map(|path| fs::read(path).unwrap()).collect();
+    assert_ne!(original_objects[1], original_objects[2]);
+    assert!(root.join("target/_track_runtime.o").exists());
+    let metadata_path = root.join("target/.cache_meta.json");
+    let metadata = fs::read(&metadata_path).unwrap();
+
+    // Warm builds must preserve objects as well as serialized metadata.
+    let modified: Vec<_> = objects
+        .iter()
+        .map(|p| fs::metadata(p).unwrap().modified().unwrap())
+        .collect();
+    build();
+    assert_eq!(metadata, fs::read(&metadata_path).unwrap());
+    for (path, before) in objects.iter().zip(modified) {
+        assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), before);
+    }
+
+    // A clean build must recreate the same artifact names and metadata.
+    fs::remove_dir_all(root.join("target")).unwrap();
+    build();
+    assert_eq!(metadata, fs::read(&metadata_path).unwrap());
+    for path in &objects {
+        assert!(path.is_file(), "missing {}", path.display());
+    }
+    let output = std::process::Command::new(root.join("target/artifacts"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "42");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_yard_build_errors_follow_source_order() {
+    let root = env::temp_dir().join(format!("track_yard_error_order_{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    for name in ["z.trk", "a.trk"] {
+        fs::write(root.join("src").join(name), "fn invalid( {").unwrap();
+    }
+    let manifest = Manifest::new("errors");
+    for _ in 0..4 {
+        let error = track::yard::builder::ParallelBuilder::build(&root, &manifest).unwrap_err();
+        assert!(error.contains("a.trk"), "unexpected first error: {error}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_yard_dependency_resolution_is_sorted() {
+    use track::yard::{manifest::Dependency, resolver};
+    let mut manifest = Manifest::new("ordered");
+    for name in ["zebra", "alpha", "middle"] {
+        manifest
+            .dependencies
+            .insert(name.into(), Dependency::Simple("1.0".into()));
+    }
+    let dependencies = resolver::resolve(&manifest, std::path::Path::new(".")).unwrap();
+    assert_eq!(
+        dependencies
+            .iter()
+            .map(|dep| dep.name.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "middle", "zebra"]
+    );
+}

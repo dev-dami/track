@@ -129,8 +129,10 @@ values that live on the call stack and are passed around explicitly.
   backend and invokes the platform C compiler through the existing explicit OS
   process API. Cranelift remains the bootstrap compiler backend, not a library
   to reimplement in Track.
-- **Bootstrap determinism**: define stable module order, generated-file names,
-  and build metadata before the Stage 0 build is added.
+- **Bootstrap build ordering and artifacts** ✅: Yard sorts module discovery,
+  dependency resolution, build failures, link inputs, and cache metadata.
+  Source-relative object paths prevent duplicate module basenames from racing
+  or colliding with the runtime. Stage 2/3 binary identity remains the v0.9.0 gate.
 
 ### v0.8.0b — Native Parser ⏳ PLANNED
 - **Native Parser**:

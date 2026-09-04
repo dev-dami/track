@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BuildCache {
-    pub entries: HashMap<String, String>, // relative path -> content hash
+    pub entries: BTreeMap<String, String>, // sorted relative path -> content hash
 }
 
 impl BuildCache {

@@ -91,12 +91,19 @@ impl ParallelBuilder {
             let source = fs::read_to_string(&trk_file)
                 .map_err(|e| format!("Failed to read '{}': {}", trk_file.display(), e))?;
 
-            let stem = trk_file
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let obj_path = target_dir.join(format!("{}.o", stem));
+            // Preserve module paths in a separate namespace so equal basenames
+            // cannot race with each other or overwrite the runtime object.
+            let module_path = trk_file
+                .strip_prefix(&src_dir)
+                .map_err(|e| format!("Invalid source path '{}': {}", trk_file.display(), e))?;
+            let obj_path = target_dir
+                .join("objects")
+                .join(module_path)
+                .with_extension("o");
+            if let Some(parent) = obj_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create object directory: {}", e))?;
+            }
 
             let (hash, is_cached) = if !obj_path.exists() {
                 let hash = BuildCache::compute_hash(&source);
@@ -144,7 +151,7 @@ impl ParallelBuilder {
                         lock.pop()
                     };
 
-                    let (_idx, task) = match task_option {
+                    let (idx, task) = match task_option {
                         Some(t) => t,
                         None => break,
                     };
@@ -153,11 +160,11 @@ impl ParallelBuilder {
                         results
                             .lock()
                             .unwrap()
-                            .push(Ok((task.rel_path, task.hash, task.obj_path)));
+                            .push((idx, Ok((task.rel_path, task.hash, task.obj_path))));
                         continue;
                     }
 
-                    // Compile file: Lex -> Parse -> LinearCheck -> LLVM Codegen
+                    // Compile file: Lex -> Parse -> LinearCheck -> Cranelift Codegen
                     let res = (|| -> Result<(String, String, PathBuf), String> {
                         let tokens = crate::lexer::Lexer::tokenize(&task.source)
                             .map_err(|e| format!("{}: {}", task.trk_file.display(), e))?;
@@ -189,7 +196,7 @@ impl ParallelBuilder {
                         Ok((task.rel_path, task.hash, task.obj_path))
                     })();
 
-                    results.lock().unwrap().push(res);
+                    results.lock().unwrap().push((idx, res));
                 }
             });
 
@@ -203,12 +210,14 @@ impl ParallelBuilder {
         }
 
         let mut obj_files = Vec::new();
-        let compiled_results = match Arc::try_unwrap(results) {
+        let mut compiled_results = match Arc::try_unwrap(results) {
             Ok(mutex) => mutex.into_inner().unwrap_or_default(),
             Err(arc) => arc.lock().unwrap().clone(),
         };
 
-        for res in compiled_results {
+        // Report the first source-order failure, independent of worker timing.
+        compiled_results.sort_by_key(|(idx, _)| *idx);
+        for (_, res) in compiled_results {
             match res {
                 Ok((rel_path, hash, obj_path)) => {
                     cache.update(rel_path, hash);
@@ -219,7 +228,7 @@ impl ParallelBuilder {
         }
 
         // Save build cache metadata
-        let _ = cache.save(&target_dir);
+        cache.save(&target_dir)?;
 
         // Sort obj_files deterministically for reproducible links
         obj_files.sort();
@@ -346,7 +355,8 @@ impl ParallelBuilder {
             let _ = handle.join();
         }
 
-        let errs = Arc::try_unwrap(errors).unwrap().into_inner().unwrap();
+        let mut errs = Arc::try_unwrap(errors).unwrap().into_inner().unwrap();
+        errs.sort();
 
         if errs.is_empty() {
             println!(

@@ -85,3 +85,29 @@ Every parser failure returns an error code and end-exclusive byte range that
 feeds directly into the Phase 2 diagnostic formatter. The complete Track
 grammar—including functions, blocks, types, control flow, aggregates, and
 patterns—remains the v0.8.0b parser milestone.
+
+## Bootstrap build ordering and artifacts
+
+Yard's build-order and artifact-naming milestone is complete:
+
+- Source modules are discovered in sorted path order; dependency resolution
+  follows dependency-name order. Parallel build failures are reported in source
+  order, and `yard check` sorts diagnostics before printing them.
+- Each source-relative module path maps to `target/objects/<module>.o`.
+  For example, `src/lexer/helpers.trk` becomes
+  `target/objects/lexer/helpers.o`. This preserves nested module identity and
+  separates user objects from `target/_track_runtime.o`.
+- The linker receives sorted object paths followed by the runtime object.
+- `.cache_meta.json` serializes source keys in sorted order, with no timestamps
+  or worker-order metadata. Cache-write failures fail the build explicitly.
+  Existing JSON cache files remain readable; the new object paths force a
+  rebuild when migrating from the old flat artifact layout.
+
+The regression gate is `cargo test --test yard_tests`. It covers colliding
+basenames, a user module named `_track_runtime.trk`, warm-cache reuse, stable
+metadata after a clean build, and execution of the linked binary. These
+guarantees concern build ordering and artifact identity; byte-for-byte native
+binary reproducibility across toolchains or Stage 2/3 remains a separate gate.
+
+The remaining v0.8.0a exit criterion is the native C-emitter interface and its
+external compiler invocation contract.

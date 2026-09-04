@@ -19,7 +19,9 @@ pub enum DepSource {
 pub fn resolve(manifest: &Manifest, project_root: &Path) -> Result<Vec<ResolvedDep>, String> {
     let mut resolved = Vec::new();
 
-    for (name, dep) in &manifest.dependencies {
+    let mut dependencies: Vec<_> = manifest.dependencies.iter().collect();
+    dependencies.sort_by_key(|(name, _)| *name);
+    for (name, dep) in dependencies {
         match dep {
             Dependency::Simple(version) => {
                 // Registry dependency — not yet implemented

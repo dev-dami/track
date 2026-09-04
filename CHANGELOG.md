@@ -5,6 +5,15 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Yard preserves source-relative paths under `target/objects/`, preventing nested modules with the same basename from overwriting each other or the runtime object.
+- Parallel build failures, check diagnostics, dependency resolution, and build-cache serialization now use stable ordering. Cache-save errors are propagated.
+
+### Added
+- Build-determinism regression coverage for duplicate basenames, runtime-name collisions, incremental reuse, clean-build metadata, and error ordering.
+
 ## [0.7.0] — 2026-08-23
 
 ### Added
