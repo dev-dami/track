@@ -5,14 +5,68 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] — 2026-10-30
 
-### Fixed
-- Yard preserves source-relative paths under `target/objects/`, preventing nested modules with the same basename from overwriting each other or the runtime object.
-- Parallel build failures, check diagnostics, dependency resolution, and build-cache serialization now use stable ordering. Cache-save errors are propagated.
+Track is self-hosting. `trackc`, the compiler in `compiler/`, is written
+entirely in Track and reaches a bootstrap fixed point: the Rust-built and
+Track-built compilers emit byte-identical C, and the stage 2 and stage 3
+executables are byte-identical (`scripts/bootstrap.sh`, gated in CI).
 
 ### Added
-- Build-determinism regression coverage for duplicate basenames, runtime-name collisions, incremental reuse, clean-build metadata, and error ordering.
+- **Self-hosted compiler** (`compiler/src/`): lexer, full-grammar parser,
+  whole-program module loader, ownership checker, and a portable C99 backend.
+  CLI: `trackc build | run | check | emit-c | tokens | --version`. Lexer,
+  parser, and checker errors print `error[Exxxx]` diagnostics with a source
+  frame. See [docs/bootstrap.md](docs/bootstrap.md).
+- **Shared runtime** `runtime/track_runtime.c`: one word-ABI implementation
+  linked by both compilers (embedded into `trackc` by
+  `scripts/embed_runtime.sh`). New: string builder, whole-file read/write,
+  unformatted output, collection pop/truncate, `track_str_bytes`.
+- `scripts/bootstrap.sh` (stage 0 → 3 with the fixed-point gate) and
+  `tests/selfhost_tests.rs`: fixed point, behavioural parity on every
+  example, identical accept/reject verdicts from both checkers, and the
+  native suite run under `trackc`.
+- `tests/codegen_semantics_tests.rs`: run-and-compare regressions for the
+  backend fixes below.
+
+### Fixed (Rust bootstrap compiler)
+- **Word ABI in the Cranelift backend.** Values mixed I8/I32/I64 and calls to
+  functions in other modules were declared with guessed signatures, so a
+  `bool` returned across modules could carry garbage in its upper bits and
+  C `int` results lost their sign (`file_remove` returning `-1` read as
+  `4294967295`). Every value is now a 64-bit word.
+- `os_args_count()`/`os_arg()` never saw the program arguments.
+- `&&`/`||` were bitwise (`1 && 2` was false) and did not short-circuit.
+- `return` inside a `match` arm, directly in a `while` body, or in nested
+  `if`s panicked the backend ("block already filled").
+- `if`/`match` used as expressions read values from non-dominating blocks.
+- Returning a local bound to a tuple literal returned a dangling stack slot.
+- String literal patterns compared pointers instead of contents.
+- Union payloads were lost (`Value::Int(42)` never matched `Value::Int(x)`);
+  payload unions are now `[tag, payload]` cells. Explicit enum
+  discriminants (`A = 5`) were ignored, and variant lookup used bare names,
+  so two enums sharing a variant name collided.
+- Constants compiled to `0` when used from another module, and a constant
+  declared after the function using it was reported as undeclared.
+- Variables declared inside `if`/`while`/`for`/`match`/`with` blocks leaked
+  into the enclosing scope, so shadowing changed the outer variable.
+- `let mut x` made every later `x` mutable, in any function. Mutability is now
+  lexically scoped; parameters and loop variables are immutable.
+- Assigning to an undeclared variable was silently accepted.
+- `Vec` (a 16-byte struct return truncated to its data pointer) and `math_*`
+  (declared with `double` parameters, called with integers) returned garbage.
+- `str_substr`/`str_char_at` scanned the whole string on every call.
+- Yard reused cached objects after the compiler changed or after an imported
+  module's constants changed; the cache key now covers both.
+- Yard preserves source-relative paths under `target/objects/`, preventing
+  nested modules with the same basename from overwriting each other or the
+  runtime object; build failures, check diagnostics, dependency resolution,
+  and build-cache serialization use stable ordering.
+
+### Changed
+- Version `1.0.0` for `track`, `yard`, `trackc`, and `compiler/Track.toml`.
+- `compiler/src/token.trk` and the v0.8.0a subset parser/AST were replaced by
+  the full implementation; their tests were rewritten.
 
 ## [0.7.0] — 2026-08-23
 

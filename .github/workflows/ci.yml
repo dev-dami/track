@@ -57,24 +57,25 @@ jobs:
             fi
           done
 
-      - name: Check self-hosted lexer (compiler)
+      - name: Native compiler package (yard)
         run: |
-          echo "Checking compiler package (yard)..."
+          scripts/embed_runtime.sh --check
           (cd compiler && ../target/release/yard check)
-          echo "Building compiler..."
           (cd compiler && ../target/release/yard build)
-          echo "Testing compiler (native lexer)..."
           (cd compiler && ../target/release/yard test)
-          echo "Checking compiler sources via track..."
           for f in compiler/src/*.trk; do
             echo "Checking $f..."
             ./target/release/track check "$f"
           done
 
+      - name: Bootstrap fixed point (stage0 -> stage3)
+        run: YARD=./target/release/yard scripts/bootstrap.sh
+
       - name: Verify versions
         run: |
-          ./target/release/track --version | grep -q "0.7.0"
-          ./target/release/yard --version | grep -q "0.7.0"
+          ./target/release/track --version | grep -q "1.0.0"
+          ./target/release/yard --version | grep -q "1.0.0"
+          ./build/bootstrap/stage3/trackc --version | grep -q "1.0.0"
           echo "✓ versions ok"
 
 

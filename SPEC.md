@@ -1,4 +1,4 @@
-# Track Core Language Specification (v0.6)
+# Track Core Language Specification (v1.0)
 
 Track is a low-level systems programming language designed for deterministic memory safety without a garbage collector or complex lifetime annotations.
 
@@ -140,11 +140,31 @@ Generic functions are **templates** monomorphized at call sites.
 - **Syntax**: `fn name<T, U>(x: T, y: U) -> T { ... }`.
 - **Inference**: Type parameters are inferred from argument types (variable bindings, literals). Annotate `let x: i64 = ...` when inference is ambiguous.
 - **Monomorphization**: Each distinct instantiation (`identity<i32>`, `identity<i64>`) produces a mangled concrete function (`identity__Ti32`). Call sites are rewritten; only instances are checked and emitted. No boxing, no runtime cost.
+- **Self-hosted backend**: because every value is a machine word (§11), `trackc` emits one C function per generic template; it behaves exactly like the per-instance functions of the Rust compiler.
 - **Limitations (v0.6.0)**: Generic functions are fully supported. Generic structs (`struct Stack<T>`) header-parsing is reserved for a follow-on; `Stack<T>` as a type argument is not yet monomorphized.
 
 ---
 
-## 10. Diagnostics & Error Reporting
+## 10. Mutability
+
+Bindings are immutable unless declared `let mut` (or bound by a `let mut`
+destructuring pattern). Mutability belongs to the binding: a later
+`let x = ...` shadows a mutable `x` with an immutable one, and a binding goes
+out of scope at the end of its block. Parameters, `for` loop variables, and
+lens aliases are immutable. Assigning to an undeclared name is an error.
+
+## 11. Runtime Value Model
+
+Every value is one 64-bit word: integers and booleans directly (comparisons
+and `&&`/`||` yield `0` or `1`; `&&`/`||` short-circuit), strings as
+NUL-terminated byte pointers, references as the referenced value, tuples as
+pointers to word arrays, enums as their discriminant, and values of unions
+with payload variants as heap cells `[tag, payload...]`. Arithmetic wraps,
+shift amounts are taken modulo 64, `>>` is logical, and integer division by
+zero traps. Both compilers share this model and the runtime in
+`runtime/track_runtime.c`; see [docs/bootstrap.md](docs/bootstrap.md).
+
+## 12. Diagnostics & Error Reporting
 
 Track compiler diagnostics report span location, root cause, and ownership state transitions:
 

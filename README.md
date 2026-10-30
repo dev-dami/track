@@ -96,24 +96,32 @@ yard run
 yard test
 ```
 
-### Self-Hosted Compiler (`compiler/`)
+### Self-Hosted Compiler (`trackc`)
 
-`compiler/` is a `yard` package that hosts the native Track lexer (`v0.7.0`):
+Track is self-hosting: `compiler/` is the Track compiler written in Track.
+It compiles itself to a verified fixed point.
 
 ```bash
-# Check / build the self-hosted lexer
-yard check  # in compiler/
-yard build  # -> compiler/target/trackc
-yard test   # 10 lexer tests
+# Build trackc with the Rust bootstrap compiler
+(cd compiler && yard build)          # -> compiler/target/trackc
 
-# Dump tokens for a string (oracle vs src/lexer/mod.rs)
-compiler/target/trackc "let x = 42;"
+compiler/target/trackc build examples/hello.trk -o hello
+compiler/target/trackc run examples/generics.trk
+compiler/target/trackc emit-c examples/hello.trk   # generated C on stdout
+
+# Stage 0 -> 1 -> 2 -> 3, then check the fixed point
+scripts/bootstrap.sh
 ```
+
+See [docs/bootstrap.md](docs/bootstrap.md) for the pipeline, the shared
+word-ABI runtime, and the C backend contract.
 
 ## Testing
 
 ```bash
-cargo test
+cargo test                      # Rust suites, incl. the self-hosting parity tests
+(cd compiler && yard test)      # native compiler tests
+scripts/bootstrap.sh            # bootstrap fixed point
 ```
 
 ## License
