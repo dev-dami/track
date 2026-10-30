@@ -33,5 +33,5 @@ let count = ring_count(&r);
 ## Rules
 
 - Fixed capacity — no dynamic allocation
-- Linear type — auto-freed when spent
+- Linear type — moves are tracked by the checker
 - Lock-free single producer/consumer

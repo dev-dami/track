@@ -46,7 +46,7 @@ An **Owned Linear** value has exactly one owner at any point during execution.
 A linear resource is consumed (spent) by:
 1. **Move Assignment**: `let y = x;` transfers ownership from `x` to `y`. `x` transitions to state `Spent`.
 2. **Function Call Transfer**: Passing an owned value into a function parameter transfers ownership to the callee.
-3. **Implicit Scope Cleanup**: If a linear resource remains `Active` at scope exit, the compiler automatically emits cleanup deallocation code (`vec_free`, `str_free`).
+3. **Scope Exit**: Manual frees (`free`, `str_free`, `vec_free`, `file_close`) are rejected, so a resource can never be freed twice or used after a free. In v1.0 neither compiler inserts deallocation code yet: heap memory owned by linear values is reclaimed when the process exits. Emitting frees at scope exit from the ownership analysis is planned.
 
 ### Struct Ownership & Field Move Policy
 Structs in Track are moved as **atomic units**. Moving any field or the struct itself consumes the entire struct instance, preventing use-after-free or partial double-destruction.

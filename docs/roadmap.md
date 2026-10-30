@@ -166,5 +166,7 @@ values that live on the call stack and are passed around explicitly.
   with slicing now have runtime representations in both compilers.
 
 ### Next
+- Emit deallocation at scope exit from the ownership analysis (linear values
+  are currently reclaimed at process exit).
 - Generic structs (`struct Stack<T>`), and retiring the Rust compiler once
   `yard` itself is ported.

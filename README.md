@@ -2,7 +2,7 @@
 
 **Track** is a low-level systems programming language designed for deterministic memory management, zero-cost abstractions, and real-time execution.
 
-- **No Garbage Collector, No Runtime.** Resource lifecycles are verified and freed at compile time.
+- **No Garbage Collector.** Resource lifecycles are verified at compile time; there is no collector and only a small C runtime.
 - **Linear Ownership.** Eliminates use-after-free, double-free, and memory leaks.
 - **Lexical Lenses.** Scoped mutable access without manual pointer arithmetic or ownership transfer.
 - **Cranelift Standalone Backend.** Fast native code generation without system LLVM dynamic library dependencies.
@@ -22,7 +22,7 @@ fn main() -> void {
 ```track
 import "std/io";
 
-// Linear ownership — freed automatically at spend point
+// Linear ownership — the checker rejects use after a move
 let mut v: Vec = vec_init(16);
 vec_push(&mut v, 42);
 
