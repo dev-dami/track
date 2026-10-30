@@ -23,6 +23,9 @@ pub struct LinearChecker {
     pub current_return_type: Option<TrackType>,
     pub barebones: bool,
     pub loaded_modules: std::collections::HashSet<String>,
+    /// Enum/union layouts and aliases for codegen, including imported modules.
+    pub type_info: crate::codegen::TypeInfo,
+    pub const_values: HashMap<String, i64>,
 }
 
 impl LinearChecker {
@@ -70,6 +73,8 @@ impl LinearChecker {
             current_return_type: None,
             barebones: false,
             loaded_modules: std::collections::HashSet::new(),
+            type_info: crate::codegen::TypeInfo::default(),
+            const_values: HashMap::new(),
         }
     }
 
@@ -418,10 +423,23 @@ impl LinearChecker {
 
         for stmt in program {
             match stmt {
+                Expr::ConstDef { name, value } => {
+                    if let Some(v) = crate::codegen::eval_const(&self.const_values, value) {
+                        self.const_values.insert(name.clone(), v);
+                    }
+                }
                 Expr::TypeAlias { name, target } => {
                     self.type_aliases.insert(name.clone(), target.clone());
+                    self.type_info.aliases.insert(name.clone(), target.clone());
                 }
                 Expr::EnumDef { name, variants, .. } => {
+                    for (vname, disc) in
+                        crate::codegen::enum_discriminants(&self.const_values, variants)
+                    {
+                        self.type_info
+                            .variants
+                            .insert(format!("{}::{}", name, vname), disc);
+                    }
                     for (var_name, _) in variants {
                         let fullname = format!("{}::{}", name, var_name);
                         self.types
@@ -431,6 +449,14 @@ impl LinearChecker {
                 }
                 Expr::UnionDef { name, variants } => {
                     self.unions.insert(name.clone(), variants.clone());
+                    for (idx, (vname, ty)) in variants.iter().enumerate() {
+                        self.type_info
+                            .variants
+                            .insert(format!("{}::{}", name, vname), idx as i64);
+                        if ty.is_some() {
+                            self.type_info.payload_unions.insert(name.clone());
+                        }
+                    }
                     for (var_name, ty_opt) in variants {
                         let fullname = format!("{}::{}", name, var_name);
                         if ty_opt.is_some() {

@@ -189,6 +189,7 @@ impl ParallelBuilder {
                             .unwrap_or("module");
                         let mut codegen =
                             crate::codegen::CodeGen::new_with_isa(mod_name, target_isa.clone());
+                        codegen.set_type_info(checker.type_info.clone());
                         codegen.compile_program(&program);
 
                         codegen.write_object_file(&task.obj_path)?;

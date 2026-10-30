@@ -109,7 +109,7 @@ void vec_push(Vec* v, int val) {
         v->data[v->len++] = val;
     }
 }
-int vec_get(const Vec* v, int idx) {
+long long vec_get(const Vec* v, int idx) {
     if (v && v->data && idx >= 0 && idx < v->len) {
         return v->data[idx];
     }
@@ -120,7 +120,7 @@ void vec_set(Vec* v, int idx, int val) {
         v->data[idx] = val;
     }
 }
-int vec_pop(Vec* v) {
+long long vec_pop(Vec* v) {
     if (v && v->len > 0) {
         return v->data[--v->len];
     }
@@ -194,13 +194,13 @@ Str file_read_all(void* handle) {
     s.len = (int)read;
     return s;
 }
-int file_write(void* handle, const char* content) {
+long long file_write(void* handle, const char* content) {
     FILE* f = (FILE*)handle;
     if (!f || !content) return -1;
     size_t len = strlen(content);
     return fwrite(content, 1, len, f) == len ? 0 : -1;
 }
-int file_exists(const char* path) {
+long long file_exists(const char* path) {
     return access(path, F_OK) == 0 ? 1 : 0;
 }
 long long clock_ms(void) {
@@ -273,7 +273,7 @@ long long str_to_int(const char* s) {
     return atoll(s);
 }
 // Predicate companion for str_to_int: distinguishes a genuine "0" from a parse failure.
-int str_is_int(const char* s) {
+long long str_is_int(const char* s) {
     if (!s || *s == '\0') return 0;
     const char* p = s;
     if (*p == '+' || *p == '-') p++;
@@ -293,7 +293,7 @@ Str int_to_str(long long val) {
     memcpy(s.data, buf, s.len + 1);
     return s;
 }
-int file_remove(const char* path) {
+long long file_remove(const char* path) {
     if (!path) return -1;
     return unlink(path) == 0 ? 0 : -1;
 }
@@ -320,7 +320,7 @@ unsigned long long math_random(void) {
     g_rng_state = x;
     return x;
 }
-int sys_exec(const char* cmd) {
+long long sys_exec(const char* cmd) {
     if (!cmd) return -1;
     return system(cmd);
 }
@@ -337,12 +337,12 @@ Str env_get(const char* key) {
     }
     return s;
 }
-int env_exists(const char* key) {
+long long env_exists(const char* key) {
     if (!key) return 0;
     const char* val = getenv(key);
     return val != NULL ? 1 : 0;
 }
-int net_socket_tcp_listen(int port) {
+long long net_socket_tcp_listen(int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     int opt = 1;
@@ -368,13 +368,13 @@ int net_socket_tcp_listen(int port) {
     }
     return fd;
 }
-int net_socket_accept(int server_fd) {
+long long net_socket_accept(int server_fd) {
     if (server_fd < 0) return -1;
     struct sockaddr_in client_addr;
     socklen_t addrlen = sizeof(client_addr);
     return accept(server_fd, (struct sockaddr*)&client_addr, &addrlen);
 }
-int net_socket_connect(const char* host, int port) {
+long long net_socket_connect(const char* host, int port) {
     if (!host) return -1;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
@@ -405,7 +405,12 @@ void net_socket_close(int fd) {
 }
 static int g_argc = 0;
 static char** g_argv = NULL;
-int os_args_count(void) {
+// Called from the generated `main` entry point before any Track code runs.
+void track_runtime_init(long long argc, char** argv) {
+    g_argc = (int)argc;
+    g_argv = argv;
+}
+long long os_args_count(void) {
     return g_argc;
 }
 Str os_arg(int idx) {
@@ -420,7 +425,7 @@ Str os_arg(int idx) {
     }
     return s;
 }
-int dir_exists(const char* path) {
+long long dir_exists(const char* path) {
     if (!path) return 0;
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
@@ -428,7 +433,7 @@ int dir_exists(const char* path) {
     }
     return 0;
 }
-int file_copy(const char* src, const char* dst) {
+long long file_copy(const char* src, const char* dst) {
     if (!src || !dst) return -1;
     FILE *in = fopen(src, "rb");
     if (!in) return -1;
@@ -443,28 +448,28 @@ int file_copy(const char* src, const char* dst) {
     fclose(out);
     return 0;
 }
-int process_spawn(const char* cmd) {
+long long process_spawn(const char* cmd) {
     if (!cmd) return -1;
     return system(cmd);
 }
 
 // Char & Byte Operations
-int char_is_digit(unsigned char c) { return isdigit(c) ? 1 : 0; }
-int char_is_alpha(unsigned char c) { return isalpha(c) ? 1 : 0; }
-int char_is_alphanumeric(unsigned char c) { return isalnum(c) ? 1 : 0; }
-int char_is_space(unsigned char c) { return isspace(c) ? 1 : 0; }
-unsigned char char_to_upper(unsigned char c) { return (unsigned char)toupper(c); }
-unsigned char char_to_lower(unsigned char c) { return (unsigned char)tolower(c); }
+long long char_is_digit(unsigned char c) { return isdigit(c) ? 1 : 0; }
+long long char_is_alpha(unsigned char c) { return isalpha(c) ? 1 : 0; }
+long long char_is_alphanumeric(unsigned char c) { return isalnum(c) ? 1 : 0; }
+long long char_is_space(unsigned char c) { return isspace(c) ? 1 : 0; }
+long long char_to_upper(unsigned char c) { return (unsigned char)toupper(c); }
+long long char_to_lower(unsigned char c) { return (unsigned char)tolower(c); }
 
 // String Extensions
-int str_starts_with(const char* s, const char* prefix) {
+long long str_starts_with(const char* s, const char* prefix) {
     if (!s || !prefix) return 0;
     size_t len_s = strlen(s);
     size_t len_p = strlen(prefix);
     if (len_p > len_s) return 0;
     return strncmp(s, prefix, len_p) == 0 ? 1 : 0;
 }
-int str_ends_with(const char* s, const char* suffix) {
+long long str_ends_with(const char* s, const char* suffix) {
     if (!s || !suffix) return 0;
     size_t len_s = strlen(s);
     size_t len_p = strlen(suffix);
@@ -476,7 +481,8 @@ Str str_substr(const char* s, long long start, long long len) {
     res.data = NULL;
     res.len = 0;
     if (!s || start < 0) return res;
-    size_t s_len = strlen(s);
+    // Bounded scan: never walk past the requested window of a long source.
+    size_t s_len = strnlen(s, (size_t)start + (len > 0 ? (size_t)len : 0));
     if ((size_t)start >= s_len) return res;
     size_t actual_len = (size_t)len;
     if ((size_t)start + actual_len > s_len) {
@@ -507,17 +513,17 @@ Str str_trim(const char* s) {
     res.len = (int)len;
     return res;
 }
-unsigned char str_char_at(const char* s, long long idx) {
+long long str_char_at(const char* s, long long idx) {
     if (!s || idx < 0) return 0;
-    size_t len = strlen(s);
+    size_t len = strnlen(s, (size_t)idx + 1);
     if ((size_t)idx >= len) return 0;
     return (unsigned char)s[idx];
 }
-unsigned int str_len(const char* s) {
+long long str_len(const char* s) {
     if (!s) return 0;
     return (unsigned int)strlen(s);
 }
-int str_eq(const char* a, const char* b) {
+long long str_eq(const char* a, const char* b) {
     if (!a || !b) return a == b ? 1 : 0;
     return strcmp(a, b) == 0 ? 1 : 0;
 }
@@ -556,7 +562,7 @@ void vec_reserve(Vec* v, int cap) {
 void vec_clear(Vec* v) {
     if (v) v->len = 0;
 }
-int vec_len(const Vec* v) {
+long long vec_len(const Vec* v) {
     return v ? v->len : 0;
 }
 
@@ -609,7 +615,7 @@ long long track_i64_collection_get(const void* handle, long long index) {
     return collection->data[index];
 }
 
-int track_i64_collection_set(void* handle, long long index, long long value) {
+long long track_i64_collection_set(void* handle, long long index, long long value) {
     TrackI64Collection* collection = (TrackI64Collection*)handle;
     if (!collection || index < 0 || index >= collection->len) return 0;
     collection->data[index] = value;
@@ -678,6 +684,14 @@ Str path_join(const char* a, const char* b) {
 
 /// Compile source string through Lexer -> Parser -> Monomorphizer -> LinearChecker pipeline.
 pub fn compile_source(source: &str) -> Result<Vec<ast::Expr>, String> {
+    compile_source_with_info(source).map(|(program, _)| program)
+}
+
+/// Like [`compile_source`], also returning the type layouts codegen needs
+/// (enum discriminants, payload unions, aliases — including imports).
+pub fn compile_source_with_info(
+    source: &str,
+) -> Result<(Vec<ast::Expr>, codegen::TypeInfo), String> {
     let tokens = lexer::Lexer::tokenize(source)?;
     let mut p = parser::Parser::new(tokens, source.to_string());
     let program = p.parse_program()?;
@@ -685,7 +699,7 @@ pub fn compile_source(source: &str) -> Result<Vec<ast::Expr>, String> {
     mono::monomorphize(&mut program)?;
     let mut chk = checker::LinearChecker::new();
     chk.check_program(&program)?;
-    Ok(program)
+    Ok((program, chk.type_info))
 }
 
 /// Full build: source -> object file -> linked executable in specified directory.
@@ -693,9 +707,10 @@ pub fn build_file_in_dir(filename: &str, out_dir: &Path) -> Result<PathBuf, Stri
     let source =
         fs::read_to_string(filename).map_err(|e| format!("Error reading '{}': {}", filename, e))?;
 
-    let program = compile_source(&source)?;
+    let (program, info) = compile_source_with_info(&source)?;
 
     let mut cg = codegen::CodeGen::new("track_module");
+    cg.set_type_info(info);
     cg.compile_program(&program);
 
     let stem = Path::new(filename)
