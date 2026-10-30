@@ -419,6 +419,34 @@ impl LinearChecker {
                 "path_join".to_string(),
                 Some(TrackType::Custom("Str".to_string())),
             );
+
+            // Runtime support used by the self-hosted compiler (word ABI).
+            for name in [
+                "track_i64_collection_new",
+                "track_i64_collection_len",
+                "track_i64_collection_push",
+                "track_i64_collection_get",
+                "track_i64_collection_set",
+                "track_i64_collection_pop",
+                "track_i64_collection_truncate",
+                "track_sb_new",
+                "track_sb_push",
+                "track_sb_push_byte",
+                "track_sb_push_int",
+                "track_sb_len",
+                "track_sb_str",
+                "track_sb_clear",
+                "track_str_bytes",
+                "track_file_read",
+                "track_file_write_all",
+                "track_out",
+                "track_err",
+                "track_words_copy",
+                "sys_exit",
+                "clock_ms",
+            ] {
+                self.functions.insert(name.to_string(), Some(TrackType::I64));
+            }
         } // end if !barebones — std package (import "std") still works via Use handling
 
         for stmt in program {
@@ -426,6 +454,13 @@ impl LinearChecker {
                 Expr::ConstDef { name, value } => {
                     if let Some(v) = crate::codegen::eval_const(&self.const_values, value) {
                         self.const_values.insert(name.clone(), v);
+                        self.type_info.consts.insert(name.clone(), v);
+                    }
+                    // Constants are module-level: visible to functions
+                    // defined before them in the file.
+                    self.declare(name.clone());
+                    if let Some(ty) = self.infer_type(value) {
+                        self.types.insert(name.clone(), ty);
                     }
                 }
                 Expr::TypeAlias { name, target } => {

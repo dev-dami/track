@@ -22,6 +22,7 @@
 #include <ctype.h>
 #include <stdint.h>
 #include <errno.h>
+#include <signal.h>
 
 typedef int64_t tk_w;
 
@@ -35,9 +36,10 @@ static int g_argc = 0;
 static char **g_argv = NULL;
 
 /* Called from the generated `main` entry point before any Track code runs. */
-void track_runtime_init(tk_w argc, tk_w argv) {
+tk_w track_runtime_init(tk_w argc, tk_w argv) {
     g_argc = (int)argc;
     g_argv = (char **)TK_PTR(argv);
+    return 0;
 }
 
 tk_w os_args_count(void) { return g_argc; }
@@ -88,6 +90,14 @@ tk_w track_abort(tk_w msg) {
     }
     fflush(stderr);
     exit(134);
+    return 0;
+}
+
+/* Integer division by zero or INT64_MIN / -1: trap like a hardware divide
+ * fault (SIGFPE) without flushing buffered output. */
+tk_w track_trap_div(void) {
+    raise(SIGFPE);
+    abort();
     return 0;
 }
 

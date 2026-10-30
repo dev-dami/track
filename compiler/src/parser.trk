@@ -1,320 +1,876 @@
-// parser.trk — Phase 3 recursive-descent parser subset.
+// parser.trk — recursive-descent parser for the complete Track grammar.
 //
-// Supported expressions: integers, strings, booleans, identifiers,
-// parenthesized expressions, unary `!`/`-`, and arithmetic precedence.
-// Supported statements: untyped `let`, `let mut`, `return`, and expression
-// statements. Every result carries byte-precise error ranges.
+// Grammar and precedence follow the bootstrap parser (`src/parser/`):
+//   expr       := or (".." or)?
+//   or         := and ("||" and)*
+//   and        := comparison ("&&" comparison)*
+//   comparison := bitwise (("==" | "!=" | "<" | ">" | "<=" | ">=") bitwise)*
+//   bitwise    := shift (("&" | "|") shift)*
+//   shift      := additive (("<<" | ">>") additive)*
+//   additive   := term (("+" | "-") term)*
+//   term       := unary (("*" | "/" | "%") unary)*
+//   unary      := ("-" | "!" | "*" | "&" "mut"?) unary | postfix
+//   postfix    := primary ("." INT | "." IDENT "(" args ")" | "[" index "]" | "(" args ")")*
+// Statements end with an optional ";". Struct literals are disabled inside
+// `if`/`while`/`for` headers so `if x { ... }` parses as a block.
 
+import "base";
 import "lexer";
 import "ast";
-import "source_span";
-import "diagnostic";
 
-// (node index, next byte, error start, error end, error code)
-type ParserStep = (i64, i64, i64, i64, i64);
-// (AST handle, error start, error end, error code)
-type ParseResult = (ptr<i64>, i64, i64, i64);
-
-fn parser_step_ok(node: i64, next: i64) -> ParserStep {
-    return (node, next, -1, -1, 0);
-}
-
-fn parser_step_error(next: i64, start: i64, end: i64, code: i64) -> ParserStep {
-    return (-1, next, start, end, code);
-}
-
-fn parser_step_failed(step: &ParserStep) -> bool {
-    return step.4 != 0;
-}
-
-fn parser_step_copy(step: &ParserStep) -> ParserStep {
-    return (step.0, step.1, step.2, step.3, step.4);
-}
-
-fn parse_error_name(code: i64) -> Str {
-    if code == 1 { return "P0001"; }
-    if code == 2 { return "P0002"; }
-    if code == 3 { return "P0003"; }
-    if code == 4 { return "P0004"; }
-    if code == 5 { return "P0005"; }
-    return "P0099";
-}
-
-fn parse_error_message(code: i64) -> Str {
-    if code == 1 { return "expected expression"; }
-    if code == 2 { return "expected identifier after 'let'"; }
-    if code == 3 { return "expected '=' after binding name"; }
-    if code == 4 { return "expected ';' after statement"; }
-    if code == 5 { return "expected ')' after expression"; }
-    return "parser made no progress";
-}
-
-fn parse_error_label(code: i64) -> Str {
-    if code == 1 { return "expression required here"; }
-    if code == 2 { return "binding name required here"; }
-    if code == 3 { return "insert '=' here"; }
-    if code == 4 { return "terminate the statement here"; }
-    if code == 5 { return "close the parenthesized expression"; }
-    return "unexpected token";
-}
-
-fn parse_primary(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
-    let record = lex_next_record(source, pos);
-    let tag: i64 = record.0;
-    let start: i64 = record.1;
-    let end: i64 = record.2;
-    let next: i64 = record.3;
-
-    if tag == token_tag_int() {
-        let text = str_substr(source, start, end - start);
-        let value = str_to_int(&text);
-        let node = ast_literal_node(ast_kind_int(), value, start, end);
-        let index = ast_push_node(ast, &node);
-        return parser_step_ok(index, next);
+fn p_tok(c: i64) -> i64 { return vget(c, CX_POS); }
+fn p_kind(c: i64) -> i64 { return tok_kind(c, p_tok(c)); }
+fn p_kind_at(c: i64, k: i64) -> i64 {
+    let t = p_tok(c) + k;
+    if t >= vget(c, CX_TEND) {
+        return TK_EOF;
     }
-    if tag == token_tag_string() {
-        let node = ast_literal_node(ast_kind_string(), 0, start + 1, end - 1);
-        let index = ast_push_node(ast, &node);
-        return parser_step_ok(index, next);
+    return tok_kind(c, t);
+}
+fn p_value(c: i64) -> i64 { return tok_value(c, p_tok(c)); }
+fn p_pos(c: i64) -> i64 { return tok_start(c, p_tok(c)); }
+fn p_at(c: i64, kind: i64) -> bool { return p_kind(c) == kind; }
+fn p_eof(c: i64) -> bool { return p_kind(c) == TK_EOF; }
+
+fn p_advance(c: i64) -> i64 {
+    let t = p_tok(c);
+    if tok_kind(c, t) != TK_EOF {
+        vset(c, CX_POS, t + 1);
     }
-    if tag == token_tag_true() {
-        let node = ast_literal_node(ast_kind_bool(), 1, start, end);
-        let index = ast_push_node(ast, &node);
-        return parser_step_ok(index, next);
+    return t;
+}
+
+fn p_error(c: i64, expected: i64) -> i64 {
+    let message = text_cat3("expected ", expected, text_cat(", found ", token_kind_text(p_kind(c))));
+    return fail_at(c, p_pos(c), "E0100", message);
+}
+
+fn p_expect(c: i64, kind: i64) -> i64 {
+    if !p_at(c, kind) {
+        p_error(c, token_kind_text(kind));
     }
-    if tag == token_tag_false() {
-        let node = ast_literal_node(ast_kind_bool(), 0, start, end);
-        let index = ast_push_node(ast, &node);
-        return parser_step_ok(index, next);
+    return p_advance(c);
+}
+
+fn p_accept(c: i64, kind: i64) -> bool {
+    if p_at(c, kind) {
+        p_advance(c);
+        return true;
     }
-    if tag == token_tag_identifier() {
-        let node = ast_identifier_node(start, end);
-        let index = ast_push_node(ast, &node);
-        return parser_step_ok(index, next);
+    return false;
+}
+
+fn p_ident(c: i64) -> i64 {
+    if !p_at(c, TK_IDENT) {
+        p_error(c, "identifier");
     }
-    if tag == token_tag_lparen() {
-        let inner = parse_expression(source, ast, next);
-        if parser_step_failed(&inner) {
-            return parser_step_copy(&inner);
+    let id = p_value(c);
+    p_advance(c);
+    return id;
+}
+
+// IDENT ("::" IDENT)* interned as one qualified name.
+fn p_qualified(c: i64) -> i64 {
+    let mut name = p_ident(c);
+    while p_at(c, TK_COLONCOLON) {
+        p_advance(c);
+        let sub = p_ident(c);
+        name = intern(c, text_cat3(name_text(c, name), "::", name_text(c, sub)));
+    }
+    return name;
+}
+
+// ------------------------------------------------------------------ types
+
+fn parse_type(c: i64) -> i64 {
+    let pos = p_pos(c);
+    let k = p_kind(c);
+    if k == TK_TY_U8 { p_advance(c); return node1(c, T_PRIM, PRIM_U8, pos); }
+    if k == TK_TY_I8 { p_advance(c); return node1(c, T_PRIM, PRIM_I8, pos); }
+    if k == TK_TY_I32 { p_advance(c); return node1(c, T_PRIM, PRIM_I32, pos); }
+    if k == TK_TY_U32 { p_advance(c); return node1(c, T_PRIM, PRIM_U32, pos); }
+    if k == TK_TY_I64 { p_advance(c); return node1(c, T_PRIM, PRIM_I64, pos); }
+    if k == TK_TY_U64 { p_advance(c); return node1(c, T_PRIM, PRIM_U64, pos); }
+    if k == TK_TY_BOOL { p_advance(c); return node1(c, T_PRIM, PRIM_BOOL, pos); }
+    if k == TK_TY_VOID { p_advance(c); return node1(c, T_PRIM, PRIM_VOID, pos); }
+    if k == TK_TY_PTR {
+        p_advance(c);
+        p_expect(c, TK_LT);
+        let inner = parse_type(c);
+        p_expect(c, TK_GT);
+        return node1(c, T_PTR, inner, pos);
+    }
+    if k == TK_AMP {
+        p_advance(c);
+        return node1(c, T_REF, parse_type(c), pos);
+    }
+    if k == TK_IDENT {
+        return node1(c, T_CUSTOM, p_ident(c), pos);
+    }
+    if k == TK_LBRACKET {
+        p_advance(c);
+        if p_accept(c, TK_RBRACKET) {
+            return node1(c, T_SLICE, parse_type(c), pos);
         }
-        let close = lex_next_record(source, inner.1);
-        if close.0 != token_tag_rparen() {
-            return parser_step_error(close.3, close.1, close.2, 5);
+        let elem = parse_type(c);
+        if p_accept(c, TK_RBRACKET) {
+            return node1(c, T_SLICE, elem, pos);
         }
-        return parser_step_ok(inner.0, close.3);
-    }
-    return parser_step_error(next, start, end, 1);
-}
-
-fn parse_unary(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
-    let record = lex_next_record(source, pos);
-    let tag: i64 = record.0;
-    if tag == token_tag_bang() || tag == token_tag_minus() {
-        let operand = parse_unary(source, ast, record.3);
-        if parser_step_failed(&operand) {
-            return parser_step_copy(&operand);
+        p_expect(c, TK_SEMI);
+        if !p_at(c, TK_INT) {
+            p_error(c, "array size");
         }
-        let operand_index: i64 = operand.0;
-        let operand_end = ast_node_end(ast, operand_index);
-        let node = ast_unary_node(tag, operand_index, record.1, operand_end);
-        let index = ast_push_node(ast, &node);
-        return parser_step_ok(index, operand.1);
+        let size = p_value(c);
+        p_advance(c);
+        p_expect(c, TK_RBRACKET);
+        return node2(c, T_ARRAY, elem, size, pos);
     }
-    return parse_primary(source, ast, pos);
-}
-
-fn parser_is_factor_operator(tag: i64) -> bool {
-    if tag == token_tag_star() { return true; }
-    if tag == token_tag_slash() { return true; }
-    return tag == token_tag_percent();
-}
-
-fn parser_is_term_operator(tag: i64) -> bool {
-    if tag == token_tag_plus() { return true; }
-    return tag == token_tag_minus();
-}
-
-fn parse_factor(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
-    let initial = parse_unary(source, ast, pos);
-    if parser_step_failed(&initial) {
-        return parser_step_copy(&initial);
-    }
-    let mut left: i64 = initial.0;
-    let mut next: i64 = initial.1;
-    let mut parsing = true;
-    while parsing {
-        let operator = lex_next_record(source, next);
-        let operator_tag: i64 = operator.0;
-        if parser_is_factor_operator(operator_tag) {
-            let right_step = parse_unary(source, ast, operator.3);
-            if parser_step_failed(&right_step) {
-                return parser_step_copy(&right_step);
-            }
-            let right: i64 = right_step.0;
-            let start = ast_node_start(ast, left);
-            let end = ast_node_end(ast, right);
-            let node = ast_binary_node(operator_tag, left, right, start, end);
-            left = ast_push_node(ast, &node);
-            next = right_step.1;
-        } else {
-            parsing = false;
-        }
-    }
-    return parser_step_ok(left, next);
-}
-
-fn parse_expression(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
-    let initial = parse_factor(source, ast, pos);
-    if parser_step_failed(&initial) {
-        return parser_step_copy(&initial);
-    }
-    let mut left: i64 = initial.0;
-    let mut next: i64 = initial.1;
-    let mut parsing = true;
-    while parsing {
-        let operator = lex_next_record(source, next);
-        let operator_tag: i64 = operator.0;
-        if parser_is_term_operator(operator_tag) {
-            let right_step = parse_factor(source, ast, operator.3);
-            if parser_step_failed(&right_step) {
-                return parser_step_copy(&right_step);
-            }
-            let right: i64 = right_step.0;
-            let start = ast_node_start(ast, left);
-            let end = ast_node_end(ast, right);
-            let node = ast_binary_node(operator_tag, left, right, start, end);
-            left = ast_push_node(ast, &node);
-            next = right_step.1;
-        } else {
-            parsing = false;
-        }
-    }
-    return parser_step_ok(left, next);
-}
-
-fn parse_let_statement(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
-    let let_record = lex_next_record(source, pos);
-    let mut next: i64 = let_record.3;
-    let mut mutable = false;
-    let mut name_record = lex_next_record(source, next);
-    if name_record.0 == token_tag_mut() {
-        mutable = true;
-        next = name_record.3;
-        name_record = lex_next_record(source, next);
-    }
-    if name_record.0 != token_tag_identifier() {
-        return parser_step_error(name_record.3, name_record.1, name_record.2, 2);
-    }
-    let name_node = ast_identifier_node(name_record.1, name_record.2);
-    let name_index = ast_push_node(ast, &name_node);
-
-    let equals = lex_next_record(source, name_record.3);
-    if equals.0 != token_tag_eq() {
-        return parser_step_error(equals.3, equals.1, equals.2, 3);
-    }
-    let initializer = parse_expression(source, ast, equals.3);
-    if parser_step_failed(&initializer) {
-        return parser_step_copy(&initializer);
-    }
-    let semicolon = lex_next_record(source, initializer.1);
-    if semicolon.0 != token_tag_semicolon() {
-        return parser_step_error(semicolon.3, semicolon.1, semicolon.2, 4);
-    }
-    let node = ast_let_node(name_index, initializer.0, mutable, let_record.1, semicolon.2);
-    let index = ast_push_node(ast, &node);
-    return parser_step_ok(index, semicolon.3);
-}
-
-fn parse_return_statement(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
-    let return_record = lex_next_record(source, pos);
-    let after_return = lex_next_record(source, return_record.3);
-    if after_return.0 == token_tag_semicolon() {
-        let empty_node = ast_return_node(-1, return_record.1, after_return.2);
-        let empty_index = ast_push_node(ast, &empty_node);
-        return parser_step_ok(empty_index, after_return.3);
-    }
-    let value = parse_expression(source, ast, return_record.3);
-    if parser_step_failed(&value) {
-        return parser_step_copy(&value);
-    }
-    let semicolon = lex_next_record(source, value.1);
-    if semicolon.0 != token_tag_semicolon() {
-        return parser_step_error(semicolon.3, semicolon.1, semicolon.2, 4);
-    }
-    let node = ast_return_node(value.0, return_record.1, semicolon.2);
-    let index = ast_push_node(ast, &node);
-    return parser_step_ok(index, semicolon.3);
-}
-
-fn parse_statement(source: &Str, ast: &ptr<i64>, pos: i64) -> ParserStep {
-    let record = lex_next_record(source, pos);
-    if record.0 == token_tag_let() {
-        return parse_let_statement(source, ast, pos);
-    }
-    if record.0 == token_tag_return() {
-        return parse_return_statement(source, ast, pos);
-    }
-    let value = parse_expression(source, ast, pos);
-    if parser_step_failed(&value) {
-        return parser_step_copy(&value);
-    }
-    let semicolon = lex_next_record(source, value.1);
-    if semicolon.0 != token_tag_semicolon() {
-        return parser_step_error(semicolon.3, semicolon.1, semicolon.2, 4);
-    }
-    let start = ast_node_start(ast, value.0);
-    let node = ast_expression_statement_node(value.0, start, semicolon.2);
-    let index = ast_push_node(ast, &node);
-    return parser_step_ok(index, semicolon.3);
-}
-
-fn parse_subset(source: &Str) -> ParseResult {
-    let ast = ast_new(32);
-    let mut pos: i64 = 0;
-    let mut error_start: i64 = -1;
-    let mut error_end: i64 = -1;
-    let mut error_code: i64 = 0;
-    let mut parsing = true;
-    while parsing {
-        let record = lex_next_record(source, pos);
-        if record.0 == token_tag_eof() {
-            parsing = false;
-        } else {
-            let statement = parse_statement(source, &ast, pos);
-            if parser_step_failed(&statement) {
-                error_start = statement.2;
-                error_end = statement.3;
-                error_code = statement.4;
-                parsing = false;
-            } else {
-                let next: i64 = statement.1;
-                if next <= pos {
-                    error_start = record.1;
-                    error_end = record.2;
-                    error_code = 99;
-                    parsing = false;
+    if k == TK_LPAREN {
+        p_advance(c);
+        let mark = list_begin(c);
+        if !p_at(c, TK_RPAREN) {
+            list_item(c, parse_type(c));
+            let mut more = true;
+            while more && p_at(c, TK_COMMA) {
+                p_advance(c);
+                if p_at(c, TK_RPAREN) {
+                    more = false;
                 } else {
-                    pos = next;
+                    list_item(c, parse_type(c));
                 }
             }
         }
+        p_expect(c, TK_RPAREN);
+        return node1(c, T_TUPLE, list_end(c, mark), pos);
     }
-    return (ast, error_start, error_end, error_code);
+    return p_error(c, "type");
 }
 
-fn parse_result_ast(result: &ParseResult) -> ptr<i64> {
-    return result.0;
+// ------------------------------------------------------------ expressions
+
+fn parse_expr(c: i64) -> i64 {
+    let pos = p_pos(c);
+    let left = parse_or(c);
+    if p_accept(c, TK_DOTDOT) {
+        let right = parse_or(c);
+        return node2(c, K_RANGE, left, right, pos);
+    }
+    return left;
 }
 
-fn parse_result_ok(result: &ParseResult) -> bool {
-    return result.3 == 0;
+fn binary(c: i64, op: i64, left: i64, right: i64) -> i64 {
+    return node3(c, K_BIN, op, left, right, npos(c, left));
 }
 
-fn format_parse_error(source: &Str, path: &Str, result: &ParseResult) -> Str {
-    let code_value: i64 = result.3;
-    let span = source_span(source, result.1, result.2);
-    let code = parse_error_name(code_value);
-    let message = parse_error_message(code_value);
-    let label = parse_error_label(code_value);
-    return format_error(source, path, &code, &message, &label, span);
+fn parse_or(c: i64) -> i64 {
+    let mut left = parse_and(c);
+    while p_accept(c, TK_PIPEPIPE) {
+        left = binary(c, OP_OR, left, parse_and(c));
+    }
+    return left;
+}
+
+fn parse_and(c: i64) -> i64 {
+    let mut left = parse_comparison(c);
+    while p_accept(c, TK_AMPAMP) {
+        left = binary(c, OP_AND, left, parse_comparison(c));
+    }
+    return left;
+}
+
+fn comparison_op(kind: i64) -> i64 {
+    if kind == TK_EQEQ { return OP_EQ; }
+    if kind == TK_NEQ { return OP_NEQ; }
+    if kind == TK_LT { return OP_LT; }
+    if kind == TK_GT { return OP_GT; }
+    if kind == TK_LTE { return OP_LTE; }
+    if kind == TK_GTE { return OP_GTE; }
+    return 0;
+}
+
+fn parse_comparison(c: i64) -> i64 {
+    let mut left = parse_bitwise(c);
+    let mut op = comparison_op(p_kind(c));
+    while op != 0 {
+        p_advance(c);
+        left = binary(c, op, left, parse_bitwise(c));
+        op = comparison_op(p_kind(c));
+    }
+    return left;
+}
+
+// `&` / `|` are bitwise only when not doubled (`& &x` stays a reference).
+fn bitwise_op(c: i64) -> i64 {
+    let k = p_kind(c);
+    let next = p_kind_at(c, 1);
+    if k == TK_AMP && next != TK_AMP && next != TK_EOF { return OP_BAND; }
+    if k == TK_PIPE && next != TK_PIPE && next != TK_EOF { return OP_BOR; }
+    return 0;
+}
+
+fn parse_bitwise(c: i64) -> i64 {
+    let mut left = parse_shift(c);
+    let mut op = bitwise_op(c);
+    while op != 0 {
+        p_advance(c);
+        left = binary(c, op, left, parse_shift(c));
+        op = bitwise_op(c);
+    }
+    return left;
+}
+
+fn parse_shift(c: i64) -> i64 {
+    let mut left = parse_additive(c);
+    let mut going = true;
+    while going {
+        if p_accept(c, TK_SHL) {
+            left = binary(c, OP_SHL, left, parse_additive(c));
+        } else if p_accept(c, TK_SHR) {
+            left = binary(c, OP_SHR, left, parse_additive(c));
+        } else {
+            going = false;
+        }
+    }
+    return left;
+}
+
+fn parse_additive(c: i64) -> i64 {
+    let mut left = parse_term(c);
+    let mut going = true;
+    while going {
+        if p_accept(c, TK_PLUS) {
+            left = binary(c, OP_ADD, left, parse_term(c));
+        } else if p_accept(c, TK_MINUS) {
+            left = binary(c, OP_SUB, left, parse_term(c));
+        } else {
+            going = false;
+        }
+    }
+    return left;
+}
+
+fn parse_term(c: i64) -> i64 {
+    let mut left = parse_unary(c);
+    let mut going = true;
+    while going {
+        if p_accept(c, TK_STAR) {
+            left = binary(c, OP_MUL, left, parse_unary(c));
+        } else if p_accept(c, TK_SLASH) {
+            left = binary(c, OP_DIV, left, parse_unary(c));
+        } else if p_accept(c, TK_PERCENT) {
+            left = binary(c, OP_MOD, left, parse_unary(c));
+        } else {
+            going = false;
+        }
+    }
+    return left;
+}
+
+fn parse_unary(c: i64) -> i64 {
+    let pos = p_pos(c);
+    if p_accept(c, TK_MINUS) {
+        return node2(c, K_UN, OP_NEG, parse_unary(c), pos);
+    }
+    if p_accept(c, TK_BANG) {
+        return node2(c, K_UN, OP_NOT, parse_unary(c), pos);
+    }
+    if p_accept(c, TK_STAR) {
+        return node2(c, K_UN, OP_DEREF, parse_unary(c), pos);
+    }
+    if p_accept(c, TK_AMP) {
+        p_accept(c, TK_MUT);
+        return node1(c, K_ADDR, parse_unary(c), pos);
+    }
+    return parse_postfix(c);
+}
+
+// "(" expr ("," expr)* ")" — the opening paren is already consumed.
+fn parse_args_into(c: i64) -> i64 {
+    if !p_at(c, TK_RPAREN) {
+        list_item(c, parse_expr(c));
+        while p_accept(c, TK_COMMA) {
+            list_item(c, parse_expr(c));
+        }
+    }
+    p_expect(c, TK_RPAREN);
+    return 0;
+}
+
+fn parse_postfix(c: i64) -> i64 {
+    let mut expr = parse_primary(c);
+    let mut going = true;
+    while going {
+        let pos = p_pos(c);
+        if p_accept(c, TK_DOT) {
+            if p_at(c, TK_INT) {
+                let index = p_value(c);
+                p_advance(c);
+                expr = node2(c, K_TINDEX, expr, index, pos);
+            } else {
+                // Uniform function call syntax: x.f(a) == f(x, a)
+                let method = p_ident(c);
+                p_expect(c, TK_LPAREN);
+                let mark = list_begin(c);
+                list_item(c, expr);
+                parse_args_into(c);
+                expr = node2(c, K_CALL, method, list_end(c, mark), npos(c, expr));
+            }
+        } else if p_accept(c, TK_LBRACKET) {
+            expr = parse_index_suffix(c, expr, pos);
+        } else if p_at(c, TK_LPAREN) && nk(c, expr) == K_VAR {
+            p_advance(c);
+            let mark = list_begin(c);
+            parse_args_into(c);
+            expr = node2(c, K_CALL, na(c, expr), list_end(c, mark), npos(c, expr));
+        } else {
+            going = false;
+        }
+    }
+    return expr;
+}
+
+// After "[": index `e]`, slices `..e]`, `s..e]`, `s..]`.
+fn parse_index_suffix(c: i64, target: i64, pos: i64) -> i64 {
+    if p_accept(c, TK_DOTDOT) {
+        let mut end: i64 = -1;
+        if !p_at(c, TK_RBRACKET) {
+            end = parse_expr(c);
+        }
+        p_expect(c, TK_RBRACKET);
+        return node3(c, K_SLICE, target, -1, end, pos);
+    }
+    let first = parse_expr(c);
+    if nk(c, first) == K_RANGE {
+        p_expect(c, TK_RBRACKET);
+        return node3(c, K_SLICE, target, na(c, first), nb(c, first), pos);
+    }
+    if p_accept(c, TK_DOTDOT) {
+        let mut end: i64 = -1;
+        if !p_at(c, TK_RBRACKET) {
+            end = parse_expr(c);
+        }
+        p_expect(c, TK_RBRACKET);
+        return node3(c, K_SLICE, target, first, end, pos);
+    }
+    p_expect(c, TK_RBRACKET);
+    return node2(c, K_INDEX, target, first, pos);
+}
+
+fn parse_primary(c: i64) -> i64 {
+    let pos = p_pos(c);
+    let k = p_kind(c);
+    if k == TK_INT {
+        let value = p_value(c);
+        p_advance(c);
+        return node1(c, K_INT, value, pos);
+    }
+    if k == TK_STR {
+        let text = p_value(c);
+        p_advance(c);
+        return node1(c, K_STR, text, pos);
+    }
+    if k == TK_TRUE {
+        p_advance(c);
+        return node1(c, K_BOOL, 1, pos);
+    }
+    if k == TK_FALSE {
+        p_advance(c);
+        return node1(c, K_BOOL, 0, pos);
+    }
+    if k == TK_IF {
+        return parse_if(c);
+    }
+    if k == TK_AT {
+        return parse_macro_call(c);
+    }
+    if k == TK_MATCH {
+        return parse_match(c);
+    }
+    if k == TK_IDENT {
+        let name = p_qualified(c);
+        if vget(c, CX_ALLOW) != 0 && p_at(c, TK_LBRACE) {
+            p_advance(c);
+            let mark = list_begin(c);
+            while !p_at(c, TK_RBRACE) {
+                if p_eof(c) {
+                    p_error(c, "'}'");
+                }
+                list_item(c, p_ident(c));
+                p_expect(c, TK_COLON);
+                list_item(c, parse_expr(c));
+                p_accept(c, TK_COMMA);
+            }
+            p_expect(c, TK_RBRACE);
+            return node2(c, K_SINIT, name, list_end(c, mark), pos);
+        }
+        return node1(c, K_VAR, name, pos);
+    }
+    if k == TK_LPAREN {
+        p_advance(c);
+        if p_accept(c, TK_RPAREN) {
+            return node1(c, K_TUPLE, 0, pos);
+        }
+        let first = parse_expr(c);
+        if p_accept(c, TK_COMMA) {
+            let mark = list_begin(c);
+            list_item(c, first);
+            while !p_at(c, TK_RPAREN) {
+                if p_eof(c) {
+                    p_error(c, "')'");
+                }
+                list_item(c, parse_expr(c));
+                p_accept(c, TK_COMMA);
+            }
+            p_expect(c, TK_RPAREN);
+            return node1(c, K_TUPLE, list_end(c, mark), pos);
+        }
+        p_expect(c, TK_RPAREN);
+        return first;
+    }
+    if k == TK_LBRACKET {
+        p_advance(c);
+        let mark = list_begin(c);
+        if !p_at(c, TK_RBRACKET) {
+            list_item(c, parse_expr(c));
+            while p_accept(c, TK_COMMA) {
+                list_item(c, parse_expr(c));
+            }
+        }
+        p_expect(c, TK_RBRACKET);
+        return node1(c, K_ARRAY, list_end(c, mark), pos);
+    }
+    return p_error(c, "expression");
+}
+
+// "{" statement* "}"
+fn parse_block(c: i64) -> i64 {
+    p_expect(c, TK_LBRACE);
+    let mark = list_begin(c);
+    while !p_at(c, TK_RBRACE) {
+        if p_eof(c) {
+            p_error(c, "'}'");
+        }
+        list_item(c, parse_statement(c));
+    }
+    p_expect(c, TK_RBRACE);
+    return list_end(c, mark);
+}
+
+// Parse an expression with struct literals disabled (loop/branch headers).
+// Like the bootstrap parser, struct literals are re-enabled afterwards.
+fn parse_header_expr(c: i64) -> i64 {
+    vset(c, CX_ALLOW, 0);
+    let e = parse_expr(c);
+    vset(c, CX_ALLOW, 1);
+    return e;
+}
+
+fn parse_if(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_IF);
+    let cond = parse_header_expr(c);
+    let then_body = parse_block(c);
+    let mut else_body: i64 = 0;
+    if p_accept(c, TK_ELSE) {
+        if p_at(c, TK_IF) {
+            let mark = list_begin(c);
+            list_item(c, parse_if(c));
+            else_body = list_end(c, mark);
+        } else {
+            else_body = parse_block(c);
+        }
+    }
+    return node3(c, K_IF, cond, then_body, else_body, pos);
+}
+
+fn parse_macro_call(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_AT);
+    let name = p_ident(c);
+    let mut args: i64 = 0;
+    if p_accept(c, TK_LPAREN) {
+        let mark = list_begin(c);
+        parse_args_into(c);
+        args = list_end(c, mark);
+    }
+    let mut body: i64 = -1;
+    if p_at(c, TK_LBRACE) {
+        body = parse_block(c);
+    }
+    return node3(c, K_MACROCALL, name, args, body, pos);
+}
+
+fn parse_match(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_MATCH);
+    let saved = vget(c, CX_ALLOW);
+    vset(c, CX_ALLOW, 0);
+    let target = parse_expr(c);
+    vset(c, CX_ALLOW, saved);
+    p_expect(c, TK_LBRACE);
+    let mark = list_begin(c);
+    while !p_at(c, TK_RBRACE) {
+        if p_eof(c) {
+            p_error(c, "'}'");
+        }
+        let pattern = parse_pattern(c);
+        let mut guard: i64 = -1;
+        if p_accept(c, TK_IF) {
+            guard = parse_expr(c);
+        }
+        p_expect(c, TK_FATARROW);
+        let body = parse_statement(c);
+        list_item(c, pattern);
+        list_item(c, guard);
+        list_item(c, body);
+        p_accept(c, TK_COMMA);
+    }
+    p_expect(c, TK_RBRACE);
+    return node2(c, K_MATCH, target, list_end(c, mark), pos);
+}
+
+// --------------------------------------------------------------- patterns
+
+// "(" pattern ("," pattern)* ","? ")" — opening paren already consumed.
+fn parse_pattern_list(c: i64) -> i64 {
+    let mark = list_begin(c);
+    if !p_at(c, TK_RPAREN) {
+        list_item(c, parse_pattern(c));
+        let mut more = true;
+        while more && p_at(c, TK_COMMA) {
+            p_advance(c);
+            if p_at(c, TK_RPAREN) {
+                more = false;
+            } else {
+                list_item(c, parse_pattern(c));
+            }
+        }
+    }
+    p_expect(c, TK_RPAREN);
+    return list_end(c, mark);
+}
+
+fn parse_pattern(c: i64) -> i64 {
+    let pos = p_pos(c);
+    let k = p_kind(c);
+    if k == TK_UNDERSCORE {
+        p_advance(c);
+        return node0(c, P_WILD, pos);
+    }
+    if k == TK_INT || k == TK_STR || k == TK_TRUE || k == TK_FALSE {
+        return node1(c, P_LIT, parse_primary(c), pos);
+    }
+    if k == TK_LPAREN {
+        p_advance(c);
+        return node1(c, P_TUPLE, parse_pattern_list(c), pos);
+    }
+    if k == TK_IDENT {
+        let first = p_ident(c);
+        if p_at(c, TK_COLONCOLON) {
+            p_advance(c);
+            let variant = p_ident(c);
+            // Only the first two segments are significant (`A::B::C` → A, B).
+            while p_accept(c, TK_COLONCOLON) {
+                p_ident(c);
+            }
+            let mut bindings: i64 = 0;
+            if p_accept(c, TK_LPAREN) {
+                bindings = parse_pattern_list(c);
+            }
+            return node3(c, P_VARIANT, first, variant, bindings, pos);
+        }
+        if p_accept(c, TK_LBRACE) {
+            let mark = list_begin(c);
+            while !p_at(c, TK_RBRACE) {
+                if p_eof(c) {
+                    p_error(c, "'}'");
+                }
+                let field_pos = p_pos(c);
+                let field = p_ident(c);
+                let mut sub: i64 = -1;
+                if p_accept(c, TK_COLON) {
+                    sub = parse_pattern(c);
+                } else {
+                    sub = node1(c, P_IDENT, field, field_pos);
+                }
+                list_item(c, field);
+                list_item(c, sub);
+                p_accept(c, TK_COMMA);
+            }
+            p_expect(c, TK_RBRACE);
+            return node2(c, P_STRUCT, first, list_end(c, mark), pos);
+        }
+        return node1(c, P_IDENT, first, pos);
+    }
+    return p_error(c, "pattern");
+}
+
+// ------------------------------------------------------------- statements
+
+fn parse_statement(c: i64) -> i64 {
+    let stmt = parse_statement_inner(c);
+    p_accept(c, TK_SEMI);
+    return stmt;
+}
+
+fn parse_statement_inner(c: i64) -> i64 {
+    let pos = p_pos(c);
+    let k = p_kind(c);
+    if k == TK_LET { return parse_let(c); }
+    if k == TK_WITH { return parse_with(c); }
+    if k == TK_FN { return parse_fn(c); }
+    if k == TK_IF { return parse_if(c); }
+    if k == TK_WHILE {
+        p_advance(c);
+        let cond = parse_header_expr(c);
+        return node2(c, K_WHILE, cond, parse_block(c), pos);
+    }
+    if k == TK_FOR {
+        p_advance(c);
+        let var = p_ident(c);
+        p_expect(c, TK_IN);
+        let iter = parse_header_expr(c);
+        return node3(c, K_FOR, var, iter, parse_block(c), pos);
+    }
+    if k == TK_RETURN {
+        p_advance(c);
+        if p_at(c, TK_SEMI) || p_eof(c) {
+            return node1(c, K_RETURN, -1, pos);
+        }
+        return node1(c, K_RETURN, parse_expr(c), pos);
+    }
+    if k == TK_IMPORT || k == TK_USE { return parse_import(c); }
+    if k == TK_CONST {
+        p_advance(c);
+        let name = p_ident(c);
+        p_expect(c, TK_EQ);
+        return node2(c, K_CONST, name, parse_expr(c), pos);
+    }
+    if k == TK_TYPE {
+        p_advance(c);
+        let name = p_ident(c);
+        p_expect(c, TK_EQ);
+        return node2(c, K_TYPEDEF, name, parse_type(c), pos);
+    }
+    if k == TK_STRUCT { return parse_struct(c); }
+    if k == TK_ATMACRO { return parse_macro_def(c); }
+    if k == TK_ENUM { return parse_enum(c); }
+    if k == TK_UNION { return parse_union(c); }
+    let expr = parse_expr(c);
+    if p_accept(c, TK_EQ) {
+        return node2(c, K_ASSIGN, expr, parse_expr(c), npos(c, expr));
+    }
+    return expr;
+}
+
+fn parse_let(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_LET);
+    let mut mutable: i64 = 0;
+    if p_accept(c, TK_MUT) {
+        mutable = 1;
+    }
+    if p_at(c, TK_LPAREN) {
+        let pattern = parse_pattern(c);
+        p_expect(c, TK_EQ);
+        return node3(c, K_LETD, pattern, mutable, parse_expr(c), pos);
+    }
+    let name = p_ident(c);
+    let mut ty: i64 = -1;
+    if p_accept(c, TK_COLON) {
+        ty = parse_type(c);
+    }
+    p_expect(c, TK_EQ);
+    let value = parse_expr(c);
+    return node_new(c, K_LET, name, mutable, ty, value, -1, pos);
+}
+
+fn parse_with(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_WITH);
+    let target = p_ident(c);
+    p_expect(c, TK_ARROW);
+    let lens = p_ident(c);
+    return node3(c, K_LENS, target, lens, parse_block(c), pos);
+}
+
+// "(" (IDENT ":" type ("," IDENT ":" type)*)? ")"
+fn parse_params(c: i64) -> i64 {
+    p_expect(c, TK_LPAREN);
+    let mark = list_begin(c);
+    if !p_at(c, TK_RPAREN) {
+        list_item(c, p_ident(c));
+        p_expect(c, TK_COLON);
+        list_item(c, parse_type(c));
+        while p_accept(c, TK_COMMA) {
+            list_item(c, p_ident(c));
+            p_expect(c, TK_COLON);
+            list_item(c, parse_type(c));
+        }
+    }
+    p_expect(c, TK_RPAREN);
+    return list_end(c, mark);
+}
+
+fn parse_fn(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_FN);
+    let name = p_ident(c);
+    let mut generics: i64 = 0;
+    if p_accept(c, TK_LT) {
+        let mark = list_begin(c);
+        list_item(c, p_ident(c));
+        while p_accept(c, TK_COMMA) {
+            list_item(c, p_ident(c));
+        }
+        p_expect(c, TK_GT);
+        generics = list_end(c, mark);
+    }
+    let params = parse_params(c);
+    let mut ret: i64 = -1;
+    if p_accept(c, TK_ARROW) {
+        ret = parse_type(c);
+    }
+    let body = parse_block(c);
+    return node_new(c, K_FN, name, generics, params, ret, body, pos);
+}
+
+fn parse_macro_def(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_ATMACRO);
+    let name = p_ident(c);
+    let params = parse_params(c);
+    let mut ret: i64 = -1;
+    if p_accept(c, TK_ARROW) {
+        ret = parse_type(c);
+    }
+    let body = parse_block(c);
+    return node_new(c, K_MACRODEF, name, 0, params, ret, body, pos);
+}
+
+fn parse_import(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_advance(c);
+    let mut path: i64 = 0;
+    if p_at(c, TK_STR) {
+        path = p_value(c);
+        p_advance(c);
+    } else if p_at(c, TK_IDENT) {
+        path = name_text(c, p_qualified(c));
+    } else {
+        p_error(c, "module path");
+    }
+    let mut alias: i64 = -1;
+    if p_accept(c, TK_AS) {
+        alias = p_ident(c);
+    }
+    let mut imports: i64 = -1;
+    if p_accept(c, TK_COLONCOLON) {
+        p_expect(c, TK_LBRACE);
+        let mark = list_begin(c);
+        let mut more = true;
+        while more && !p_at(c, TK_RBRACE) && !p_eof(c) {
+            list_item(c, p_ident(c));
+            if !p_accept(c, TK_COMMA) {
+                more = false;
+            }
+        }
+        p_expect(c, TK_RBRACE);
+        imports = list_end(c, mark);
+    }
+    return node3(c, K_USE, path, imports, alias, pos);
+}
+
+fn parse_struct(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_STRUCT);
+    let name = p_ident(c);
+    p_expect(c, TK_LBRACE);
+    let mark = list_begin(c);
+    let mut more = true;
+    while more && !p_at(c, TK_RBRACE) && !p_eof(c) {
+        list_item(c, p_ident(c));
+        p_expect(c, TK_COLON);
+        list_item(c, parse_type(c));
+        if !p_accept(c, TK_COMMA) {
+            more = false;
+        }
+    }
+    p_expect(c, TK_RBRACE);
+    return node2(c, K_STRUCT, name, list_end(c, mark), pos);
+}
+
+fn parse_enum(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_ENUM);
+    let name = p_ident(c);
+    let mut underlying: i64 = -1;
+    if p_accept(c, TK_COLON) {
+        underlying = parse_type(c);
+    }
+    p_expect(c, TK_LBRACE);
+    let mark = list_begin(c);
+    while !p_at(c, TK_RBRACE) {
+        if p_eof(c) {
+            p_error(c, "'}'");
+        }
+        list_item(c, p_ident(c));
+        let mut value: i64 = -1;
+        if p_accept(c, TK_EQ) {
+            value = parse_expr(c);
+        }
+        list_item(c, value);
+        p_accept(c, TK_COMMA);
+    }
+    p_expect(c, TK_RBRACE);
+    return node3(c, K_ENUM, name, underlying, list_end(c, mark), pos);
+}
+
+fn parse_union(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_expect(c, TK_UNION);
+    let name = p_ident(c);
+    if p_accept(c, TK_LPAREN) {
+        while !p_at(c, TK_RPAREN) {
+            if p_eof(c) {
+                p_error(c, "')'");
+            }
+            p_advance(c);
+        }
+        p_expect(c, TK_RPAREN);
+    }
+    p_expect(c, TK_LBRACE);
+    let mark = list_begin(c);
+    while !p_at(c, TK_RBRACE) {
+        if p_eof(c) {
+            p_error(c, "'}'");
+        }
+        list_item(c, p_ident(c));
+        let mut payload: i64 = -1;
+        if p_accept(c, TK_LPAREN) {
+            payload = parse_type(c);
+            p_expect(c, TK_RPAREN);
+        }
+        list_item(c, payload);
+        p_accept(c, TK_COMMA);
+    }
+    p_expect(c, TK_RBRACE);
+    return node2(c, K_UNION, name, list_end(c, mark), pos);
+}
+
+// Parse the tokens starting at `first` (one file) into a list of
+// top-level statements.
+fn parse_file(c: i64, first: i64) -> i64 {
+    vset(c, CX_POS, first);
+    let mut end = first;
+    while tok_kind(c, end) != TK_EOF {
+        end = end + 1;
+    }
+    vset(c, CX_TEND, end + 1);
+    vset(c, CX_ALLOW, 1);
+    let mark = list_begin(c);
+    while !p_eof(c) {
+        list_item(c, parse_statement(c));
+    }
+    return list_end(c, mark);
 }

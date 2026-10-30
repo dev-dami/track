@@ -37,6 +37,8 @@ pub struct TypeInfo {
     /// laid out as `[tag, payload...]`.
     pub payload_unions: HashSet<String>,
     pub aliases: HashMap<String, TrackType>,
+    /// Integer constants, including those defined in imported modules.
+    pub consts: HashMap<String, i64>,
 }
 
 pub struct CodeGen {
@@ -150,6 +152,7 @@ impl CodeGen {
     /// Provide enum/union layouts and aliases discovered by the checker
     /// (including imported modules).
     pub fn set_type_info(&mut self, info: TypeInfo) {
+        self.consts.extend(info.consts.iter().map(|(k, v)| (k.clone(), *v)));
         self.info = info;
     }
 

@@ -1,128 +1,152 @@
-// ast.trk — compact native AST representation for the Phase 3 parser subset.
+// ast.trk — node pool for the native AST.
 //
-// `Expr` names the semantic node variants. `AstNode` is the bootstrap storage
-// form used until Track supports generic, field-addressable native structs.
-// Layout: (kind, value, auxiliary, start byte, end byte, extra).
+// Every node is N_WIDTH words: (kind, a, b, c, d, e, pos). Operand meaning
+// depends on the kind (documented beside each constant). Child sequences
+// are list ids into the list pool (`list_at`), names are interned ids, and
+// `pos` is the global source position used for diagnostics. -1 marks an
+// absent optional operand.
 
-import "collections";
+import "base";
 
-union Expr {
-    IntLiteral, StringLiteral, BoolLiteral, Identifier,
-    Unary, Binary, Let, Return, ExpressionStatement, Error,
+const N_WIDTH = 7;
+
+// Expressions and statements
+const K_INT = 1;        // a = value
+const K_STR = 2;        // a = string literal text
+const K_BOOL = 3;       // a = 0 / 1
+const K_VAR = 4;        // a = name (may be `A::B` qualified)
+const K_BIN = 5;        // a = op, b = left, c = right
+const K_UN = 6;         // a = op, b = operand
+const K_ARRAY = 7;      // a = elements
+const K_TUPLE = 8;      // a = elements
+const K_TINDEX = 9;     // a = target, b = index
+const K_INDEX = 10;     // a = target, b = index expression
+const K_SLICE = 11;     // a = target, b = start (-1), c = end (-1)
+const K_RANGE = 12;     // a = start, b = end
+const K_ADDR = 13;      // a = target
+const K_SINIT = 14;     // a = type name, b = [field name, value]*
+const K_LENS = 15;      // a = target name, b = lens name, c = body
+const K_CALL = 16;      // a = callee name, b = arguments
+const K_IF = 17;        // a = condition, b = then body, c = else body
+const K_WHILE = 18;     // a = condition, b = body
+const K_FOR = 19;       // a = variable name, b = iterable, c = body
+const K_RETURN = 20;    // a = value (-1)
+const K_ASSIGN = 21;    // a = target, b = value
+const K_FN = 22;        // a = name, b = generics, c = [name, type]*, d = return type (-1), e = body
+const K_USE = 23;       // a = path text, b = import names (-1), c = alias name (-1)
+const K_CONST = 24;     // a = name, b = value
+const K_TYPEDEF = 25;   // a = name, b = target type
+const K_MACRODEF = 26;  // same layout as K_FN (no generics)
+const K_MACROCALL = 27; // a = name, b = arguments, c = trailing body (-1)
+const K_LET = 28;       // a = name, b = mutable, c = type (-1), d = value
+const K_LETD = 29;      // a = pattern, b = mutable, c = value
+const K_ENUM = 30;      // a = name, b = underlying type (-1), c = [name, value (-1)]*
+const K_UNION = 31;     // a = name, b = [name, payload type (-1)]*
+const K_MATCH = 32;     // a = target, b = [pattern, guard (-1), body]*
+const K_STRUCT = 33;    // a = name, b = [field name, type]*
+
+// Patterns
+const P_IDENT = 40;     // a = name
+const P_WILD = 41;
+const P_LIT = 42;       // a = literal expression
+const P_TUPLE = 43;     // a = sub-patterns
+const P_VARIANT = 44;   // a = enum/union name, b = variant name, c = bindings
+const P_STRUCT = 45;    // a = type name, b = [field name, pattern]*
+
+// Types
+const T_PRIM = 50;      // a = primitive code (PRIM_*)
+const T_PTR = 51;       // a = inner
+const T_REF = 52;       // a = inner
+const T_SLICE = 53;     // a = inner
+const T_ARRAY = 54;     // a = inner, b = length
+const T_TUPLE = 55;     // a = element types
+const T_CUSTOM = 56;    // a = name
+
+const PRIM_U8 = 1;
+const PRIM_I8 = 2;
+const PRIM_I32 = 3;
+const PRIM_U32 = 4;
+const PRIM_I64 = 5;
+const PRIM_U64 = 6;
+const PRIM_BOOL = 7;
+const PRIM_VOID = 8;
+
+// Binary operators
+const OP_ADD = 1;
+const OP_SUB = 2;
+const OP_MUL = 3;
+const OP_DIV = 4;
+const OP_MOD = 5;
+const OP_EQ = 6;
+const OP_NEQ = 7;
+const OP_LT = 8;
+const OP_GT = 9;
+const OP_LTE = 10;
+const OP_GTE = 11;
+const OP_AND = 12;
+const OP_OR = 13;
+const OP_BAND = 14;
+const OP_BOR = 15;
+const OP_SHL = 16;
+const OP_SHR = 17;
+
+// Unary operators
+const OP_NEG = 1;
+const OP_NOT = 2;
+const OP_DEREF = 3;
+
+fn node_new(c: i64, kind: i64, a: i64, b: i64, d3: i64, d4: i64, d5: i64, pos: i64) -> i64 {
+    let nodes = cx(c, CX_NODES);
+    let id = vlen(nodes) / N_WIDTH;
+    vpush(nodes, kind);
+    vpush(nodes, a);
+    vpush(nodes, b);
+    vpush(nodes, d3);
+    vpush(nodes, d4);
+    vpush(nodes, d5);
+    vpush(nodes, pos);
+    return id;
 }
 
-type Ast = ptr<i64>;
-type AstNode = (i64, i64, i64, i64, i64, i64);
-
-fn ast_kind_int() -> i64 { return 1; }
-fn ast_kind_string() -> i64 { return 2; }
-fn ast_kind_bool() -> i64 { return 3; }
-fn ast_kind_identifier() -> i64 { return 4; }
-fn ast_kind_unary() -> i64 { return 5; }
-fn ast_kind_binary() -> i64 { return 6; }
-fn ast_kind_let() -> i64 { return 7; }
-fn ast_kind_return() -> i64 { return 8; }
-fn ast_kind_expression_statement() -> i64 { return 9; }
-fn ast_kind_error() -> i64 { return 10; }
-
-fn ast_new(initial_nodes: i64) -> ptr<i64> {
-    return collection_new(initial_nodes * 6);
+fn node0(c: i64, kind: i64, pos: i64) -> i64 {
+    return node_new(c, kind, -1, -1, -1, -1, -1, pos);
 }
 
-fn ast_node_count(ast: &ptr<i64>) -> i64 {
-    return collection_len(ast) / 6;
+fn node1(c: i64, kind: i64, a: i64, pos: i64) -> i64 {
+    return node_new(c, kind, a, -1, -1, -1, -1, pos);
 }
 
-fn ast_push_node(ast: &ptr<i64>, node: &AstNode) -> i64 {
-    let node_index = ast_node_count(ast);
-    let kind: i64 = node.0;
-    let value: i64 = node.1;
-    let auxiliary: i64 = node.2;
-    let start: i64 = node.3;
-    let end: i64 = node.4;
-    let flags: i64 = node.5;
-    let _kind_slot = collection_push(ast, kind);
-    let _value_slot = collection_push(ast, value);
-    let _auxiliary_slot = collection_push(ast, auxiliary);
-    let _start_slot = collection_push(ast, start);
-    let _end_slot = collection_push(ast, end);
-    let _flags_slot = collection_push(ast, flags);
-    return node_index;
+fn node2(c: i64, kind: i64, a: i64, b: i64, pos: i64) -> i64 {
+    return node_new(c, kind, a, b, -1, -1, -1, pos);
 }
 
-fn ast_node_field(ast: &ptr<i64>, node_index: i64, field: i64) -> i64 {
-    if node_index < 0 {
-        return 0;
+fn node3(c: i64, kind: i64, a: i64, b: i64, d3: i64, pos: i64) -> i64 {
+    return node_new(c, kind, a, b, d3, -1, -1, pos);
+}
+
+fn node_count(c: i64) -> i64 { return vlen(cx(c, CX_NODES)) / N_WIDTH; }
+fn nk(c: i64, n: i64) -> i64 { return vget(cx(c, CX_NODES), n * N_WIDTH); }
+fn na(c: i64, n: i64) -> i64 { return vget(cx(c, CX_NODES), n * N_WIDTH + 1); }
+fn nb(c: i64, n: i64) -> i64 { return vget(cx(c, CX_NODES), n * N_WIDTH + 2); }
+fn nc(c: i64, n: i64) -> i64 { return vget(cx(c, CX_NODES), n * N_WIDTH + 3); }
+fn nd(c: i64, n: i64) -> i64 { return vget(cx(c, CX_NODES), n * N_WIDTH + 4); }
+fn ne(c: i64, n: i64) -> i64 { return vget(cx(c, CX_NODES), n * N_WIDTH + 5); }
+fn npos(c: i64, n: i64) -> i64 { return vget(cx(c, CX_NODES), n * N_WIDTH + 6); }
+
+fn prim_type(c: i64, code: i64) -> i64 {
+    return node1(c, T_PRIM, code, -1);
+}
+
+fn is_prim(c: i64, ty: i64, code: i64) -> bool {
+    if ty < 0 {
+        return false;
     }
-    if node_index >= ast_node_count(ast) {
-        return 0;
+    if nk(c, ty) != T_PRIM {
+        return false;
     }
-    if field < 0 || field >= 6 {
-        return 0;
-    }
-    return collection_get(ast, node_index * 6 + field);
+    return na(c, ty) == code;
 }
 
-fn ast_node_kind(ast: &ptr<i64>, node_index: i64) -> i64 {
-    return ast_node_field(ast, node_index, 0);
-}
-
-fn ast_node_value(ast: &ptr<i64>, node_index: i64) -> i64 {
-    return ast_node_field(ast, node_index, 1);
-}
-
-fn ast_node_auxiliary(ast: &ptr<i64>, node_index: i64) -> i64 {
-    return ast_node_field(ast, node_index, 2);
-}
-
-fn ast_node_start(ast: &ptr<i64>, node_index: i64) -> i64 {
-    return ast_node_field(ast, node_index, 3);
-}
-
-fn ast_node_end(ast: &ptr<i64>, node_index: i64) -> i64 {
-    return ast_node_field(ast, node_index, 4);
-}
-
-fn ast_node_flags(ast: &ptr<i64>, node_index: i64) -> i64 {
-    return ast_node_field(ast, node_index, 5);
-}
-
-fn ast_node_extra(ast: &ptr<i64>, node_index: i64) -> i64 {
-    return ast_node_field(ast, node_index, 5);
-}
-
-fn ast_literal_node(kind: i64, value: i64, start: i64, end: i64) -> AstNode {
-    return (kind, value, -1, start, end, 0);
-}
-
-fn ast_identifier_node(start: i64, end: i64) -> AstNode {
-    return (ast_kind_identifier(), 0, -1, start, end, 0);
-}
-
-fn ast_unary_node(operator: i64, operand: i64, start: i64, end: i64) -> AstNode {
-    return (ast_kind_unary(), operator, operand, start, end, 0);
-}
-
-fn ast_binary_node(operator: i64, left: i64, right: i64, start: i64, end: i64) -> AstNode {
-    return (ast_kind_binary(), operator, right, start, end, left);
-}
-
-fn ast_let_node(name: i64, initializer: i64, mutable: bool, start: i64, end: i64) -> AstNode {
-    let mut flags: i64 = 0;
-    if mutable {
-        flags = 1;
-    }
-    return (ast_kind_let(), name, initializer, start, end, flags);
-}
-
-fn ast_return_node(value: i64, start: i64, end: i64) -> AstNode {
-    return (ast_kind_return(), value, -1, start, end, 0);
-}
-
-fn ast_expression_statement_node(value: i64, start: i64, end: i64) -> AstNode {
-    return (ast_kind_expression_statement(), value, -1, start, end, 0);
-}
-
-fn ast_error_node(start: i64, end: i64, error_code: i64) -> AstNode {
-    return (ast_kind_error(), error_code, -1, start, end, 0);
+fn is_comparison_op(op: i64) -> bool {
+    return op >= OP_EQ && op <= OP_GTE;
 }

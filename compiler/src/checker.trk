@@ -1,0 +1,1655 @@
+// checker.trk — linear ownership checker.
+//
+// Implements the rules of the bootstrap `LinearChecker` (src/checker/):
+// non-copy values move on use, `&x` borrows without moving, a reference
+// stored in a variable freezes its target while the reference is live,
+// `with x -> l { }` locks `x` for the block, both arms of an `if` must leave
+// every resource in the same state, loops may not consume outer resources,
+// references may not escape their function, and lenses may not escape
+// their block.
+//
+// Variables live in a slot table (VW words per slot) instead of cloned
+// maps: each slot records its name, ownership state, type, mutability,
+// lens-alias flag, the previous slot with the same name (shadowing chain),
+// its borrow provenance, and a dead flag. Branches snapshot and restore
+// slot states.
+
+import "base";
+import "lexer";
+import "ast";
+import "symbols";
+
+const ST_ACTIVE = 0;
+const ST_LOCKED = 1;
+const ST_SPENT = 2;
+
+const VW = 8;
+const V_NAME = 0;
+const V_STATE = 1;
+const V_TYPE = 2;
+const V_MUT = 3;
+const V_LENS = 4;
+const V_PREV = 5;
+const V_BORROWS = 6;
+const V_DEAD = 7;
+
+// Checker state slots (vector stored in CX_CHK)
+const CK_VARS = 0;
+const CK_LENSLOCK = 1;   // names currently locked by a lens
+const CK_LENSCOUNT = 2;  // live lens aliases
+const CK_FLOOR = 3;      // slots below this index are invisible (macro bodies)
+const CK_RET = 4;        // current return type (-1 = none)
+const CK_PARAMS = 5;     // vector of current parameter names
+const CK_GENERICS = 6;   // list of current generic parameter names
+const CK_FNNAMES = 7;    // names present in the function table, in order
+const CK_STAMP = 8;
+const CK_TY_I32 = 9;
+const CK_TY_BOOL = 10;
+const CK_TY_VOID = 11;
+const CK_TY_STRLIT = 12;
+const CK_TY_I64 = 13;
+const CK_NBORROW = 14;   // slots that ever stored provenance
+const CK_SLOTS = 15;
+
+fn ck(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_CHK), slot); }
+fn ck_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_CHK), slot, v); }
+
+fn cfail(c: i64, n: i64, message: i64) -> i64 {
+    let mut pos: i64 = -1;
+    if n >= 0 {
+        pos = npos(c, n);
+    }
+    return fail_at(c, pos, "E0200", message);
+}
+
+fn quoted(c: i64, name: i64) -> i64 {
+    return text_cat3("'", name_text(c, name), "'");
+}
+
+// ------------------------------------------------------------------ types
+
+fn ty_custom(c: i64, text: i64) -> i64 {
+    return node1(c, T_CUSTOM, intern(c, text), -1);
+}
+
+fn ty_ref(c: i64, inner: i64) -> i64 {
+    return node1(c, T_REF, inner, -1);
+}
+
+fn is_generic_param(c: i64, name: i64) -> bool {
+    let g = ck(c, CK_GENERICS);
+    let mut i: i64 = 0;
+    while i < list_len(c, g) {
+        if list_at(c, g, i) == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn ty_is_copy(c: i64, t: i64) -> bool {
+    if t < 0 {
+        return false;
+    }
+    let k = nk(c, t);
+    if k == T_PRIM {
+        return na(c, t) != PRIM_VOID;
+    }
+    if k == T_REF {
+        return true;
+    }
+    if k == T_CUSTOM {
+        return is_generic_param(c, na(c, t));
+    }
+    return false;
+}
+
+fn ty_is_ref(c: i64, t: i64) -> bool {
+    return t >= 0 && nk(c, t) == T_REF;
+}
+
+// ----------------------------------------------------- function table
+
+fn fn_known(c: i64, name: i64) -> bool { return ni(c, name, NI_FNKNOWN) == 1; }
+
+fn fn_register(c: i64, name: i64, ret: i64) -> i64 {
+    if !fn_known(c, name) {
+        ni_set(c, name, NI_FNKNOWN, 1);
+        vpush(ck(c, CK_FNNAMES), name);
+    }
+    ni_set(c, name, NI_FNRET, ret);
+    return 0;
+}
+
+fn bi(c: i64, name: i64, ret: i64) -> i64 {
+    return fn_register(c, intern(c, name), ret);
+}
+
+// The prelude of the bootstrap checker (`LinearChecker::check_program`).
+fn register_builtins(c: i64) -> i64 {
+    let t_void = ck(c, CK_TY_VOID);
+    let t_i32 = ck(c, CK_TY_I32);
+    let t_i64 = ck(c, CK_TY_I64);
+    let t_bool = ck(c, CK_TY_BOOL);
+    let t_u8 = prim_type(c, PRIM_U8);
+    let t_u32 = prim_type(c, PRIM_U32);
+    let t_u64 = prim_type(c, PRIM_U64);
+    let t_str = ty_custom(c, "Str");
+    let t_bytes = node1(c, T_PTR, ty_custom(c, "u8"), -1);
+    bi(c, "print", t_void);
+    bi(c, "alloc", t_bytes);
+    bi(c, "memset", t_void);
+    bi(c, "memcpy", t_void);
+    bi(c, "memcmp", t_i32);
+    bi(c, "str_len", t_u32);
+    bi(c, "str_eq", t_bool);
+    bi(c, "str_from_literal", t_str);
+    bi(c, "str_concat", t_str);
+    bi(c, "vec_init", ty_custom(c, "Vec"));
+    bi(c, "vec_push", t_void);
+    bi(c, "vec_get", t_i32);
+    bi(c, "vec_set", t_void);
+    bi(c, "vec_pop", t_i32);
+    bi(c, "print_str", t_void);
+    bi(c, "print_int", t_void);
+    bi(c, "print_hex", t_void);
+    bi(c, "read_line", t_str);
+    bi(c, "file_open", node1(c, T_PTR, ty_custom(c, "File"), -1));
+    bi(c, "file_read_all", t_str);
+    bi(c, "file_write", t_void);
+    bi(c, "ring_init", ty_custom(c, "Ring"));
+    bi(c, "ring_push", t_bool);
+    bi(c, "ring_pop", t_i32);
+    bi(c, "ring_peek", t_i32);
+    bi(c, "ring_full", t_bool);
+    bi(c, "ring_empty", t_bool);
+    bi(c, "ring_count", t_u32);
+    bi(c, "math_clamp", t_i64);
+    bi(c, "math_random", t_u64);
+    bi(c, "str_find", t_i64);
+    bi(c, "str_to_int", t_i64);
+    bi(c, "int_to_str", t_str);
+    bi(c, "file_remove", t_i32);
+    bi(c, "file_size", t_i64);
+    bi(c, "sys_exec", t_i32);
+    bi(c, "sys_set_memory_limit", t_void);
+    bi(c, "sys_get_memory_used", t_i64);
+    bi(c, "env_get", t_str);
+    bi(c, "math_abs", t_i64);
+    bi(c, "math_min", t_i64);
+    bi(c, "math_max", t_i64);
+    bi(c, "math_pow", t_i64);
+    bi(c, "math_sqrt", t_i64);
+    bi(c, "math_floor", t_i64);
+    bi(c, "math_ceil", t_i64);
+    bi(c, "math_round", t_i64);
+    bi(c, "print_err", t_void);
+    bi(c, "eprint", t_void);
+    bi(c, "str_contains", t_i64);
+    bi(c, "str_is_int", t_i32);
+    bi(c, "abort", t_void);
+    bi(c, "env_exists", t_i32);
+    bi(c, "net_socket_tcp_listen", t_i32);
+    bi(c, "net_socket_accept", t_i32);
+    bi(c, "net_socket_connect", t_i32);
+    bi(c, "net_socket_send", t_i64);
+    bi(c, "net_socket_recv", t_i64);
+    bi(c, "net_socket_close", t_void);
+    bi(c, "os_args_count", t_i32);
+    bi(c, "os_arg", t_str);
+    bi(c, "dir_exists", t_bool);
+    bi(c, "file_copy", t_i32);
+    bi(c, "process_spawn", t_i32);
+    bi(c, "char_is_digit", t_bool);
+    bi(c, "char_is_alpha", t_bool);
+    bi(c, "char_is_alphanumeric", t_bool);
+    bi(c, "char_is_space", t_bool);
+    bi(c, "char_to_upper", t_u8);
+    bi(c, "char_to_lower", t_u8);
+    bi(c, "str_starts_with", t_bool);
+    bi(c, "str_ends_with", t_bool);
+    bi(c, "str_substr", t_str);
+    bi(c, "str_trim", t_str);
+    bi(c, "str_char_at", t_u8);
+    bi(c, "mem_realloc", t_bytes);
+    bi(c, "vec_reserve", t_void);
+    bi(c, "vec_clear", t_void);
+    bi(c, "vec_len", t_i32);
+    bi(c, "path_basename", t_str);
+    bi(c, "path_ext", t_str);
+    bi(c, "path_join", t_str);
+    // Runtime support used by the self-hosted compiler (word ABI).
+    bi(c, "track_i64_collection_new", t_i64);
+    bi(c, "track_i64_collection_len", t_i64);
+    bi(c, "track_i64_collection_push", t_i64);
+    bi(c, "track_i64_collection_get", t_i64);
+    bi(c, "track_i64_collection_set", t_i64);
+    bi(c, "track_i64_collection_pop", t_i64);
+    bi(c, "track_i64_collection_truncate", t_i64);
+    bi(c, "track_sb_new", t_i64);
+    bi(c, "track_sb_push", t_i64);
+    bi(c, "track_sb_push_byte", t_i64);
+    bi(c, "track_sb_push_int", t_i64);
+    bi(c, "track_sb_len", t_i64);
+    bi(c, "track_sb_str", t_i64);
+    bi(c, "track_sb_clear", t_i64);
+    bi(c, "track_str_bytes", t_i64);
+    bi(c, "track_file_read", t_i64);
+    bi(c, "track_file_write_all", t_i64);
+    bi(c, "track_out", t_i64);
+    bi(c, "track_err", t_i64);
+    bi(c, "track_words_copy", t_i64);
+    bi(c, "sys_exit", t_i64);
+    bi(c, "clock_ms", t_i64);
+    return 0;
+}
+
+// Exports of the built-in namespaces, as (name, return type) pairs.
+fn std_exports(c: i64, path: i64) -> i64 {
+    let t_void = ck(c, CK_TY_VOID);
+    let t_i32 = ck(c, CK_TY_I32);
+    let t_i64 = ck(c, CK_TY_I64);
+    let t_bool = ck(c, CK_TY_BOOL);
+    let t_vptr = node1(c, T_PTR, t_void, -1);
+    let e = vnew();
+    if text_eq(path, "std") {
+        vpush(e, "print"); vpush(e, t_void);
+        vpush(e, "println"); vpush(e, t_void);
+        vpush(e, "eprint"); vpush(e, t_void);
+        vpush(e, "read"); vpush(e, t_i64);
+        vpush(e, "alloc"); vpush(e, t_vptr);
+        vpush(e, "dealloc"); vpush(e, t_void);
+        vpush(e, "exit"); vpush(e, t_void);
+        vpush(e, "abort"); vpush(e, t_void);
+        vpush(e, "clock_ms"); vpush(e, t_i64);
+        vpush(e, "io::print"); vpush(e, t_void);
+        vpush(e, "io::println"); vpush(e, t_void);
+        vpush(e, "io::read"); vpush(e, t_i64);
+        vpush(e, "io::eprint"); vpush(e, t_void);
+        vpush(e, "fs::file_open"); vpush(e, t_vptr);
+        vpush(e, "fs::file_close"); vpush(e, t_void);
+        vpush(e, "fs::file_exists"); vpush(e, t_i32);
+        vpush(e, "fs::file_copy"); vpush(e, t_i32);
+        vpush(e, "fs::file_size"); vpush(e, t_i64);
+        vpush(e, "fs::dir_exists"); vpush(e, t_bool);
+        vpush(e, "mem::alloc"); vpush(e, t_vptr);
+        vpush(e, "mem::dealloc"); vpush(e, t_void);
+        vpush(e, "sys::exit"); vpush(e, t_void);
+        vpush(e, "sys::abort"); vpush(e, t_void);
+        vpush(e, "sys::clock_ms"); vpush(e, t_i64);
+        vpush(e, "char::char_is_digit"); vpush(e, t_bool);
+        vpush(e, "str::str_find"); vpush(e, t_i64);
+        vpush(e, "process::process_spawn"); vpush(e, t_i32);
+        vpush(e, "net::net_socket_tcp_listen"); vpush(e, t_i32);
+    } else if text_eq(path, "std/io") {
+        vpush(e, "print"); vpush(e, t_void);
+        vpush(e, "println"); vpush(e, t_void);
+        vpush(e, "read"); vpush(e, t_i64);
+        vpush(e, "eprint"); vpush(e, t_void);
+    } else if text_eq(path, "std/fs") {
+        vpush(e, "file_open"); vpush(e, t_vptr);
+        vpush(e, "file_close"); vpush(e, t_void);
+        vpush(e, "file_exists"); vpush(e, t_i32);
+    } else if text_eq(path, "std/sys") {
+        vpush(e, "exit"); vpush(e, t_void);
+        vpush(e, "abort"); vpush(e, t_void);
+        vpush(e, "clock_ms"); vpush(e, t_i64);
+    } else if text_eq(path, "std/mem") {
+        vpush(e, "alloc"); vpush(e, t_vptr);
+        vpush(e, "dealloc"); vpush(e, t_void);
+    } else if text_eq(path, "math/vec") {
+        vpush(e, "add"); vpush(e, t_i64);
+        vpush(e, "sub"); vpush(e, t_i64);
+        vpush(e, "dot"); vpush(e, t_i64);
+        vpush(e, "cross"); vpush(e, t_i64);
+    }
+    return e;
+}
+
+// Index of `name` (text) in an exports vector, or -1.
+fn export_index(exports: i64, name: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(exports) {
+        if text_eq(vget(exports, i), name) {
+            return i;
+        }
+        i = i + 2;
+    }
+    return -1;
+}
+
+fn check_use(c: i64, n: i64) -> i64 {
+    let path = na(c, n);
+    let norm = normalize_path_text(path);
+    if !builtin_namespace(norm) {
+        return 0; // local modules are part of the loaded program
+    }
+    let exports = std_exports(c, norm);
+    let imports = nb(c, n);
+    let alias = nc(c, n);
+    let mut default_ns = path;
+    let slash = last_slash(path);
+    if slash >= 0 {
+        default_ns = str_substr(path, slash + 1, text_len(path) - slash - 1);
+    }
+    if imports >= 0 {
+        let mut i: i64 = 0;
+        while i < list_len(c, imports) {
+            let item = list_at(c, imports, i);
+            let idx = export_index(exports, name_text(c, item));
+            if idx < 0 {
+                cfail(c, n, text_cat3("Module '", path, text_cat3("' does not export '", name_text(c, item), "'")));
+            }
+            if alias >= 0 && list_len(c, imports) == 1 {
+                fn_register(c, alias, vget(exports, idx + 1));
+            } else if alias >= 0 {
+                fn_register(c, intern(c, text_cat3(name_text(c, alias), "::", name_text(c, item))), vget(exports, idx + 1));
+            } else {
+                fn_register(c, item, vget(exports, idx + 1));
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    let mut prefix = default_ns;
+    if alias >= 0 {
+        prefix = name_text(c, alias);
+    }
+    let mut j: i64 = 0;
+    while j < vlen(exports) {
+        fn_register(c, intern(c, text_cat3(prefix, "::", vget(exports, j))), vget(exports, j + 1));
+        j = j + 2;
+    }
+    return 0;
+}
+
+fn normalize_path_text(path: i64) -> i64 {
+    let bytes = text_bytes(path);
+    let sb = sb_new();
+    let mut i: i64 = 0;
+    while i < vlen(bytes) {
+        let b = vget(bytes, i);
+        if b == 58 && vget(bytes, i + 1) == 58 {
+            sb_byte(sb, 47);
+            i = i + 2;
+        } else {
+            sb_byte(sb, b);
+            i = i + 1;
+        }
+    }
+    return sb_text(sb);
+}
+
+fn builtin_namespace(path: i64) -> bool {
+    if text_eq(path, "std") { return true; }
+    if text_eq(path, "std/io") { return true; }
+    if text_eq(path, "std/fs") { return true; }
+    if text_eq(path, "std/sys") { return true; }
+    if text_eq(path, "std/mem") { return true; }
+    return text_eq(path, "math/vec");
+}
+
+// ------------------------------------------------------------ variables
+
+fn vars(c: i64) -> i64 { return ck(c, CK_VARS); }
+fn var_count(c: i64) -> i64 { return vlen(vars(c)) / VW; }
+fn vf(c: i64, slot: i64, field: i64) -> i64 { return vget(vars(c), slot * VW + field); }
+fn vf_set(c: i64, slot: i64, field: i64, x: i64) -> i64 { return vset(vars(c), slot * VW + field, x); }
+
+// Newest visible slot named `name`, or -1.
+fn lookup(c: i64, name: i64) -> i64 {
+    let slot = ni(c, name, NI_VARSLOT);
+    if slot < ck(c, CK_FLOOR) {
+        return -1;
+    }
+    return slot;
+}
+
+fn declare(c: i64, name: i64, ty: i64, mutable: i64) -> i64 {
+    let v = vars(c);
+    let slot = var_count(c);
+    vpush(v, name);
+    vpush(v, ST_ACTIVE);
+    vpush(v, ty);
+    vpush(v, mutable);
+    vpush(v, 0);
+    vpush(v, ni(c, name, NI_VARSLOT));
+    vpush(v, -1);
+    vpush(v, 0);
+    ni_set(c, name, NI_VARSLOT, slot);
+    return slot;
+}
+
+// Remove a slot from name lookup (lens names leave scope at block end).
+fn kill_slot(c: i64, slot: i64) -> i64 {
+    let name = vf(c, slot, V_NAME);
+    if ni(c, name, NI_VARSLOT) == slot {
+        ni_set(c, name, NI_VARSLOT, vf(c, slot, V_PREV));
+    }
+    vf_set(c, slot, V_DEAD, 1);
+    if vf(c, slot, V_LENS) == 1 {
+        ck_set(c, CK_LENSCOUNT, ck(c, CK_LENSCOUNT) - 1);
+    }
+    return 0;
+}
+
+fn truncate_vars(c: i64, count: i64) -> i64 {
+    let mut slot = var_count(c) - 1;
+    while slot >= count {
+        if vf(c, slot, V_DEAD) == 0 {
+            kill_slot(c, slot);
+        }
+        slot = slot - 1;
+    }
+    vtrunc(vars(c), count * VW);
+    return 0;
+}
+
+// Live slots that would be present in the bootstrap checker's registry.
+fn slot_visible(c: i64, slot: i64) -> bool {
+    if slot < ck(c, CK_FLOOR) {
+        return false;
+    }
+    if vf(c, slot, V_DEAD) == 1 {
+        return false;
+    }
+    return ni(c, vf(c, slot, V_NAME), NI_VARSLOT) == slot;
+}
+
+// Snapshot: [count, (state, type, borrows)*count, lens-lock length, lens count]
+fn snapshot(c: i64) -> i64 {
+    let n = var_count(c);
+    let s = vnew_cap(n * 3 + 4);
+    vpush(s, n);
+    let mut i: i64 = 0;
+    while i < n {
+        vpush(s, vf(c, i, V_STATE));
+        vpush(s, vf(c, i, V_TYPE));
+        vpush(s, vf(c, i, V_BORROWS));
+        i = i + 1;
+    }
+    vpush(s, vlen(ck(c, CK_LENSLOCK)));
+    vpush(s, ck(c, CK_LENSCOUNT));
+    return s;
+}
+
+fn restore(c: i64, s: i64) -> i64 {
+    let n = vget(s, 0);
+    truncate_vars(c, n);
+    let mut i: i64 = 0;
+    while i < n {
+        vf_set(c, i, V_STATE, vget(s, 1 + i * 3));
+        vf_set(c, i, V_TYPE, vget(s, 2 + i * 3));
+        vf_set(c, i, V_BORROWS, vget(s, 3 + i * 3));
+        i = i + 1;
+    }
+    vtrunc(ck(c, CK_LENSLOCK), vget(s, 1 + n * 3));
+    ck_set(c, CK_LENSCOUNT, vget(s, 2 + n * 3));
+    return 0;
+}
+
+fn state_name(st: i64) -> i64 {
+    if st == ST_ACTIVE { return "Active"; }
+    if st == ST_LOCKED { return "Locked"; }
+    return "Spent";
+}
+
+fn is_copy_name(c: i64, name: i64, slot: i64) -> bool {
+    if is_qualified(c, name) {
+        return true;
+    }
+    return ty_is_copy(c, vf(c, slot, V_TYPE));
+}
+
+fn read_or_move(c: i64, n: i64, name: i64) -> i64 {
+    let slot = lookup(c, name);
+    if slot < 0 {
+        return cfail(c, n, text_cat3("Undeclared variable ", quoted(c, name), "."));
+    }
+    let st = vf(c, slot, V_STATE);
+    if st == ST_SPENT {
+        return cfail(c, n, text_cat3("Use-after-free! Resource ", quoted(c, name), " is already spent."));
+    }
+    if st == ST_LOCKED {
+        return cfail(c, n, text_cat3("Resource ", quoted(c, name), " is frozen (either locked in a lens or borrowed)."));
+    }
+    if !is_copy_name(c, name, slot) && vf(c, slot, V_LENS) == 0 {
+        vf_set(c, slot, V_STATE, ST_SPENT);
+    }
+    return 0;
+}
+
+fn lens_locked_name(c: i64, name: i64) -> bool {
+    let locks = ck(c, CK_LENSLOCK);
+    let mut i: i64 = 0;
+    while i < vlen(locks) {
+        if vget(locks, i) == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn update_borrow_states(c: i64) -> i64 {
+    let n = var_count(c);
+    let floor = ck(c, CK_FLOOR);
+    if ck(c, CK_NBORROW) == 0 && vlen(ck(c, CK_LENSLOCK)) == 0 {
+        let mut i = floor;
+        while i < n {
+            if vf(c, i, V_STATE) == ST_LOCKED && slot_visible(c, i) {
+                vf_set(c, i, V_STATE, ST_ACTIVE);
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    let stamp = ck(c, CK_STAMP) + 1;
+    ck_set(c, CK_STAMP, stamp);
+    let locks = ck(c, CK_LENSLOCK);
+    let mut l: i64 = 0;
+    while l < vlen(locks) {
+        ni_set(c, vget(locks, l), NI_MARK, stamp);
+        l = l + 1;
+    }
+    let mut i = floor;
+    while i < n {
+        let b = vf(c, i, V_BORROWS);
+        if b >= 0 && vf(c, i, V_STATE) == ST_ACTIVE && slot_visible(c, i) {
+            let mut j: i64 = 0;
+            while j < vlen(b) {
+                ni_set(c, vget(b, j), NI_MARK, stamp);
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    let mut s = floor;
+    while s < n {
+        if slot_visible(c, s) {
+            let locked = ni(c, vf(c, s, V_NAME), NI_MARK) == stamp;
+            let st = vf(c, s, V_STATE);
+            if locked && st == ST_ACTIVE {
+                vf_set(c, s, V_STATE, ST_LOCKED);
+            } else if !locked && st == ST_LOCKED {
+                vf_set(c, s, V_STATE, ST_ACTIVE);
+            }
+        }
+        s = s + 1;
+    }
+    return 0;
+}
+
+fn set_borrows(c: i64, slot: i64, prov: i64) -> i64 {
+    vf_set(c, slot, V_BORROWS, prov);
+    if prov >= 0 {
+        ck_set(c, CK_NBORROW, ck(c, CK_NBORROW) + 1);
+    }
+    return 0;
+}
+
+// --------------------------------------------------------- type inference
+
+fn var_type(c: i64, name: i64) -> i64 {
+    let slot = lookup(c, name);
+    if slot < 0 {
+        return -1;
+    }
+    return vf(c, slot, V_TYPE);
+}
+
+fn last_of(c: i64, body: i64) -> i64 {
+    let n = list_len(c, body);
+    if n == 0 {
+        return -1;
+    }
+    return list_at(c, body, n - 1);
+}
+
+fn infer_last(c: i64, body: i64) -> i64 {
+    let last = last_of(c, body);
+    if last < 0 {
+        return -1;
+    }
+    return infer_type(c, last);
+}
+
+// Replace generic parameter names in `ty` using argument types.
+fn subst_generic(c: i64, ty: i64, f: i64, args: i64) -> i64 {
+    if ty < 0 {
+        return -1;
+    }
+    if nk(c, ty) == T_CUSTOM {
+        let generics = nb(c, f);
+        let name = na(c, ty);
+        let mut g: i64 = 0;
+        while g < list_len(c, generics) {
+            if list_at(c, generics, g) == name {
+                let params = nc(c, f);
+                let mut p: i64 = 0;
+                while p < list_len(c, params) && p / 2 < list_len(c, args) {
+                    let pty = list_at(c, params, p + 1);
+                    if nk(c, pty) == T_CUSTOM && na(c, pty) == name {
+                        return infer_type(c, list_at(c, args, p / 2));
+                    }
+                    p = p + 2;
+                }
+                return ck(c, CK_TY_I32);
+            }
+            g = g + 1;
+        }
+        return ty;
+    }
+    if nk(c, ty) == T_TUPLE {
+        let elems = na(c, ty);
+        let mark = list_begin(c);
+        let mut i: i64 = 0;
+        while i < list_len(c, elems) {
+            let e = subst_generic(c, list_at(c, elems, i), f, args);
+            list_item(c, e);
+            i = i + 1;
+        }
+        return node1(c, T_TUPLE, list_end(c, mark), -1);
+    }
+    return ty;
+}
+
+fn call_type(c: i64, name: i64, args: i64) -> i64 {
+    if !fn_known(c, name) {
+        return -1;
+    }
+    let ret = ni(c, name, NI_FNRET);
+    let f = ni(c, name, NI_FN);
+    if f >= 0 && nk(c, f) == K_FN && list_len(c, nb(c, f)) > 0 {
+        return subst_generic(c, ret, f, args);
+    }
+    return ret;
+}
+
+fn tuple_elems_of(c: i64, t: i64) -> i64 {
+    if t < 0 {
+        return -1;
+    }
+    if nk(c, t) == T_TUPLE {
+        return na(c, t);
+    }
+    if nk(c, t) == T_REF {
+        let inner = na(c, t);
+        if inner >= 0 && nk(c, inner) == T_TUPLE {
+            return na(c, inner);
+        }
+    }
+    return -1;
+}
+
+fn infer_type(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_INT { return ck(c, CK_TY_I32); }
+    if k == K_BOOL { return ck(c, CK_TY_BOOL); }
+    if k == K_STR { return ck(c, CK_TY_STRLIT); }
+    if k == K_VAR { return var_type(c, na(c, n)); }
+    if k == K_BIN {
+        if is_comparison_op(na(c, n)) {
+            return ck(c, CK_TY_BOOL);
+        }
+        return infer_type(c, nb(c, n));
+    }
+    if k == K_UN {
+        let op = na(c, n);
+        if op == OP_NOT { return ck(c, CK_TY_BOOL); }
+        if op == OP_NEG { return infer_type(c, nb(c, n)); }
+        let inner = infer_type(c, nb(c, n));
+        if inner >= 0 && (nk(c, inner) == T_PTR || nk(c, inner) == T_REF) {
+            return na(c, inner);
+        }
+        return -1;
+    }
+    if k == K_ARRAY {
+        let elems = na(c, n);
+        let mut elem = ck(c, CK_TY_I32);
+        if list_len(c, elems) > 0 {
+            let first = infer_type(c, list_at(c, elems, 0));
+            if first >= 0 {
+                elem = first;
+            }
+        }
+        return node2(c, T_ARRAY, elem, list_len(c, elems), -1);
+    }
+    if k == K_TUPLE {
+        let elems = na(c, n);
+        let mark = list_begin(c);
+        let mut i: i64 = 0;
+        while i < list_len(c, elems) {
+            let mut t = infer_type(c, list_at(c, elems, i));
+            if t < 0 {
+                t = ck(c, CK_TY_I32);
+            }
+            list_item(c, t);
+            i = i + 1;
+        }
+        return node1(c, T_TUPLE, list_end(c, mark), -1);
+    }
+    if k == K_TINDEX {
+        let elems = tuple_elems_of(c, infer_type(c, na(c, n)));
+        if elems < 0 || nb(c, n) >= list_len(c, elems) {
+            return -1;
+        }
+        return list_at(c, elems, nb(c, n));
+    }
+    if k == K_INDEX {
+        let t = infer_type(c, na(c, n));
+        if t < 0 {
+            return -1;
+        }
+        let tk = nk(c, t);
+        if tk == T_ARRAY || tk == T_PTR || tk == T_SLICE {
+            return na(c, t);
+        }
+        if tk == T_REF {
+            let inner = na(c, t);
+            let ik = nk(c, inner);
+            if ik == T_ARRAY || ik == T_PTR || ik == T_SLICE {
+                return na(c, inner);
+            }
+            return inner;
+        }
+        return -1;
+    }
+    if k == K_SLICE {
+        let t = infer_type(c, na(c, n));
+        if t < 0 {
+            return -1;
+        }
+        let tk = nk(c, t);
+        if tk == T_ARRAY || tk == T_PTR || tk == T_SLICE {
+            return node1(c, T_SLICE, na(c, t), -1);
+        }
+        if tk == T_REF {
+            let inner = na(c, t);
+            let ik = nk(c, inner);
+            if ik == T_ARRAY || ik == T_PTR || ik == T_SLICE {
+                return node1(c, T_SLICE, na(c, inner), -1);
+            }
+        }
+        return -1;
+    }
+    if k == K_ADDR {
+        let t = infer_type(c, na(c, n));
+        if t < 0 {
+            return -1;
+        }
+        return ty_ref(c, t);
+    }
+    if k == K_SINIT { return node1(c, T_CUSTOM, na(c, n), -1); }
+    if k == K_CALL { return call_type(c, na(c, n), nb(c, n)); }
+    if k == K_LENS { return infer_last(c, nc(c, n)); }
+    if k == K_IF { return infer_last(c, nb(c, n)); }
+    if k == K_MACROCALL {
+        if text_eq(name_text(c, na(c, n)), "now") {
+            return ck(c, CK_TY_I64);
+        }
+        return call_type(c, na(c, n), nb(c, n));
+    }
+    if k == K_MATCH {
+        let arms = nb(c, n);
+        if list_len(c, arms) == 0 {
+            return -1;
+        }
+        return infer_type(c, list_at(c, arms, 2));
+    }
+    return ck(c, CK_TY_VOID);
+}
+
+// ------------------------------------------------------------ provenance
+
+fn prov_add(v: i64, name: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(v) {
+        if vget(v, i) == name {
+            return 0;
+        }
+        i = i + 1;
+    }
+    vpush(v, name);
+    return 0;
+}
+
+fn prov_merge(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(src) {
+        prov_add(dst, vget(src, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Names whose storage an expression may reference.
+fn provenance(c: i64, n: i64) -> i64 {
+    let out = vnew();
+    let k = nk(c, n);
+    if k == K_ADDR {
+        let target = na(c, n);
+        if nk(c, target) == K_VAR {
+            vpush(out, na(c, target));
+        } else if nk(c, target) == K_INDEX {
+            prov_merge(out, provenance(c, na(c, target)));
+        } else {
+            prov_merge(out, provenance(c, target));
+        }
+    } else if k == K_VAR {
+        let slot = lookup(c, na(c, n));
+        if slot >= 0 && vf(c, slot, V_BORROWS) >= 0 {
+            prov_merge(out, vf(c, slot, V_BORROWS));
+        } else if slot >= 0 && ty_is_ref(c, vf(c, slot, V_TYPE)) {
+            vpush(out, na(c, n));
+        }
+    } else if k == K_CALL {
+        let args = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            let a = list_at(c, args, i);
+            if ty_is_ref(c, infer_type(c, a)) {
+                prov_merge(out, provenance(c, a));
+            }
+            i = i + 1;
+        }
+    } else if k == K_IF {
+        let t = last_of(c, nb(c, n));
+        if t >= 0 {
+            prov_merge(out, provenance(c, t));
+        }
+        let e = last_of(c, nc(c, n));
+        if e >= 0 {
+            prov_merge(out, provenance(c, e));
+        }
+    } else if k == K_LENS {
+        let l = last_of(c, nc(c, n));
+        if l >= 0 {
+            prov_merge(out, provenance(c, l));
+        }
+    }
+    return out;
+}
+
+fn check_escape(c: i64, n: i64, value: i64) -> i64 {
+    let prov = provenance(c, value);
+    let params = ck(c, CK_PARAMS);
+    let mut i: i64 = 0;
+    while i < vlen(prov) {
+        let name = vget(prov, i);
+        let mut is_param = false;
+        let mut j: i64 = 0;
+        while j < vlen(params) {
+            if vget(params, j) == name {
+                is_param = true;
+            }
+            j = j + 1;
+        }
+        if !is_param {
+            cfail(c, n, text_cat3("Cannot return reference to local variable ", quoted(c, name), " (escapes function scope)."));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ------------------------------------------------------- lens escapes
+
+fn lens_in_list(c: i64, l: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        let found = find_lens(c, list_at(c, l, i));
+        if found >= 0 {
+            return found;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn lens_in_either(c: i64, a: i64, b: i64) -> i64 {
+    if a >= 0 {
+        let found = find_lens(c, a);
+        if found >= 0 {
+            return found;
+        }
+    }
+    if b >= 0 {
+        return find_lens(c, b);
+    }
+    return -1;
+}
+
+// Name of a lens alias the expression would move or store, or -1.
+fn find_lens(c: i64, n: i64) -> i64 {
+    if ck(c, CK_LENSCOUNT) == 0 {
+        return -1;
+    }
+    let k = nk(c, n);
+    if k == K_VAR {
+        let slot = lookup(c, na(c, n));
+        if slot >= 0 && vf(c, slot, V_LENS) == 1 {
+            return na(c, n);
+        }
+        return -1;
+    }
+    if k == K_BIN { return lens_in_either(c, nb(c, n), nc(c, n)); }
+    if k == K_UN { return find_lens(c, nb(c, n)); }
+    if k == K_ADDR { return find_lens(c, na(c, n)); }
+    if k == K_ARRAY || k == K_TUPLE { return lens_in_list(c, na(c, n)); }
+    if k == K_INDEX { return lens_in_either(c, na(c, n), nb(c, n)); }
+    if k == K_SLICE {
+        let found = lens_in_either(c, na(c, n), nb(c, n));
+        if found >= 0 {
+            return found;
+        }
+        return lens_in_either(c, nc(c, n), -1);
+    }
+    if k == K_RANGE { return lens_in_either(c, na(c, n), nb(c, n)); }
+    if k == K_SINIT {
+        let fields = nb(c, n);
+        let mut i: i64 = 1;
+        while i < list_len(c, fields) {
+            let found = find_lens(c, list_at(c, fields, i));
+            if found >= 0 {
+                return found;
+            }
+            i = i + 2;
+        }
+        return -1;
+    }
+    if k == K_IF {
+        let found = find_lens(c, na(c, n));
+        if found >= 0 {
+            return found;
+        }
+        let t = lens_in_list(c, nb(c, n));
+        if t >= 0 {
+            return t;
+        }
+        return lens_in_list(c, nc(c, n));
+    }
+    if k == K_WHILE {
+        let found = find_lens(c, na(c, n));
+        if found >= 0 {
+            return found;
+        }
+        return lens_in_list(c, nb(c, n));
+    }
+    if k == K_RETURN { return lens_in_either(c, na(c, n), -1); }
+    if k == K_ASSIGN { return lens_in_either(c, na(c, n), nb(c, n)); }
+    if k == K_LET { return find_lens(c, nd(c, n)); }
+    if k == K_CONST { return find_lens(c, nb(c, n)); }
+    if k == K_LETD { return find_lens(c, nc(c, n)); }
+    if k == K_TINDEX { return find_lens(c, na(c, n)); }
+    if k == K_MACROCALL {
+        let found = lens_in_list(c, nb(c, n));
+        if found >= 0 || nc(c, n) < 0 {
+            return found;
+        }
+        return lens_in_list(c, nc(c, n));
+    }
+    if k == K_LENS { return lens_in_list(c, nc(c, n)); }
+    if k == K_MATCH {
+        let found = find_lens(c, na(c, n));
+        if found >= 0 {
+            return found;
+        }
+        let arms = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            let arm = lens_in_either(c, list_at(c, arms, i + 1), list_at(c, arms, i + 2));
+            if arm >= 0 {
+                return arm;
+            }
+            i = i + 3;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+fn reject_lens_escape(c: i64, n: i64) -> i64 {
+    let found = find_lens(c, n);
+    if found >= 0 {
+        cfail(c, n, text_cat3("Lens ", quoted(c, found), " cannot be moved, stored, returned, or escape its with block."));
+    }
+    return 0;
+}
+
+// ---------------------------------------------------- suggestion distance
+
+fn min3(a: i64, b: i64, d: i64) -> i64 {
+    let mut m = a;
+    if b < m { m = b; }
+    if d < m { m = d; }
+    return m;
+}
+
+fn levenshtein(a: i64, b: i64) -> i64 {
+    let x = text_bytes(a);
+    let y = text_bytes(b);
+    let n = vlen(x);
+    let m = vlen(y);
+    let mut prev = vnew_cap(m + 1);
+    let mut j: i64 = 0;
+    while j <= m {
+        vpush(prev, j);
+        j = j + 1;
+    }
+    let mut i: i64 = 1;
+    while i <= n {
+        let cur = vnew_cap(m + 1);
+        vpush(cur, i);
+        let mut k: i64 = 1;
+        while k <= m {
+            let mut cost: i64 = 1;
+            if vget(x, i - 1) == vget(y, k - 1) {
+                cost = 0;
+            }
+            vpush(cur, min3(vget(prev, k) + 1, vget(cur, k - 1) + 1, vget(prev, k - 1) + cost));
+            k = k + 1;
+        }
+        prev = cur;
+        i = i + 1;
+    }
+    return vget(prev, m);
+}
+
+fn check_call_target(c: i64, n: i64, name: i64) -> i64 {
+    let text = name_text(c, name);
+    if text_eq(text, "free") || text_eq(text, "str_free") || text_eq(text, "vec_free") || text_eq(text, "file_close") {
+        return cfail(c, n, text_cat3(quoted(c, name), " is managed automatically by the compiler.", " Linear types are freed at their spend points — do not call this directly."));
+    }
+    let target = last_segment(c, name);
+    if fn_known(c, name) || fn_known(c, target) {
+        return 0;
+    }
+    let target_text = name_text(c, target);
+    let target_len = text_len(target_text);
+    let names = ck(c, CK_FNNAMES);
+    let mut best: i64 = -1;
+    let mut best_dist: i64 = 3;
+    let mut i: i64 = 0;
+    while i < vlen(names) {
+        let cand = name_text(c, vget(names, i));
+        let diff = text_len(cand) - target_len;
+        if diff <= 2 && diff >= -2 {
+            let dist = levenshtein(target_text, cand);
+            if dist < best_dist {
+                best_dist = dist;
+                best = vget(names, i);
+            }
+        }
+        i = i + 1;
+    }
+    if best >= 0 {
+        cfail(c, n, text_cat3("Undefined function ", quoted(c, name), text_cat3(". Did you mean ", quoted(c, best), "?")));
+    }
+    return 0;
+}
+
+// --------------------------------------------------------------- checking
+
+fn check_borrow(c: i64, n: i64) -> i64 {
+    if nk(c, n) != K_VAR {
+        return check_expr(c, n);
+    }
+    let name = na(c, n);
+    let slot = lookup(c, name);
+    if slot < 0 {
+        return cfail(c, n, text_cat3("Undeclared variable ", quoted(c, name), "."));
+    }
+    let st = vf(c, slot, V_STATE);
+    if st == ST_SPENT {
+        return cfail(c, n, text_cat3("Cannot borrow spent resource ", quoted(c, name), "."));
+    }
+    if st == ST_LOCKED {
+        return cfail(c, n, text_cat3("Cannot borrow locked resource ", quoted(c, name), "."));
+    }
+    return 0;
+}
+
+fn check_list(c: i64, l: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        check_expr(c, list_at(c, l, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Statements of a block, updating borrow states after each.
+fn check_body(c: i64, body: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < list_len(c, body) {
+        check_expr(c, list_at(c, body, i));
+        update_borrow_states(c);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn variant_binding_type(c: i64, owner: i64, variant: i64) -> i64 {
+    let o = name_text(c, owner);
+    let v = name_text(c, variant);
+    if text_eq(o, "Value") && text_eq(v, "Float") {
+        return ck(c, CK_TY_I64);
+    }
+    if text_eq(o, "Value") && text_eq(v, "Bool") {
+        return ck(c, CK_TY_BOOL);
+    }
+    if text_eq(o, "Result") && (text_eq(v, "Ok") || text_eq(v, "Err")) {
+        return ck(c, CK_TY_I64);
+    }
+    return ck(c, CK_TY_I32);
+}
+
+fn bind_pattern(c: i64, p: i64, ty: i64, mutable: i64) -> i64 {
+    let k = nk(c, p);
+    if k == P_IDENT {
+        declare(c, na(c, p), ty, mutable);
+        return 0;
+    }
+    if k == P_TUPLE {
+        let pats = na(c, p);
+        let mut elems: i64 = -1;
+        if ty >= 0 && nk(c, ty) == T_TUPLE {
+            elems = na(c, ty);
+        }
+        let mut i: i64 = 0;
+        while i < list_len(c, pats) {
+            let mut et = ck(c, CK_TY_I32);
+            if elems >= 0 && i < list_len(c, elems) {
+                et = list_at(c, elems, i);
+            }
+            bind_pattern(c, list_at(c, pats, i), et, mutable);
+            i = i + 1;
+        }
+        return 0;
+    }
+    if k == P_VARIANT {
+        let bindings = nc(c, p);
+        let bt = variant_binding_type(c, na(c, p), nb(c, p));
+        let mut i: i64 = 0;
+        while i < list_len(c, bindings) {
+            bind_pattern(c, list_at(c, bindings, i), bt, mutable);
+            i = i + 1;
+        }
+        return 0;
+    }
+    if k == P_STRUCT {
+        let fields = nb(c, p);
+        let mut i: i64 = 1;
+        while i < list_len(c, fields) {
+            bind_pattern(c, list_at(c, fields, i), ck(c, CK_TY_I32), mutable);
+            i = i + 2;
+        }
+    }
+    return 0;
+}
+
+fn check_if(c: i64, n: i64) -> i64 {
+    check_expr(c, na(c, n));
+    let pre = snapshot(c);
+    let count = vget(pre, 0);
+    check_body(c, nb(c, n));
+    let then_end = snapshot(c);
+    restore(c, pre);
+    check_body(c, nc(c, n));
+    let mut i: i64 = 0;
+    while i < count {
+        if slot_visible(c, i) {
+            let then_state = vget(then_end, 1 + i * 3);
+            let else_state = vf(c, i, V_STATE);
+            if then_state != else_state {
+                let name = vf(c, i, V_NAME);
+                cfail(c, n, text_cat3("Resource ", quoted(c, name), text_cat3(" has inconsistent state after if/else. Then branch: ", state_name(then_state), text_cat(", Else branch: ", state_name(else_state)))));
+            }
+        }
+        i = i + 1;
+    }
+    // Merge: state agrees, types revert to the pre-branch types, and
+    // provenance comes from the then branch when it has any.
+    let mut merged = vnew_cap(count * 2);
+    let mut j: i64 = 0;
+    while j < count {
+        let mut b = vget(then_end, 3 + j * 3);
+        if b < 0 {
+            b = vf(c, j, V_BORROWS);
+        }
+        vpush(merged, vf(c, j, V_STATE));
+        vpush(merged, b);
+        j = j + 1;
+    }
+    restore(c, pre);
+    let mut s: i64 = 0;
+    while s < count {
+        vf_set(c, s, V_STATE, vget(merged, s * 2));
+        vf_set(c, s, V_BORROWS, vget(merged, s * 2 + 1));
+        s = s + 1;
+    }
+    update_borrow_states(c);
+    return 0;
+}
+
+fn check_loop_body(c: i64, n: i64, body: i64, pre: i64, long_message: bool) -> i64 {
+    check_body(c, body);
+    let count = vget(pre, 0);
+    let mut i: i64 = 0;
+    while i < count {
+        let name = vf(c, i, V_NAME);
+        let pre_state = vget(pre, 1 + i * 3);
+        if slot_visible(c, i) && pre_state == ST_ACTIVE && !is_copy_name(c, name, i) && vf(c, i, V_STATE) == ST_SPENT {
+            if long_message {
+                cfail(c, n, text_cat3("Cannot consume linear resource ", quoted(c, name), " inside a loop. It was declared outside the loop and would be double-freed/moved on subsequent iterations."));
+            }
+            cfail(c, n, text_cat3("Cannot consume linear resource ", quoted(c, name), " inside a loop."));
+        }
+        i = i + 1;
+    }
+    restore(c, pre);
+    update_borrow_states(c);
+    return 0;
+}
+
+fn for_elem_type(c: i64, t: i64) -> i64 {
+    if t >= 0 && (nk(c, t) == T_SLICE || nk(c, t) == T_ARRAY) {
+        return na(c, t);
+    }
+    return ck(c, CK_TY_I32);
+}
+
+fn check_function(c: i64, n: i64, is_macro: bool) -> i64 {
+    let pre = snapshot(c);
+    let saved_floor = ck(c, CK_FLOOR);
+    let saved_params = ck(c, CK_PARAMS);
+    let saved_ret = ck(c, CK_RET);
+    let saved_generics = ck(c, CK_GENERICS);
+    let saved_locks = ck(c, CK_LENSLOCK);
+    let saved_lens = ck(c, CK_LENSCOUNT);
+    if is_macro {
+        // Macro bodies start from an empty scope (no globals).
+        ck_set(c, CK_FLOOR, var_count(c));
+    }
+    ck_set(c, CK_LENSLOCK, vnew());
+    ck_set(c, CK_LENSCOUNT, 0);
+    ck_set(c, CK_GENERICS, nb(c, n));
+    ck_set(c, CK_RET, nd(c, n));
+    let params = nc(c, n);
+    let names = vnew();
+    let mut i: i64 = 0;
+    while i < list_len(c, params) {
+        vpush(names, list_at(c, params, i));
+        declare(c, list_at(c, params, i), list_at(c, params, i + 1), 0);
+        i = i + 2;
+    }
+    ck_set(c, CK_PARAMS, names);
+    update_borrow_states(c);
+    let body = ne(c, n);
+    check_body(c, body);
+    if !is_macro && ty_is_ref(c, nd(c, n)) {
+        let mut has_return = false;
+        let mut j: i64 = 0;
+        while j < list_len(c, body) {
+            if nk(c, list_at(c, body, j)) == K_RETURN {
+                has_return = true;
+            }
+            j = j + 1;
+        }
+        let last = last_of(c, body);
+        if !has_return && last >= 0 {
+            check_escape(c, last, last);
+        }
+    }
+    ck_set(c, CK_FLOOR, saved_floor);
+    ck_set(c, CK_PARAMS, saved_params);
+    ck_set(c, CK_RET, saved_ret);
+    ck_set(c, CK_GENERICS, saved_generics);
+    ck_set(c, CK_LENSLOCK, saved_locks);
+    restore(c, pre);
+    ck_set(c, CK_LENSCOUNT, saved_lens);
+    return 0;
+}
+
+fn check_lens(c: i64, n: i64) -> i64 {
+    let target = na(c, n);
+    let slot = lookup(c, target);
+    if slot < 0 || vf(c, slot, V_STATE) != ST_ACTIVE {
+        return cfail(c, n, text_cat3("Cannot create lens. ", quoted(c, target), " is not Active."));
+    }
+    vpush(ck(c, CK_LENSLOCK), target);
+    vf_set(c, slot, V_STATE, ST_LOCKED);
+    let lens = declare(c, nb(c, n), vf(c, slot, V_TYPE), 0);
+    vf_set(c, lens, V_LENS, 1);
+    ck_set(c, CK_LENSCOUNT, ck(c, CK_LENSCOUNT) + 1);
+    let body = nc(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, body) {
+        check_expr(c, list_at(c, body, i));
+        i = i + 1;
+    }
+    // exit_lens: unlock the target and drop the alias
+    let locks = ck(c, CK_LENSLOCK);
+    let kept = vnew();
+    let mut j: i64 = 0;
+    while j < vlen(locks) {
+        if vget(locks, j) != target {
+            vpush(kept, vget(locks, j));
+        }
+        j = j + 1;
+    }
+    vtrunc(locks, 0);
+    prov_merge(locks, kept);
+    let tslot = lookup(c, target);
+    if tslot >= 0 && vf(c, tslot, V_STATE) == ST_LOCKED {
+        vf_set(c, tslot, V_STATE, ST_ACTIVE);
+    }
+    update_borrow_states(c);
+    kill_slot(c, lens);
+    return 0;
+}
+
+fn check_match(c: i64, n: i64) -> i64 {
+    let target = na(c, n);
+    check_expr(c, target);
+    let mut tt = infer_type(c, target);
+    if tt < 0 {
+        tt = ck(c, CK_TY_I32);
+    }
+    let arms = nb(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, arms) {
+        let pre = snapshot(c);
+        bind_pattern(c, list_at(c, arms, i), tt, 0);
+        let guard = list_at(c, arms, i + 1);
+        if guard >= 0 {
+            check_expr(c, guard);
+        }
+        check_expr(c, list_at(c, arms, i + 2));
+        restore(c, pre);
+        i = i + 3;
+    }
+    return 0;
+}
+
+fn check_assign(c: i64, n: i64) -> i64 {
+    let target = na(c, n);
+    let value = nb(c, n);
+    reject_lens_escape(c, value);
+    check_expr(c, value);
+    if nk(c, target) == K_VAR {
+        let name = na(c, target);
+        let slot = lookup(c, name);
+        if slot < 0 {
+            return cfail(c, n, text_cat3("Undeclared variable ", quoted(c, name), "."));
+        }
+        if vf(c, slot, V_MUT) == 0 {
+            return cfail(c, n, text_cat3("Cannot mutate immutable variable ", quoted(c, name), text_cat3(". Use 'let mut ", name_text(c, name), "' to declare a mutable variable.")));
+        }
+        vf_set(c, slot, V_STATE, ST_ACTIVE);
+        let ty = infer_type(c, value);
+        if ty >= 0 {
+            vf_set(c, slot, V_TYPE, ty);
+            if ty_is_ref(c, ty) {
+                set_borrows(c, slot, provenance(c, value));
+            } else {
+                vf_set(c, slot, V_BORROWS, -1);
+            }
+        }
+    }
+    update_borrow_states(c);
+    return 0;
+}
+
+fn check_expr(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_INT || k == K_STR || k == K_BOOL || k == K_TYPEDEF || k == K_STRUCT {
+        return 0;
+    }
+    if k == K_VAR {
+        return read_or_move(c, n, na(c, n));
+    }
+    if k == K_BIN {
+        check_borrow(c, nb(c, n));
+        return check_borrow(c, nc(c, n));
+    }
+    if k == K_UN {
+        return check_expr(c, nb(c, n));
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return check_list(c, na(c, n));
+    }
+    if k == K_TINDEX {
+        check_borrow(c, na(c, n));
+        let elems = tuple_elems_of(c, infer_type(c, na(c, n)));
+        if elems >= 0 && nb(c, n) >= list_len(c, elems) {
+            cfail(c, n, text_cat3("Tuple index ", text_of_int(nb(c, n)), text_cat(" out of bounds for tuple of length ", text_of_int(list_len(c, elems)))));
+        }
+        return 0;
+    }
+    if k == K_INDEX || k == K_RANGE {
+        check_borrow(c, na(c, n));
+        return check_borrow(c, nb(c, n));
+    }
+    if k == K_SLICE {
+        check_borrow(c, na(c, n));
+        if nb(c, n) >= 0 {
+            check_borrow(c, nb(c, n));
+        }
+        if nc(c, n) >= 0 {
+            check_borrow(c, nc(c, n));
+        }
+        return 0;
+    }
+    if k == K_ADDR {
+        return check_borrow(c, na(c, n));
+    }
+    if k == K_SINIT {
+        let fields = nb(c, n);
+        let mut i: i64 = 1;
+        while i < list_len(c, fields) {
+            reject_lens_escape(c, list_at(c, fields, i));
+            check_expr(c, list_at(c, fields, i));
+            i = i + 2;
+        }
+        return 0;
+    }
+    if k == K_CALL {
+        check_call_target(c, n, na(c, n));
+        return check_list(c, nb(c, n));
+    }
+    if k == K_LET {
+        let value = nd(c, n);
+        reject_lens_escape(c, value);
+        check_expr(c, value);
+        let mut ty = nc(c, n);
+        if ty < 0 {
+            ty = infer_type(c, value);
+        }
+        if ty < 0 {
+            ty = ck(c, CK_TY_VOID);
+        }
+        let slot = declare(c, na(c, n), ty, nb(c, n));
+        if ty_is_ref(c, ty) {
+            set_borrows(c, slot, provenance(c, value));
+        }
+        return update_borrow_states(c);
+    }
+    if k == K_LENS {
+        return check_lens(c, n);
+    }
+    if k == K_IF {
+        return check_if(c, n);
+    }
+    if k == K_WHILE {
+        check_expr(c, na(c, n));
+        let pre = snapshot(c);
+        return check_loop_body(c, n, nb(c, n), pre, true);
+    }
+    if k == K_FOR {
+        let iter = nb(c, n);
+        check_expr(c, iter);
+        let elem = for_elem_type(c, infer_type(c, iter));
+        let pre = snapshot(c);
+        declare(c, na(c, n), elem, 0);
+        return check_loop_body(c, n, nc(c, n), pre, false);
+    }
+    if k == K_RETURN {
+        let value = na(c, n);
+        if value >= 0 {
+            reject_lens_escape(c, value);
+            check_expr(c, value);
+            if ty_is_ref(c, ck(c, CK_RET)) {
+                check_escape(c, n, value);
+            }
+        }
+        return 0;
+    }
+    if k == K_ASSIGN {
+        return check_assign(c, n);
+    }
+    if k == K_FN {
+        return check_function(c, n, false);
+    }
+    if k == K_MACRODEF {
+        return check_function(c, n, true);
+    }
+    if k == K_USE {
+        return check_use(c, n);
+    }
+    if k == K_CONST {
+        check_expr(c, nb(c, n));
+        let mut ty = infer_type(c, nb(c, n));
+        if ty < 0 {
+            ty = ck(c, CK_TY_VOID);
+        }
+        declare(c, na(c, n), ty, 0);
+        return update_borrow_states(c);
+    }
+    if k == K_MACROCALL {
+        if text_eq(name_text(c, na(c, n)), "compile_error") {
+            let args = nb(c, n);
+            if list_len(c, args) > 0 && nk(c, list_at(c, args, 0)) == K_STR {
+                return cfail(c, n, na(c, list_at(c, args, 0)));
+            }
+            return cfail(c, n, "@compile_error requires a string message");
+        }
+        check_list(c, nb(c, n));
+        if nc(c, n) >= 0 {
+            check_body(c, nc(c, n));
+        }
+        return 0;
+    }
+    if k == K_ENUM {
+        declare_enum(c, n);
+        let variants = nc(c, n);
+        let mut i: i64 = 1;
+        while i < list_len(c, variants) {
+            if list_at(c, variants, i) >= 0 {
+                check_expr(c, list_at(c, variants, i));
+            }
+            i = i + 2;
+        }
+        return 0;
+    }
+    if k == K_UNION {
+        return declare_union(c, n);
+    }
+    if k == K_LETD {
+        let value = nc(c, n);
+        reject_lens_escape(c, value);
+        check_expr(c, value);
+        let mut ty = infer_type(c, value);
+        if ty < 0 {
+            ty = ck(c, CK_TY_I32);
+        }
+        bind_pattern(c, na(c, n), ty, nb(c, n));
+        return update_borrow_states(c);
+    }
+    if k == K_MATCH {
+        return check_match(c, n);
+    }
+    return 0;
+}
+
+fn declare_enum(c: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    let ty = node1(c, T_CUSTOM, name, -1);
+    let variants = nc(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, variants) {
+        declare(c, variant_name(c, name, list_at(c, variants, i)), ty, 0);
+        i = i + 2;
+    }
+    return 0;
+}
+
+fn declare_union(c: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    let ty = node1(c, T_CUSTOM, name, -1);
+    let variants = nb(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, variants) {
+        let vname = variant_name(c, name, list_at(c, variants, i));
+        if list_at(c, variants, i + 1) >= 0 {
+            fn_register(c, vname, ty);
+        } else {
+            declare(c, vname, ty, 0);
+        }
+        i = i + 2;
+    }
+    return 0;
+}
+
+fn checker_init(c: i64) -> i64 {
+    let s = vfill(vnew_cap(CK_SLOTS), CK_SLOTS, 0);
+    vset(c, CX_CHK, s);
+    ck_set(c, CK_VARS, vnew_cap(4096));
+    ck_set(c, CK_LENSLOCK, vnew());
+    ck_set(c, CK_PARAMS, vnew());
+    ck_set(c, CK_FNNAMES, vnew_cap(1024));
+    ck_set(c, CK_RET, -1);
+    ck_set(c, CK_GENERICS, 0);
+    ck_set(c, CK_TY_I32, prim_type(c, PRIM_I32));
+    ck_set(c, CK_TY_BOOL, prim_type(c, PRIM_BOOL));
+    ck_set(c, CK_TY_VOID, prim_type(c, PRIM_VOID));
+    ck_set(c, CK_TY_I64, prim_type(c, PRIM_I64));
+    ck_set(c, CK_TY_STRLIT, node1(c, T_PTR, prim_type(c, PRIM_I32), -1));
+    register_builtins(c);
+    return 0;
+}
+
+// Check the whole loaded program. Exits with a diagnostic on failure.
+fn check_program(c: i64) -> i64 {
+    checker_init(c);
+    let items = cx(c, CX_ITEMS);
+    // Pass 1: declarations visible to every function.
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        let k = nk(c, n);
+        if k == K_ENUM {
+            declare_enum(c, n);
+        } else if k == K_UNION {
+            declare_union(c, n);
+        } else if k == K_FN || k == K_MACRODEF {
+            fn_register(c, na(c, n), nd(c, n));
+        } else if k == K_CONST {
+            let mut ty = infer_type(c, nb(c, n));
+            if ty < 0 {
+                ty = ck(c, CK_TY_VOID);
+            }
+            declare(c, na(c, n), ty, 0);
+        }
+        i = i + 1;
+    }
+    // Pass 2: check every item in load order.
+    let mut j: i64 = 0;
+    while j < vlen(items) {
+        check_expr(c, vget(items, j));
+        j = j + 1;
+    }
+    return 0;
+}

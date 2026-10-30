@@ -1,0 +1,188 @@
+// symbols.trk — program-wide declarations shared by the checker and the
+// C emitter: functions, enum/union layouts, type aliases, and integer
+// constants (evaluated in item order, as the bootstrap compiler does).
+
+import "base";
+import "ast";
+
+// Compile-time integer evaluation. Returns (ok, value).
+fn const_eval(c: i64, n: i64) -> (i64, i64) {
+    let k = nk(c, n);
+    if k == K_INT {
+        return (1, na(c, n));
+    }
+    if k == K_BOOL {
+        return (1, na(c, n));
+    }
+    if k == K_VAR {
+        let name = na(c, n);
+        if ni(c, name, NI_CONSTOK) == 1 {
+            return (1, ni(c, name, NI_CONSTVAL));
+        }
+        return (0, 0);
+    }
+    if k == K_UN {
+        if na(c, n) != OP_NEG {
+            return (0, 0);
+        }
+        let (ok, v) = const_eval(c, nb(c, n));
+        return (ok, 0 - v);
+    }
+    if k == K_BIN {
+        let op = na(c, n);
+        let (lok, l) = const_eval(c, nb(c, n));
+        let (rok, r) = const_eval(c, nc(c, n));
+        if lok == 0 || rok == 0 {
+            return (0, 0);
+        }
+        if op == OP_ADD { return (1, l + r); }
+        if op == OP_SUB { return (1, l - r); }
+        if op == OP_MUL { return (1, l * r); }
+        if op == OP_DIV && r != 0 { return (1, l / r); }
+        if op == OP_MOD && r != 0 { return (1, l % r); }
+        if op == OP_BAND { return (1, l & r); }
+        if op == OP_BOR { return (1, l | r); }
+        if op == OP_SHL { return (1, l << (r & 63)); }
+        if op == OP_SHR { return (1, l >> (r & 63)); }
+        return (0, 0);
+    }
+    return (0, 0);
+}
+
+fn variant_name(c: i64, owner: i64, variant: i64) -> i64 {
+    return intern(c, text_cat3(name_text(c, owner), "::", name_text(c, variant)));
+}
+
+// Record enum/union/alias/struct/function/constant declarations of every
+// item. Later definitions of the same type name replace earlier ones.
+fn collect_symbols(c: i64) -> i64 {
+    let items = cx(c, CX_ITEMS);
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        let k = nk(c, n);
+        if k == K_CONST {
+            let (ok, v) = const_eval(c, nb(c, n));
+            ni_set(c, na(c, n), NI_CONST, n);
+            if ok == 1 {
+                ni_set(c, na(c, n), NI_CONSTOK, 1);
+                ni_set(c, na(c, n), NI_CONSTVAL, v);
+            }
+        } else if k == K_ENUM {
+            let name = na(c, n);
+            ni_set(c, name, NI_TYPEKIND, 1);
+            ni_set(c, name, NI_TYPENODE, n);
+            let variants = nc(c, n);
+            let mut next: i64 = 0;
+            let mut j: i64 = 0;
+            while j < list_len(c, variants) {
+                let vname = variant_name(c, name, list_at(c, variants, j));
+                let value = list_at(c, variants, j + 1);
+                let mut disc = next;
+                if value >= 0 {
+                    let (ok, v) = const_eval(c, value);
+                    if ok == 1 {
+                        disc = v;
+                    }
+                }
+                ni_set(c, vname, NI_VARIANT, disc);
+                ni_set(c, vname, NI_OWNER, name);
+                next = disc + 1;
+                j = j + 2;
+            }
+        } else if k == K_UNION {
+            let name = na(c, n);
+            ni_set(c, name, NI_TYPEKIND, 2);
+            ni_set(c, name, NI_TYPENODE, n);
+            ni_set(c, name, NI_PAYLOAD, 0);
+            let variants = nb(c, n);
+            let mut j: i64 = 0;
+            while j < list_len(c, variants) {
+                let vname = variant_name(c, name, list_at(c, variants, j));
+                ni_set(c, vname, NI_VARIANT, j / 2);
+                ni_set(c, vname, NI_OWNER, name);
+                if list_at(c, variants, j + 1) >= 0 {
+                    ni_set(c, name, NI_PAYLOAD, 1);
+                }
+                j = j + 2;
+            }
+        } else if k == K_TYPEDEF {
+            ni_set(c, na(c, n), NI_TYPEKIND, 4);
+            ni_set(c, na(c, n), NI_TYPENODE, nb(c, n));
+        } else if k == K_STRUCT {
+            ni_set(c, na(c, n), NI_TYPEKIND, 3);
+            ni_set(c, na(c, n), NI_TYPENODE, n);
+        } else if k == K_FN || k == K_MACRODEF {
+            let name = na(c, n);
+            if ni(c, name, NI_FN) >= 0 {
+                fail_at(c, npos(c, n), "E0201", text_cat3("duplicate definition of function '", name_text(c, name), "'"));
+            }
+            ni_set(c, name, NI_FN, n);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Discriminant of `Type::Variant`, or -1 when it is not a known variant.
+fn variant_disc(c: i64, name: i64) -> i64 {
+    if ni(c, name, NI_OWNER) < 0 {
+        return -1;
+    }
+    return ni(c, name, NI_VARIANT);
+}
+
+fn is_payload_union(c: i64, name: i64) -> bool {
+    return ni(c, name, NI_TYPEKIND) == 2 && ni(c, name, NI_PAYLOAD) == 1;
+}
+
+// True when `Type::Variant` belongs to a union with payload variants
+// (its values are heap cells `[tag, payload...]`).
+fn is_payload_variant(c: i64, name: i64) -> bool {
+    let owner = ni(c, name, NI_OWNER);
+    if owner < 0 {
+        return false;
+    }
+    return is_payload_union(c, owner);
+}
+
+// Number of words of a tuple type (resolving aliases), or -1.
+fn tuple_arity(c: i64, ty: i64) -> i64 {
+    let mut t = ty;
+    let mut depth: i64 = 0;
+    while depth < 16 {
+        if t < 0 {
+            return -1;
+        }
+        if nk(c, t) == T_TUPLE {
+            return list_len(c, na(c, t));
+        }
+        if nk(c, t) != T_CUSTOM {
+            return -1;
+        }
+        if ni(c, na(c, t), NI_TYPEKIND) != 4 {
+            return -1;
+        }
+        t = ni(c, na(c, t), NI_TYPENODE);
+        depth = depth + 1;
+    }
+    return -1;
+}
+
+// Last `::` segment of a qualified name (the name itself if unqualified).
+fn last_segment(c: i64, name: i64) -> i64 {
+    let text = name_text(c, name);
+    let bytes = text_bytes(text);
+    let mut i: i64 = vlen(bytes) - 1;
+    while i > 0 {
+        if vget(bytes, i) == 58 && vget(bytes, i - 1) == 58 {
+            return intern(c, str_substr(text, i + 1, vlen(bytes) - i - 1));
+        }
+        i = i - 1;
+    }
+    return name;
+}
+
+fn is_qualified(c: i64, name: i64) -> bool {
+    return str_contains(name_text(c, name), "::") != 0;
+}

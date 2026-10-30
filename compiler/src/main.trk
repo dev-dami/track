@@ -1,19 +1,270 @@
-// main.trk — Demo driver for the self-hosted lexer (v0.7)
-// Keeps `main` tiny; all heavy lifting lives in `lexer.trk`.
-// Build via `yard` so artifacts land in `compiler/target/` (no root clutter).
-// When invoked with an argument, dumps the token stream for that input
-// (oracle mode for diffing against the Rust lexer).
+// main.trk — trackc, the self-hosted Track compiler.
+//
+//   trackc build <file.trk> [-o <exe>]    compile to a native executable
+//   trackc run <file.trk> [args...]       build to a temporary file and run
+//   trackc check <file.trk>               parse and ownership-check only
+//   trackc emit-c <file.trk> [-o <file.c>] write the generated C
+//   trackc tokens <file.trk>              dump the token stream
+//   trackc --version
+//
+// Pipeline: loader (lexer + parser for every imported module) → checker →
+// C emitter → the platform C compiler (`$CC`, default `cc`) with the
+// runtime from runtime/track_runtime.c written beside the generated code.
 
+import "base";
 import "lexer";
+import "ast";
+import "parser";
+import "loader";
+import "symbols";
+import "checker";
+import "cgen";
+import "runtime_c";
 
-fn main() -> void {
-    let argc = os_args_count();
-    if argc > 1 {
-        let src = os_arg(1);
-        dump_tokens(&src);
-    } else {
-        let src2 = "import \"std/io\"; fn main() -> void { let x = 42; // comment\n let s = \"hello\"; }";
-        let c = count_tokens(&src2);
-        print(c);
+fn trackc_version() -> i64 { return "1.0.0"; }
+
+fn usage() -> i64 {
+    err("trackc 1.0.0 — the self-hosted Track compiler\n\n");
+    err("USAGE:\n");
+    err("    trackc build <file.trk> [-o <exe>]     Compile to a native executable\n");
+    err("    trackc run <file.trk> [args...]        Compile and run\n");
+    err("    trackc check <file.trk>                Parse and ownership-check only\n");
+    err("    trackc emit-c <file.trk> [-o <out.c>]  Write the generated C\n");
+    err("    trackc tokens <file.trk>               Dump the token stream\n");
+    err("    trackc --version                       Show version info\n");
+    return 0;
+}
+
+fn front_end(path: i64) -> i64 {
+    let c = cx_new();
+    lex_init(c);
+    load_program(c, path);
+    collect_symbols(c);
+    check_program(c);
+    return c;
+}
+
+// Value following `-o`, or 0.
+fn output_flag() -> i64 {
+    let mut i: i64 = 2;
+    while i < arg_count() - 1 {
+        if text_eq(arg_text(i), "-o") {
+            return arg_text(i + 1);
+        }
+        i = i + 1;
     }
+    return 0;
+}
+
+// Wrap in single quotes for /bin/sh.
+fn shell_quote(s: i64) -> i64 {
+    let bytes = text_bytes(s);
+    let b = sb_new();
+    sb_byte(b, 39);
+    let mut i: i64 = 0;
+    while i < vlen(bytes) {
+        if vget(bytes, i) == 39 {
+            sb_add(b, "'\\''");
+        } else {
+            sb_byte(b, vget(bytes, i));
+        }
+        i = i + 1;
+    }
+    sb_byte(b, 39);
+    return sb_text(b);
+}
+
+fn file_stem(path: i64) -> i64 {
+    let slash = last_slash(path);
+    let mut name = path;
+    if slash >= 0 {
+        name = str_substr(path, slash + 1, text_len(path) - slash - 1);
+    }
+    if text_ends(name, ".trk") {
+        return str_substr(name, 0, text_len(name) - 4);
+    }
+    return name;
+}
+
+fn c_compiler() -> i64 {
+    if env_exists("CC") != 0 {
+        let cc: i64 = env_get("CC");
+        if text_len(cc) > 0 {
+            return cc;
+        }
+    }
+    return "cc";
+}
+
+// Write `<exe>.c` and `<exe>.rt.c`, then compile them inside the output
+// directory so the object files only record the base names; equal inputs
+// therefore produce byte-identical executables in any directory.
+fn compile_c(c_source: i64, exe: i64) -> i64 {
+    let rt = sb_new();
+    runtime_source(rt);
+    let program_c = text_cat(exe, ".c");
+    let runtime_file = text_cat(exe, ".rt.c");
+    if write_text(program_c, c_source) != 0 {
+        err(text_cat3("trackc: cannot write '", program_c, "'\n"));
+        quit(1);
+    }
+    if write_text(runtime_file, sb_text(rt)) != 0 {
+        err(text_cat3("trackc: cannot write '", runtime_file, "'\n"));
+        quit(1);
+    }
+    let mut dir = path_dir(exe);
+    if text_len(dir) == 0 {
+        dir = ".";
+    }
+    let base = file_stem(exe);
+    let cmd = sb_new();
+    sb_add(cmd, "cd ");
+    sb_add(cmd, shell_quote(dir));
+    sb_add(cmd, " && ");
+    sb_add(cmd, c_compiler());
+    sb_add(cmd, " -std=gnu99 -O2 -fwrapv -fno-strict-aliasing -fno-builtin -w -o ");
+    sb_add(cmd, shell_quote(base));
+    sb_add(cmd, " ");
+    sb_add(cmd, shell_quote(text_cat(base, ".c")));
+    sb_add(cmd, " ");
+    sb_add(cmd, shell_quote(text_cat(base, ".rt.c")));
+    let status = shell(sb_text(cmd));
+    if status != 0 {
+        err(text_cat3("trackc: C compiler failed (exit ", text_of_int(status), ")\n"));
+        quit(1);
+    }
+    return 0;
+}
+
+fn require_file() -> i64 {
+    if arg_count() < 3 {
+        err("Error: expected a .trk file path\n");
+        quit(1);
+    }
+    return arg_text(2);
+}
+
+fn cmd_build(path: i64) -> i64 {
+    let c = front_end(path);
+    let mut exe = output_flag();
+    if exe == 0 {
+        exe = file_stem(path);
+    }
+    compile_c(generate_c(c), exe);
+    out(text_cat3("✓ Built: ", exe, "\n"));
+    return 0;
+}
+
+fn cmd_emit(path: i64) -> i64 {
+    let c = front_end(path);
+    let code = generate_c(c);
+    let dest = output_flag();
+    if dest == 0 {
+        out(code);
+        return 0;
+    }
+    if write_text(dest, code) != 0 {
+        err(text_cat3("trackc: cannot write '", dest, "'\n"));
+        quit(1);
+    }
+    return 0;
+}
+
+fn cmd_run(path: i64) -> i64 {
+    let c = front_end(path);
+    let mut tmp: i64 = "/tmp";
+    if env_exists("TMPDIR") != 0 {
+        let t: i64 = env_get("TMPDIR");
+        if text_len(t) > 0 {
+            tmp = t;
+        }
+    }
+    let exe = text_cat3(tmp, "/trackc_run_", text_of_int(clock_ms()));
+    compile_c(generate_c(c), exe);
+    let cmd = sb_new();
+    sb_add(cmd, shell_quote(exe));
+    let mut i: i64 = 3;
+    while i < arg_count() {
+        sb_add(cmd, " ");
+        sb_add(cmd, shell_quote(arg_text(i)));
+        i = i + 1;
+    }
+    let status = shell(sb_text(cmd));
+    file_remove(exe);
+    file_remove(text_cat(exe, ".c"));
+    file_remove(text_cat(exe, ".rt.c"));
+    quit(status);
+    return 0;
+}
+
+fn cmd_tokens(path: i64) -> i64 {
+    let c = cx_new();
+    lex_init(c);
+    let f = add_source(c, path, read_text(path));
+    let first = lex_file(c, f);
+    let mut t = first;
+    let mut going = true;
+    while going {
+        let kind = tok_kind(c, t);
+        let line = sb_new();
+        sb_add(line, token_kind_text(kind));
+        if kind == TK_INT {
+            sb_add(line, " ");
+            sb_int(line, tok_value(c, t));
+        } else if kind == TK_IDENT {
+            sb_add(line, " ");
+            sb_add(line, name_text(c, tok_value(c, t)));
+        } else if kind == TK_STR {
+            sb_add(line, " ");
+            sb_add(line, c_string(tok_value(c, t)));
+        }
+        sb_byte(line, 10);
+        out(sb_text(line));
+        if kind == TK_EOF {
+            going = false;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    if arg_count() < 2 {
+        usage();
+        return 1;
+    }
+    let command = arg_text(1);
+    if text_eq(command, "--version") || text_eq(command, "-v") || text_eq(command, "version") {
+        out(text_cat3("trackc ", trackc_version(), "\n"));
+        return 0;
+    }
+    if text_eq(command, "--help") || text_eq(command, "-h") || text_eq(command, "help") {
+        usage();
+        return 0;
+    }
+    if text_eq(command, "build") {
+        cmd_build(require_file());
+        return 0;
+    }
+    if text_eq(command, "run") {
+        cmd_run(require_file());
+        return 0;
+    }
+    if text_eq(command, "check") {
+        let path = require_file();
+        front_end(path);
+        out(text_cat3("✓ Check passed: ", path, "\n"));
+        return 0;
+    }
+    if text_eq(command, "emit-c") {
+        cmd_emit(require_file());
+        return 0;
+    }
+    if text_eq(command, "tokens") {
+        cmd_tokens(require_file());
+        return 0;
+    }
+    err(text_cat3("Unknown command: '", command, "'\n\n"));
+    usage();
+    return 1;
 }

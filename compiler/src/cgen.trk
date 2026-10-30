@@ -1,0 +1,824 @@
+// cgen.trk — portable C backend.
+//
+// Every Track value is a 64-bit word (`tk_w`), exactly as in the bootstrap
+// Cranelift backend: integers and booleans are plain words, strings are
+// `char*`, tuples and payload-union cells are pointers to word arrays.
+// Expressions compile to C expression text; constructs that need
+// statements (calls, `if`/`match` values, short-circuit logic) are lowered
+// into temporaries declared at the top of the function, so the output is
+// plain C99 with no compiler extensions.
+//
+// Output is deterministic: items are emitted in load order and every
+// counter restarts per function.
+
+import "base";
+import "lexer";
+import "ast";
+import "symbols";
+import "runtime_c";
+
+const G_DECLS = 0;    // current function: local declarations
+const G_BODY = 1;     // current function: statements
+const G_NLOCAL = 2;
+const G_NTEMP = 3;
+const G_NSLOT = 4;
+const G_INDENT = 5;
+const G_BOUND = 6;    // scope stack: (name, previous binding) pairs
+const G_TUPLES = 7;   // local id -> tuple arity of a stack tuple (or -1)
+const G_RETVAL = 8;   // current function returns a value
+const G_EXTERNS = 9;  // extern (non-runtime) functions in first-use order
+const G_FUNCS = 10;   // emitted function definitions
+const G_PROTOS = 11;  // user function prototypes
+const G_SLOTS = 12;
+
+fn g(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
+fn g_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
+
+fn g_counter(c: i64, slot: i64) -> i64 {
+    let n = g(c, slot);
+    g_set(c, slot, n + 1);
+    return n;
+}
+
+// Append one statement line to the current function body.
+fn emit(c: i64, line: i64) -> i64 {
+    let b = g(c, G_BODY);
+    let mut i: i64 = 0;
+    while i < g(c, G_INDENT) {
+        sb_add(b, "    ");
+        i = i + 1;
+    }
+    return sb_line(b, line);
+}
+
+fn indent(c: i64, delta: i64) -> i64 {
+    return g_set(c, G_INDENT, g(c, G_INDENT) + delta);
+}
+
+fn temp(c: i64) -> i64 {
+    let name = text_cat("t", text_of_int(g_counter(c, G_NTEMP)));
+    sb_line(g(c, G_DECLS), text_cat3("    tk_w ", name, " = 0;"));
+    return name;
+}
+
+fn local_name(c: i64, id: i64) -> i64 {
+    return text_cat("l", text_of_int(id));
+}
+
+// Declare a fresh C local for Track variable `name` and bind it.
+fn new_local(c: i64, name: i64) -> i64 {
+    let id = g_counter(c, G_NLOCAL);
+    let text = local_name(c, id);
+    sb_line(g(c, G_DECLS), text_cat3("    tk_w ", text, text_cat3(" = 0; /* ", name_text(c, name), " */")));
+    vpush(g(c, G_TUPLES), -1);
+    bind(c, name, id);
+    return id;
+}
+
+fn bind(c: i64, name: i64, id: i64) -> i64 {
+    let bound = g(c, G_BOUND);
+    vpush(bound, name);
+    vpush(bound, ni(c, name, NI_CVAR));
+    return ni_set(c, name, NI_CVAR, id);
+}
+
+fn scope_begin(c: i64) -> i64 { return vlen(g(c, G_BOUND)); }
+
+fn scope_end(c: i64, mark: i64) -> i64 {
+    let bound = g(c, G_BOUND);
+    while vlen(bound) > mark {
+        let prev = vpop(bound);
+        let name = vpop(bound);
+        ni_set(c, name, NI_CVAR, prev);
+    }
+    return 0;
+}
+
+fn set_tuple_arity(c: i64, id: i64, arity: i64) -> i64 {
+    return vset(g(c, G_TUPLES), id, arity);
+}
+
+// ------------------------------------------------------------ literals
+
+fn c_string(s: i64) -> i64 {
+    let bytes = text_bytes(s);
+    let b = sb_new();
+    sb_add(b, "TK_S(\"");
+    let mut i: i64 = 0;
+    while i < vlen(bytes) {
+        let x = vget(bytes, i);
+        if x == 34 {
+            sb_add(b, "\\\"");
+        } else if x == 92 {
+            sb_add(b, "\\\\");
+        } else if x == 63 {
+            sb_add(b, "\\?");
+        } else if x == 10 {
+            sb_add(b, "\\n");
+        } else if x == 9 {
+            sb_add(b, "\\t");
+        } else if x >= 32 && x < 127 {
+            sb_byte(b, x);
+        } else {
+            sb_byte(b, 92);
+            sb_byte(b, 48 + (x / 64) % 8);
+            sb_byte(b, 48 + (x / 8) % 8);
+            sb_byte(b, 48 + x % 8);
+        }
+        i = i + 1;
+    }
+    sb_add(b, "\")");
+    return sb_text(b);
+}
+
+fn paren2(a: i64, op: i64, b: i64) -> i64 {
+    return text_cat3("(", text_cat3(a, op, b), ")");
+}
+
+// ---------------------------------------------------------- expressions
+
+fn gen_list_values(c: i64, l: i64) -> i64 {
+    let values = vnew();
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        vpush(values, gen(c, list_at(c, l, i)));
+        i = i + 1;
+    }
+    return values;
+}
+
+// Heap cell holding the given words (escaping tuples, union payloads).
+fn gen_cell(c: i64, words: i64) -> i64 {
+    let t = temp(c);
+    let mut size = vlen(words);
+    if size < 1 {
+        size = 1;
+    }
+    emit(c, text_cat3(t, " = alloc(", text_cat(text_of_int(size * 8), ");")));
+    let mut i: i64 = 0;
+    while i < vlen(words) {
+        emit(c, text_cat3("TK_AT(", t, text_cat3(", ", text_of_int(i), text_cat3(") = ", vget(words, i), ";"))));
+        i = i + 1;
+    }
+    return t;
+}
+
+fn binary_text(op: i64, l: i64, r: i64) -> i64 {
+    if op == OP_ADD { return paren2(l, " + ", r); }
+    if op == OP_SUB { return paren2(l, " - ", r); }
+    if op == OP_MUL { return paren2(l, " * ", r); }
+    if op == OP_DIV { return text_cat3("tk_div(", l, text_cat3(", ", r, ")")); }
+    if op == OP_MOD { return text_cat3("tk_mod(", l, text_cat3(", ", r, ")")); }
+    if op == OP_EQ { return paren2(l, " == ", r); }
+    if op == OP_NEQ { return paren2(l, " != ", r); }
+    if op == OP_LT { return paren2(l, " < ", r); }
+    if op == OP_GT { return paren2(l, " > ", r); }
+    if op == OP_LTE { return paren2(l, " <= ", r); }
+    if op == OP_GTE { return paren2(l, " >= ", r); }
+    if op == OP_BAND { return paren2(l, " & ", r); }
+    if op == OP_BOR { return paren2(l, " | ", r); }
+    if op == OP_SHL { return text_cat3("tk_shl(", l, text_cat3(", ", r, ")")); }
+    return text_cat3("tk_shr(", l, text_cat3(", ", r, ")"));
+}
+
+fn gen_logic(c: i64, n: i64) -> i64 {
+    let r = temp(c);
+    let l = gen(c, nb(c, n));
+    emit(c, text_cat3(r, " = (", text_cat(l, " != 0);")));
+    if na(c, n) == OP_AND {
+        emit(c, text_cat3("if (", r, ") {"));
+    } else {
+        emit(c, text_cat3("if (!", r, ") {"));
+    }
+    indent(c, 1);
+    let rhs = gen(c, nc(c, n));
+    emit(c, text_cat3(r, " = (", text_cat(rhs, " != 0);")));
+    indent(c, -1);
+    emit(c, "}");
+    return r;
+}
+
+fn gen_var(c: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    let local = ni(c, name, NI_CVAR);
+    if local >= 0 {
+        return local_name(c, local);
+    }
+    let disc = variant_disc(c, name);
+    if is_qualified(c, name) {
+        if disc < 0 {
+            return "0";
+        }
+        if is_payload_variant(c, name) {
+            let words = vnew();
+            vpush(words, text_of_int(disc));
+            vpush(words, "0");
+            return gen_cell(c, words);
+        }
+        return text_of_int(disc);
+    }
+    if ni(c, name, NI_CONSTOK) == 1 {
+        return text_of_int(ni(c, name, NI_CONSTVAL));
+    }
+    return "0";
+}
+
+fn arg_at(args: i64, i: i64) -> i64 {
+    if i < vlen(args) {
+        return vget(args, i);
+    }
+    return "0";
+}
+
+fn call_text(sym: i64, args: i64, arity: i64) -> i64 {
+    let b = sb_new();
+    sb_add(b, sym);
+    sb_add(b, "(");
+    let mut i: i64 = 0;
+    while i < arity {
+        if i > 0 {
+            sb_add(b, ", ");
+        }
+        sb_add(b, arg_at(args, i));
+        i = i + 1;
+    }
+    sb_add(b, ")");
+    return sb_text(b);
+}
+
+fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
+    let name = na(c, n);
+    let args = gen_list_values(c, args_list);
+    if is_qualified(c, name) {
+        let disc = variant_disc(c, name);
+        if disc >= 0 {
+            if is_payload_variant(c, name) {
+                let words = vnew();
+                vpush(words, text_of_int(disc));
+                let mut i: i64 = 0;
+                while i < vlen(args) {
+                    vpush(words, vget(args, i));
+                    i = i + 1;
+                }
+                return gen_cell(c, words);
+            }
+            return text_of_int(disc);
+        }
+    }
+    let mut target = name;
+    if ni(c, name, NI_FN) < 0 {
+        target = last_segment(c, name);
+    }
+    let t = temp(c);
+    let f = ni(c, target, NI_FN);
+    if f >= 0 {
+        let arity = list_len(c, nc(c, f)) / 2;
+        emit(c, text_cat3(t, " = ", text_cat(call_text(text_cat("tk_", name_text(c, target)), args, arity), ";")));
+        return t;
+    }
+    let mut sym = target;
+    if text_eq(name_text(c, target), "abort") {
+        sym = intern(c, "track_abort");
+    }
+    let mut arity = ni(c, sym, NI_EXTERN);
+    if arity < 0 {
+        arity = vlen(args);
+        ni_set(c, sym, NI_EXTERN, arity);
+        vpush(g(c, G_EXTERNS), sym);
+    }
+    emit(c, text_cat3(t, " = ", text_cat(call_text(name_text(c, sym), args, arity), ";")));
+    return t;
+}
+
+// Generate a block; returns the value text of its last statement.
+fn gen_block(c: i64, body: i64) -> i64 {
+    let mark = scope_begin(c);
+    let mut last: i64 = "0";
+    let mut i: i64 = 0;
+    while i < list_len(c, body) {
+        last = gen(c, list_at(c, body, i));
+        i = i + 1;
+    }
+    scope_end(c, mark);
+    return last;
+}
+
+fn gen_if(c: i64, n: i64) -> i64 {
+    let r = temp(c);
+    let cond = gen(c, na(c, n));
+    emit(c, text_cat3("if (", cond, ") {"));
+    indent(c, 1);
+    let then_value = gen_block(c, nb(c, n));
+    emit(c, text_cat3(r, " = ", text_cat(then_value, ";")));
+    indent(c, -1);
+    emit(c, "} else {");
+    indent(c, 1);
+    let else_value = gen_block(c, nc(c, n));
+    emit(c, text_cat3(r, " = ", text_cat(else_value, ";")));
+    indent(c, -1);
+    emit(c, "}");
+    return r;
+}
+
+fn gen_while(c: i64, n: i64) -> i64 {
+    emit(c, "while (1) {");
+    indent(c, 1);
+    let cond = gen(c, na(c, n));
+    emit(c, text_cat3("if (!(", cond, ")) break;"));
+    gen_block(c, nb(c, n));
+    indent(c, -1);
+    emit(c, "}");
+    return "0";
+}
+
+fn gen_for(c: i64, n: i64) -> i64 {
+    let iter = nb(c, n);
+    let start = temp(c);
+    let end = temp(c);
+    if nk(c, iter) == K_RANGE {
+        emit(c, text_cat3(start, " = ", text_cat(gen(c, na(c, iter)), ";")));
+        emit(c, text_cat3(end, " = ", text_cat(gen(c, nb(c, iter)), ";")));
+    } else {
+        emit(c, text_cat(start, " = 0;"));
+        emit(c, text_cat3(end, " = ", text_cat(gen(c, iter), ";")));
+    }
+    emit(c, text_cat3("while (", start, text_cat3(" < ", end, ") {")));
+    indent(c, 1);
+    let mark = scope_begin(c);
+    let var = new_local(c, na(c, n));
+    emit(c, text_cat3(local_name(c, var), " = ", text_cat(start, ";")));
+    gen_block(c, nc(c, n));
+    scope_end(c, mark);
+    emit(c, text_cat3(start, " = ", text_cat(start, " + 1;")));
+    indent(c, -1);
+    emit(c, "}");
+    return "0";
+}
+
+fn gen_return(c: i64, n: i64) -> i64 {
+    let value = na(c, n);
+    let mut v: i64 = "0";
+    if value >= 0 {
+        if nk(c, value) == K_TUPLE {
+            v = gen_cell(c, gen_list_values(c, na(c, value)));
+        } else if nk(c, value) == K_VAR && ni(c, na(c, value), NI_CVAR) >= 0 && vget(g(c, G_TUPLES), ni(c, na(c, value), NI_CVAR)) >= 0 {
+            // A tuple living in a stack slot must outlive the frame.
+            let local = ni(c, na(c, value), NI_CVAR);
+            let t = temp(c);
+            emit(c, text_cat3(t, " = track_words_copy(", text_cat3(local_name(c, local), ", ", text_cat(text_of_int(vget(g(c, G_TUPLES), local)), ");"))));
+            v = t;
+        } else {
+            v = gen(c, value);
+        }
+    }
+    if g(c, G_RETVAL) == 1 {
+        emit(c, text_cat3("return ", v, ";"));
+    } else {
+        emit(c, "return 0;");
+    }
+    return "0";
+}
+
+fn gen_tuple(c: i64, n: i64) -> i64 {
+    let values = gen_list_values(c, na(c, n));
+    let slot = text_cat("s", text_of_int(g_counter(c, G_NSLOT)));
+    let mut size = vlen(values);
+    if size < 1 {
+        size = 1;
+    }
+    sb_line(g(c, G_DECLS), text_cat3("    tk_w ", slot, text_cat3("[", text_of_int(size), "];")));
+    let mut i: i64 = 0;
+    while i < vlen(values) {
+        emit(c, text_cat3(slot, text_cat3("[", text_of_int(i), "] = "), text_cat(vget(values, i), ";")));
+        i = i + 1;
+    }
+    return text_cat3("TK_W(", slot, ")");
+}
+
+fn load_text(base: i64, i: i64) -> i64 {
+    return text_cat3("TK_AT(", base, text_cat3(", ", text_of_int(i), ")"));
+}
+
+fn bind_pattern_value(c: i64, p: i64, value: i64) -> i64 {
+    let k = nk(c, p);
+    if k == P_IDENT {
+        let id = new_local(c, na(c, p));
+        emit(c, text_cat3(local_name(c, id), " = ", text_cat(value, ";")));
+        return 0;
+    }
+    if k == P_TUPLE {
+        let pats = na(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, pats) {
+            bind_pattern_value(c, list_at(c, pats, i), load_text(value, i));
+            i = i + 1;
+        }
+        return 0;
+    }
+    if k == P_VARIANT {
+        let bindings = nc(c, p);
+        let payload = is_payload_union(c, na(c, p));
+        let mut i: i64 = 0;
+        while i < list_len(c, bindings) {
+            if payload {
+                bind_pattern_value(c, list_at(c, bindings, i), load_text(value, i + 1));
+            } else {
+                bind_pattern_value(c, list_at(c, bindings, i), value);
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    if k == P_STRUCT {
+        let fields = nb(c, p);
+        let mut i: i64 = 1;
+        while i < list_len(c, fields) {
+            bind_pattern_value(c, list_at(c, fields, i), value);
+            i = i + 2;
+        }
+    }
+    return 0;
+}
+
+// C condition text that is non-zero when pattern `p` matches `value`.
+fn pattern_cond(c: i64, p: i64, value: i64) -> i64 {
+    let k = nk(c, p);
+    if k == P_LIT {
+        let lit = na(c, p);
+        if nk(c, lit) == K_STR {
+            return text_cat3("(str_eq(", value, text_cat3(", ", c_string(na(c, lit)), ") != 0)"));
+        }
+        return paren2(value, " == ", gen(c, lit));
+    }
+    if k == P_VARIANT {
+        let vname = variant_name(c, na(c, p), nb(c, p));
+        let mut disc = variant_disc(c, vname);
+        if disc < 0 {
+            disc = 0;
+        }
+        if is_payload_union(c, na(c, p)) {
+            return paren2(load_text(value, 0), " == ", text_of_int(disc));
+        }
+        return paren2(value, " == ", text_of_int(disc));
+    }
+    if k == P_TUPLE {
+        let pats = na(c, p);
+        let mut cond: i64 = "(1";
+        let mut i: i64 = 0;
+        while i < list_len(c, pats) {
+            cond = text_cat3(cond, " && ", pattern_cond(c, list_at(c, pats, i), load_text(value, i)));
+            i = i + 1;
+        }
+        return text_cat(cond, ")");
+    }
+    return "1";
+}
+
+fn gen_match(c: i64, n: i64) -> i64 {
+    let m = temp(c);
+    emit(c, text_cat3(m, " = ", text_cat(gen(c, na(c, n)), ";")));
+    let r = temp(c);
+    let done = temp(c);
+    let arms = nb(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, arms) {
+        let pattern = list_at(c, arms, i);
+        let guard = list_at(c, arms, i + 1);
+        let body = list_at(c, arms, i + 2);
+        emit(c, text_cat3("if (!", done, ") {"));
+        indent(c, 1);
+        let cond = pattern_cond(c, pattern, m);
+        emit(c, text_cat3("if (", cond, ") {"));
+        indent(c, 1);
+        let mark = scope_begin(c);
+        bind_pattern_value(c, pattern, m);
+        if guard >= 0 {
+            let gv = gen(c, guard);
+            emit(c, text_cat3("if (", gv, ") {"));
+            indent(c, 1);
+        }
+        emit(c, text_cat(done, " = 1;"));
+        let value = gen(c, body);
+        emit(c, text_cat3(r, " = ", text_cat(value, ";")));
+        if guard >= 0 {
+            indent(c, -1);
+            emit(c, "}");
+        }
+        scope_end(c, mark);
+        indent(c, -1);
+        emit(c, "}");
+        indent(c, -1);
+        emit(c, "}");
+        i = i + 3;
+    }
+    return r;
+}
+
+fn gen_letd(c: i64, n: i64) -> i64 {
+    let pattern = na(c, n);
+    let value = nc(c, n);
+    if nk(c, value) == K_TUPLE && nk(c, pattern) == P_TUPLE && list_len(c, na(c, value)) == list_len(c, na(c, pattern)) {
+        let values = gen_list_values(c, na(c, value));
+        let tmps = vnew();
+        let mut i: i64 = 0;
+        while i < vlen(values) {
+            let t = temp(c);
+            emit(c, text_cat3(t, " = ", text_cat(vget(values, i), ";")));
+            vpush(tmps, t);
+            i = i + 1;
+        }
+        let pats = na(c, pattern);
+        let mut j: i64 = 0;
+        while j < vlen(tmps) {
+            bind_pattern_value(c, list_at(c, pats, j), vget(tmps, j));
+            j = j + 1;
+        }
+        return "0";
+    }
+    let t = temp(c);
+    emit(c, text_cat3(t, " = ", text_cat(gen(c, value), ";")));
+    bind_pattern_value(c, pattern, t);
+    return "0";
+}
+
+fn gen_lens(c: i64, n: i64) -> i64 {
+    let mark = scope_begin(c);
+    let target = ni(c, na(c, n), NI_CVAR);
+    if target >= 0 {
+        bind(c, nb(c, n), target);
+    }
+    let value = gen_block(c, nc(c, n));
+    let t = temp(c);
+    emit(c, text_cat3(t, " = ", text_cat(value, ";")));
+    scope_end(c, mark);
+    return t;
+}
+
+fn gen(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_INT { return text_of_int(na(c, n)); }
+    if k == K_BOOL { return text_of_int(na(c, n)); }
+    if k == K_STR { return c_string(na(c, n)); }
+    if k == K_VAR { return gen_var(c, n); }
+    if k == K_BIN {
+        let op = na(c, n);
+        if op == OP_AND || op == OP_OR {
+            return gen_logic(c, n);
+        }
+        let l = gen(c, nb(c, n));
+        let r = gen(c, nc(c, n));
+        return binary_text(op, l, r);
+    }
+    if k == K_UN {
+        let v = gen(c, nb(c, n));
+        if na(c, n) == OP_NEG { return text_cat3("(-", v, ")"); }
+        if na(c, n) == OP_NOT { return text_cat3("(", v, " == 0)"); }
+        return v;
+    }
+    if k == K_ADDR { return gen(c, na(c, n)); }
+    if k == K_CALL { return gen_call(c, n, nb(c, n)); }
+    if k == K_MACROCALL { return gen_call(c, n, nb(c, n)); }
+    if k == K_LET {
+        let v = gen(c, nd(c, n));
+        let id = new_local(c, na(c, n));
+        emit(c, text_cat3(local_name(c, id), " = ", text_cat(v, ";")));
+        if nk(c, nd(c, n)) == K_TUPLE {
+            set_tuple_arity(c, id, list_len(c, na(c, nd(c, n))));
+        }
+        return local_name(c, id);
+    }
+    if k == K_ASSIGN {
+        let v = gen(c, nb(c, n));
+        let target = na(c, n);
+        if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
+            let id = ni(c, na(c, target), NI_CVAR);
+            emit(c, text_cat3(local_name(c, id), " = ", text_cat(v, ";")));
+            if nk(c, nb(c, n)) == K_TUPLE {
+                set_tuple_arity(c, id, list_len(c, na(c, nb(c, n))));
+            } else {
+                set_tuple_arity(c, id, -1);
+            }
+            return local_name(c, id);
+        }
+        return v;
+    }
+    if k == K_IF { return gen_if(c, n); }
+    if k == K_WHILE { return gen_while(c, n); }
+    if k == K_FOR { return gen_for(c, n); }
+    if k == K_RETURN { return gen_return(c, n); }
+    if k == K_LENS { return gen_lens(c, n); }
+    if k == K_TUPLE { return gen_tuple(c, n); }
+    if k == K_TINDEX { return load_text(gen(c, na(c, n)), nb(c, n)); }
+    if k == K_LETD { return gen_letd(c, n); }
+    if k == K_MATCH { return gen_match(c, n); }
+    if k == K_SLICE {
+        let base = gen(c, na(c, n));
+        if nb(c, n) >= 0 {
+            return paren2(base, " + ", gen(c, nb(c, n)));
+        }
+        return base;
+    }
+    if k == K_RANGE {
+        let s = gen(c, na(c, n));
+        let e = gen(c, nb(c, n));
+        return paren2(e, " - ", s);
+    }
+    // Arrays, indexing, struct literals, and nested declarations have no
+    // runtime representation yet; like the bootstrap backend they yield 0.
+    return "0";
+}
+
+// ------------------------------------------------------------ functions
+
+fn fn_symbol(c: i64, name: i64) -> i64 {
+    return text_cat("tk_", name_text(c, name));
+}
+
+fn fn_signature(c: i64, f: i64) -> i64 {
+    let params = nc(c, f);
+    let b = sb_new();
+    sb_add(b, "tk_w ");
+    sb_add(b, fn_symbol(c, na(c, f)));
+    sb_add(b, "(");
+    let count = list_len(c, params) / 2;
+    if count == 0 {
+        sb_add(b, "void");
+    }
+    let mut i: i64 = 0;
+    while i < count {
+        if i > 0 {
+            sb_add(b, ", ");
+        }
+        sb_add(b, "tk_w a");
+        sb_int(b, i);
+        i = i + 1;
+    }
+    sb_add(b, ")");
+    return sb_text(b);
+}
+
+// Emit one function. `prelude` is a list of top-level statements run at
+// entry (the root module's globals, for `main`), or -1.
+fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
+    g_set(c, G_DECLS, sb_new());
+    g_set(c, G_BODY, sb_new());
+    g_set(c, G_NLOCAL, 0);
+    g_set(c, G_NTEMP, 0);
+    g_set(c, G_NSLOT, 0);
+    g_set(c, G_INDENT, 1);
+    g_set(c, G_TUPLES, vnew());
+    let is_main = text_eq(name_text(c, na(c, f)), "main");
+    let ret = nd(c, f);
+    let mut returns: i64 = 0;
+    if is_main || (ret >= 0 && !is_prim(c, ret, PRIM_VOID)) {
+        returns = 1;
+    }
+    g_set(c, G_RETVAL, returns);
+    let mark = scope_begin(c);
+    let params = nc(c, f);
+    let mut i: i64 = 0;
+    while i < list_len(c, params) {
+        let id = new_local(c, list_at(c, params, i));
+        emit(c, text_cat3(local_name(c, id), " = a", text_cat(text_of_int(i / 2), ";")));
+        set_tuple_arity(c, id, tuple_arity(c, list_at(c, params, i + 1)));
+        i = i + 2;
+    }
+    if prelude >= 0 {
+        let mut p: i64 = 0;
+        while p < vlen(prelude) {
+            gen(c, vget(prelude, p));
+            p = p + 1;
+        }
+    }
+    let last = gen_block(c, ne(c, f));
+    if is_main {
+        emit(c, "return 0;");
+    } else if returns == 1 {
+        emit(c, text_cat3("return ", last, ";"));
+    } else {
+        emit(c, "return 0;");
+    }
+    scope_end(c, mark);
+    let out = g(c, G_FUNCS);
+    sb_line(out, "");
+    sb_add(out, fn_signature(c, f));
+    sb_line(out, " {");
+    sb_add(out, sb_text(g(c, G_DECLS)));
+    sb_add(out, sb_text(g(c, G_BODY)));
+    sb_line(out, "}");
+    sb_line(g(c, G_PROTOS), text_cat(fn_signature(c, f), ";"));
+    return 0;
+}
+
+fn is_declaration(c: i64, n: i64) -> bool {
+    let k = nk(c, n);
+    return k == K_FN || k == K_MACRODEF;
+}
+
+fn c_prelude(b: i64) -> i64 {
+    sb_line(b, "/* Generated by trackc. Do not edit. */");
+    sb_line(b, "#include <stdint.h>");
+    sb_line(b, "typedef int64_t tk_w;");
+    sb_line(b, "#define TK_W(p) ((tk_w)(uintptr_t)(p))");
+    sb_line(b, "#define TK_S(s) TK_W(s)");
+    sb_line(b, "#define TK_AT(p, i) (((tk_w *)(uintptr_t)(p))[i])");
+    sb_line(b, "");
+    sb_line(b, "/* runtime (runtime/track_runtime.c) */");
+    runtime_prototypes(b);
+    sb_line(b, "");
+    sb_line(b, "static tk_w tk_div(tk_w a, tk_w b) {");
+    sb_line(b, "    if (b == 0 || (b == -1 && a == INT64_MIN)) return track_trap_div();");
+    sb_line(b, "    return a / b;");
+    sb_line(b, "}");
+    sb_line(b, "static tk_w tk_mod(tk_w a, tk_w b) {");
+    sb_line(b, "    if (b == 0 || (b == -1 && a == INT64_MIN)) return track_trap_div();");
+    sb_line(b, "    return a % b;");
+    sb_line(b, "}");
+    sb_line(b, "static tk_w tk_shl(tk_w a, tk_w b) { return (tk_w)((uint64_t)a << (b & 63)); }");
+    sb_line(b, "static tk_w tk_shr(tk_w a, tk_w b) { return (tk_w)((uint64_t)a >> (b & 63)); }");
+    return 0;
+}
+
+// Generate the C translation unit for the loaded, checked program.
+fn generate_c(c: i64) -> i64 {
+    let state = vfill(vnew_cap(G_SLOTS), G_SLOTS, 0);
+    vset(c, CX_GEN, state);
+    g_set(c, G_BOUND, vnew());
+    g_set(c, G_EXTERNS, vnew());
+    g_set(c, G_FUNCS, sb_new());
+    g_set(c, G_PROTOS, sb_new());
+    register_runtime(c);
+    let items = cx(c, CX_ITEMS);
+    let files = cx(c, CX_ITEMFILE);
+    let root = cx(c, CX_MAINFILE);
+    // Top-level statements of the root module run at the start of main.
+    let prelude = vnew();
+    let mut main_fn: i64 = -1;
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        if vget(files, i) == root && !is_declaration(c, n) {
+            vpush(prelude, n);
+        }
+        if nk(c, n) == K_FN && text_eq(name_text(c, na(c, n)), "main") {
+            main_fn = n;
+        }
+        i = i + 1;
+    }
+    let mut j: i64 = 0;
+    while j < vlen(items) {
+        let n = vget(items, j);
+        if is_declaration(c, n) {
+            if n == main_fn {
+                gen_function(c, n, prelude);
+            } else {
+                gen_function(c, n, -1);
+            }
+        }
+        j = j + 1;
+    }
+    if main_fn < 0 {
+        let synthetic = node_new(c, K_FN, intern(c, "main"), 0, 0, -1, 0, -1);
+        gen_function(c, synthetic, prelude);
+    }
+    let out = sb_new();
+    c_prelude(out);
+    let externs = g(c, G_EXTERNS);
+    if vlen(externs) > 0 {
+        sb_line(out, "");
+        sb_line(out, "/* external functions */");
+        let mut e: i64 = 0;
+        while e < vlen(externs) {
+            let name = vget(externs, e);
+            let arity = ni(c, name, NI_EXTERN);
+            let b = sb_new();
+            sb_add(b, "tk_w ");
+            sb_add(b, name_text(c, name));
+            sb_add(b, "(");
+            if arity == 0 {
+                sb_add(b, "void");
+            }
+            let mut a: i64 = 0;
+            while a < arity {
+                if a > 0 {
+                    sb_add(b, ", ");
+                }
+                sb_add(b, "tk_w");
+                a = a + 1;
+            }
+            sb_add(b, ");");
+            sb_line(out, sb_text(b));
+            e = e + 1;
+        }
+    }
+    sb_line(out, "");
+    sb_line(out, "/* functions */");
+    sb_add(out, sb_text(g(c, G_PROTOS)));
+    sb_add(out, sb_text(g(c, G_FUNCS)));
+    sb_line(out, "");
+    sb_line(out, "int main(int argc, char **argv) {");
+    sb_line(out, "    track_runtime_init((tk_w)argc, TK_W(argv));");
+    sb_line(out, "    return (int)tk_main();");
+    sb_line(out, "}");
+    return sb_text(out);
+}

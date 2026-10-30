@@ -1,0 +1,134 @@
+// loader.trk — whole-program module loading.
+//
+// The root file and every local module it imports (transitively) are
+// lexed, parsed, and appended to CX_ITEMS in the order the bootstrap
+// checker visits them: an `import` of a not-yet-loaded module splices that
+// module's items in before the importer's remaining items. Built-in
+// namespaces (`std`, `std/io`, ...) have no source file.
+
+import "base";
+import "lexer";
+import "ast";
+import "parser";
+
+fn is_builtin_module(path: i64) -> bool {
+    if text_eq(path, "std") { return true; }
+    if text_eq(path, "std/io") { return true; }
+    if text_eq(path, "std/fs") { return true; }
+    if text_eq(path, "std/sys") { return true; }
+    if text_eq(path, "std/mem") { return true; }
+    return text_eq(path, "math/vec");
+}
+
+// `a::b` → `a/b`
+fn normalize_module_path(path: i64) -> i64 {
+    let bytes = text_bytes(path);
+    let sb = sb_new();
+    let mut i: i64 = 0;
+    while i < vlen(bytes) {
+        let b = vget(bytes, i);
+        if b == 58 && vget(bytes, i + 1) == 58 {
+            sb_byte(sb, 47);
+            i = i + 2;
+        } else {
+            sb_byte(sb, b);
+            i = i + 1;
+        }
+    }
+    return sb_text(sb);
+}
+
+fn join_path(dir: i64, rest: i64) -> i64 {
+    if text_len(dir) == 0 {
+        return rest;
+    }
+    if text_ends(dir, "/") {
+        return text_cat(dir, rest);
+    }
+    return text_cat3(dir, "/", rest);
+}
+
+// Candidate files for `import "p"` from a file in `dir`: beside the
+// importer first, then the bootstrap compiler's project-relative layout.
+fn resolve_module(dir: i64, path: i64) -> i64 {
+    let p = normalize_module_path(path);
+    let file = text_cat(p, ".trk");
+    let mut candidates = vnew();
+    vpush(candidates, join_path(dir, file));
+    vpush(candidates, join_path(dir, text_cat(p, "/mod.trk")));
+    vpush(candidates, text_cat("src/", file));
+    vpush(candidates, file);
+    vpush(candidates, text_cat("compiler/src/", file));
+    vpush(candidates, text_cat("compiler/", file));
+    vpush(candidates, text_cat3("src/", p, "/mod.trk"));
+    let mut i: i64 = 0;
+    while i < vlen(candidates) {
+        let cand = vget(candidates, i);
+        if path_exists(cand) {
+            return cand;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Canonical key for a module file so `./a.trk` and `a.trk` load once.
+fn module_key(path: i64) -> i64 {
+    if text_starts(path, "./") {
+        return str_substr(path, 2, text_len(path) - 2);
+    }
+    return path;
+}
+
+fn module_loaded(c: i64, key: i64) -> bool {
+    let mods = cx(c, CX_MODS);
+    let mut i: i64 = 0;
+    while i < vlen(mods) {
+        if text_eq(vget(mods, i), key) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn load_module(c: i64, path: i64) -> i64 {
+    vpush(cx(c, CX_MODS), module_key(path));
+    if !path_exists(path) {
+        fail(c, "E0010", text_cat3("cannot read source file '", path, "'"));
+    }
+    let src = read_text(path);
+    let f = add_source(c, path, src);
+    let first = lex_file(c, f);
+    let items = parse_file(c, first);
+    let dir = path_dir(path);
+    let all = cx(c, CX_ITEMS);
+    let files = cx(c, CX_ITEMFILE);
+    let mut i: i64 = 0;
+    while i < list_len(c, items) {
+        let item = list_at(c, items, i);
+        if nk(c, item) == K_USE {
+            let mpath = na(c, item);
+            if !is_builtin_module(normalize_module_path(mpath)) {
+                let found = resolve_module(dir, mpath);
+                if found == 0 {
+                    fail_at(c, npos(c, item), "E0011", text_cat3("Unknown module '", mpath, "'"));
+                }
+                if !module_loaded(c, module_key(found)) {
+                    load_module(c, found);
+                }
+            }
+        }
+        vpush(all, item);
+        vpush(files, f);
+        i = i + 1;
+    }
+    return f;
+}
+
+// Load `path` and everything it imports. Returns the root file id.
+fn load_program(c: i64, path: i64) -> i64 {
+    let root = load_module(c, path);
+    vset(c, CX_MAINFILE, root);
+    return root;
+}
