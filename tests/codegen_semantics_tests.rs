@@ -223,3 +223,26 @@ fn negative_runtime_results_keep_their_sign() {
     );
     assert_eq!(out, "-1\n98");
 }
+
+#[test]
+fn block_bindings_do_not_leak_into_the_enclosing_scope() {
+    let out = run(
+        "scopes",
+        r#"
+        fn main() -> void {
+            let x = 10;
+            if true {
+                let x = 20;
+                print(x);
+            }
+            print(x);
+            match 1 {
+                x => print(x),
+            }
+            print(x);
+        }
+        "#,
+        &[],
+    );
+    assert_eq!(out, "20\n10\n1\n10");
+}

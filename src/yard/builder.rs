@@ -79,6 +79,11 @@ impl ParallelBuilder {
 
         let mut cache = BuildCache::load(&target_dir);
 
+        // An object depends on its own source, on declarations imported from
+        // other package modules (constants, enum layouts, aliases), and on
+        // the compiler itself, so the cache key covers all three.
+        let fingerprint = build_fingerprint(&trk_files)?;
+
         // Prepare build tasks
         let mut tasks = Vec::new();
         for trk_file in trk_files {
@@ -105,14 +110,8 @@ impl ParallelBuilder {
                     .map_err(|e| format!("Failed to create object directory: {}", e))?;
             }
 
-            let (hash, is_cached) = if !obj_path.exists() {
-                let hash = BuildCache::compute_hash(&source);
-                (hash, false)
-            } else {
-                let hash = BuildCache::compute_hash(&source);
-                let cached = cache.is_cached(&rel_path, &hash, &obj_path);
-                (hash, cached)
-            };
+            let hash = BuildCache::compute_hash(&format!("{}\0{}", fingerprint, source));
+            let is_cached = cache.is_cached(&rel_path, &hash, &obj_path);
 
             tasks.push(BuildTask {
                 trk_file,
@@ -542,6 +541,30 @@ impl ParallelBuilder {
         println!("✓ All {} Track test(s) passed", test_files.len());
         Ok(())
     }
+}
+
+/// Hash of the compiler executable identity and every package source.
+fn build_fingerprint(files: &[PathBuf]) -> Result<String, String> {
+    let mut key = String::from(env!("CARGO_PKG_VERSION"));
+    if let Ok(exe) = std::env::current_exe()
+        && let Ok(meta) = fs::metadata(exe)
+    {
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        key.push_str(&format!("\0{}\0{}", meta.len(), modified));
+    }
+    for file in files {
+        let source = fs::read_to_string(file)
+            .map_err(|e| format!("Failed to read '{}': {}", file.display(), e))?;
+        key.push('\0');
+        key.push_str(&file.to_string_lossy());
+        key.push('\0');
+        key.push_str(&BuildCache::compute_hash(&source));
+    }
+    Ok(BuildCache::compute_hash(&key))
 }
 
 fn copy_test_fixtures(source: &Path, destination: &Path) -> Result<(), String> {

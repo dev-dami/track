@@ -1,101 +1,142 @@
-import "parser";
+import "base";
 import "ast";
-import "lexer";
+import "parser";
+import "testing";
 
-fn assert_i64(actual: i64, expected: i64) -> void {
-    if actual != expected {
-        abort("parser integer assertion failed");
-    }
+fn item(c: i64, items: i64, i: i64) -> i64 {
+    return list_at(c, items, i);
 }
 
-fn assert_bool(actual: bool, expected: bool) -> void {
-    if actual != expected {
-        abort("parser boolean assertion failed");
-    }
+fn name_of(c: i64, id: i64) -> i64 {
+    return name_text(c, id);
 }
 
-fn assert_string(actual: &Str, expected: &Str) -> void {
-    if !str_eq(actual, expected) {
-        eprint(actual);
-        abort("parser string assertion failed");
-    }
+fn test_arithmetic_precedence_from_fixture() -> i64 {
+    let c = test_context();
+    let items = parse_text(c, read_text("tests/fixtures/parser-subset.txt"));
+    expect_i64(list_len(c, items), 2, "two statements");
+    let decl = item(c, items, 0);
+    expect_i64(nk(c, decl), K_LET, "let statement");
+    expect_text(name_of(c, na(c, decl)), "answer", "binding name");
+    // 40 + 2 * 1  =>  (+ 40 (* 2 1))
+    let sum = nd(c, decl);
+    expect_i64(nk(c, sum), K_BIN, "binary sum");
+    expect_i64(na(c, sum), OP_ADD, "addition at the root");
+    expect_i64(na(c, nb(c, sum)), 40, "left operand");
+    expect_i64(na(c, nc(c, sum)), OP_MUL, "multiplication binds tighter");
+    expect_i64(nk(c, item(c, items, 1)), K_RETURN, "return statement");
+    return 0;
 }
 
-fn read_parser_fixture(path: &Str) -> Str {
-    let file = file_open(path, "r");
-    return file_read_all(file);
+fn test_logic_comparison_and_unary() -> i64 {
+    let c = test_context();
+    let items = parse_text(c, "a || b && !c == -d;");
+    let e = item(c, items, 0);
+    expect_i64(na(c, e), OP_OR, "|| is lowest");
+    let rhs = nc(c, e);
+    expect_i64(na(c, rhs), OP_AND, "&& below comparison");
+    let cmp = nc(c, rhs);
+    expect_i64(na(c, cmp), OP_EQ, "comparison");
+    expect_i64(na(c, nb(c, cmp)), OP_NOT, "unary not");
+    expect_i64(na(c, nc(c, cmp)), OP_NEG, "unary minus");
+    return 0;
 }
 
-fn test_let_return_and_precedence() -> void {
-    let source = read_parser_fixture("tests/fixtures/parser-subset.txt");
-    let result = parse_subset(&source);
-    assert_bool(parse_result_ok(&result), true);
-    let ast = parse_result_ast(&result);
-    assert_i64(ast_node_count(&ast), 9);
-
-    assert_i64(ast_node_kind(&ast, 4), ast_kind_binary());
-    assert_i64(ast_node_value(&ast, 4), token_tag_star());
-    assert_i64(ast_node_extra(&ast, 4), 2);
-    assert_i64(ast_node_auxiliary(&ast, 4), 3);
-
-    assert_i64(ast_node_kind(&ast, 5), ast_kind_binary());
-    assert_i64(ast_node_value(&ast, 5), token_tag_plus());
-    assert_i64(ast_node_extra(&ast, 5), 1);
-    assert_i64(ast_node_auxiliary(&ast, 5), 4);
-
-    assert_i64(ast_node_kind(&ast, 6), ast_kind_let());
-    assert_i64(ast_node_value(&ast, 6), 0);
-    assert_i64(ast_node_auxiliary(&ast, 6), 5);
-    assert_i64(ast_node_kind(&ast, 8), ast_kind_return());
-    assert_i64(ast_node_value(&ast, 8), 7);
+fn test_postfix_calls_and_tuples() -> i64 {
+    let c = test_context();
+    let items = parse_text(c, "let t = (1, 2); x.f(3).0; g(a, b)");
+    let tuple = nd(c, item(c, items, 0));
+    expect_i64(nk(c, tuple), K_TUPLE, "tuple literal");
+    expect_i64(list_len(c, na(c, tuple)), 2, "tuple arity");
+    let index = item(c, items, 1);
+    expect_i64(nk(c, index), K_TINDEX, "tuple index");
+    let call = na(c, index);
+    expect_i64(nk(c, call), K_CALL, "method call is a call");
+    expect_text(name_of(c, na(c, call)), "f", "method name");
+    expect_i64(list_len(c, nb(c, call)), 2, "receiver becomes the first argument");
+    expect_i64(list_len(c, nb(c, item(c, items, 2))), 2, "plain call arguments");
+    return 0;
 }
 
-fn test_unary_bool_string_and_mutability() -> void {
-    let source = "let mut flag = !false; let text = \"ok\";";
-    let result = parse_subset(&source);
-    assert_bool(parse_result_ok(&result), true);
-    let ast = parse_result_ast(&result);
-    assert_i64(ast_node_count(&ast), 7);
-    assert_i64(ast_node_kind(&ast, 2), ast_kind_unary());
-    assert_i64(ast_node_value(&ast, 2), token_tag_bang());
-    assert_i64(ast_node_kind(&ast, 3), ast_kind_let());
-    assert_i64(ast_node_flags(&ast, 3), 1);
-    assert_i64(ast_node_kind(&ast, 5), ast_kind_string());
-    assert_i64(ast_node_start(&ast, 5), 35);
-    assert_i64(ast_node_end(&ast, 5), 37);
+fn test_struct_literals_are_disabled_in_headers() -> i64 {
+    let c = test_context();
+    let items = parse_text(c, "if ready { go(); } else if later { wait(); } let p = Point { x: 1, y: 2 };");
+    let branch = item(c, items, 0);
+    expect_i64(nk(c, branch), K_IF, "if statement");
+    expect_i64(nk(c, na(c, branch)), K_VAR, "condition is a variable, not a struct literal");
+    let chain = nc(c, branch);
+    expect_i64(list_len(c, chain), 1, "else-if is a nested if");
+    expect_i64(nk(c, list_at(c, chain, 0)), K_IF, "nested if");
+    let init = nd(c, item(c, items, 1));
+    expect_i64(nk(c, init), K_SINIT, "struct literal outside headers");
+    expect_i64(list_len(c, nb(c, init)), 4, "two field/value pairs");
+    return 0;
 }
 
-fn test_error_span_and_diagnostic() -> void {
-    let source = "let value = ;";
-    let result = parse_subset(&source);
-    assert_bool(parse_result_ok(&result), false);
-    assert_i64(result.1, 12);
-    assert_i64(result.2, 13);
-    assert_i64(result.3, 1);
-    let actual = format_parse_error(&source, "broken.trk", &result);
-    let expected = "error[P0001]: expected expression\n --> broken.trk:1:13\n  |\n1 | let value = ;\n  |             ^ expression required here";
-    assert_string(&actual, &expected);
+fn test_functions_and_types() -> i64 {
+    let c = test_context();
+    let items = parse_text(c, "fn pair<T, U>(a: T, b: &ptr<u8>) -> (T, [i64; 4]) { return (a, b); }");
+    let f = item(c, items, 0);
+    expect_i64(nk(c, f), K_FN, "function");
+    expect_i64(list_len(c, nb(c, f)), 2, "generic parameters");
+    expect_i64(list_len(c, nc(c, f)), 4, "two name/type pairs");
+    let second = list_at(c, nc(c, f), 3);
+    expect_i64(nk(c, second), T_REF, "reference type");
+    expect_i64(nk(c, na(c, second)), T_PTR, "pointer inside reference");
+    let ret = nd(c, f);
+    expect_i64(nk(c, ret), T_TUPLE, "tuple return type");
+    expect_i64(nk(c, list_at(c, na(c, ret), 1)), T_ARRAY, "array element type");
+    expect_i64(nb(c, list_at(c, na(c, ret), 1)), 4, "array length");
+    return 0;
 }
 
-fn test_parentheses_expression_statement_and_empty_return() -> void {
-    let source = "(1 + 2) * 3; return;";
-    let result = parse_subset(&source);
-    assert_bool(parse_result_ok(&result), true);
-    let ast = parse_result_ast(&result);
-    assert_i64(ast_node_count(&ast), 7);
-    assert_i64(ast_node_kind(&ast, 2), ast_kind_binary());
-    assert_i64(ast_node_value(&ast, 2), token_tag_plus());
-    assert_i64(ast_node_kind(&ast, 4), ast_kind_binary());
-    assert_i64(ast_node_value(&ast, 4), token_tag_star());
-    assert_i64(ast_node_kind(&ast, 5), ast_kind_expression_statement());
-    assert_i64(ast_node_kind(&ast, 6), ast_kind_return());
-    assert_i64(ast_node_value(&ast, 6), -1);
+fn test_match_patterns_and_destructuring() -> i64 {
+    let c = test_context();
+    let items = parse_text(c, "match v { Shape::Box(w, _) if w > 1 => big(), (1, x) => pair(x), \"s\" => s(), _ => 0, } let (a, b) = t;");
+    let m = item(c, items, 0);
+    expect_i64(nk(c, m), K_MATCH, "match");
+    let arms = nb(c, m);
+    expect_i64(list_len(c, arms), 12, "four (pattern, guard, body) arms");
+    let variant = list_at(c, arms, 0);
+    expect_i64(nk(c, variant), P_VARIANT, "variant pattern");
+    expect_text(name_of(c, na(c, variant)), "Shape", "union name");
+    expect_text(name_of(c, nb(c, variant)), "Box", "variant name");
+    expect_i64(list_len(c, nc(c, variant)), 2, "variant bindings");
+    expect_true(list_at(c, arms, 1) >= 0, "guard parsed");
+    expect_i64(nk(c, list_at(c, arms, 3)), P_TUPLE, "tuple pattern");
+    expect_i64(nk(c, list_at(c, arms, 6)), P_LIT, "string literal pattern");
+    expect_i64(nk(c, list_at(c, arms, 9)), P_WILD, "wildcard");
+    expect_i64(nk(c, item(c, items, 1)), K_LETD, "destructuring let");
+    return 0;
 }
 
-fn main() -> void {
-    test_let_return_and_precedence();
-    test_unary_bool_string_and_mutability();
-    test_error_span_and_diagnostic();
-    test_parentheses_expression_statement_and_empty_return();
+fn test_declarations() -> i64 {
+    let c = test_context();
+    let items = parse_text(c, "import \"std/io\" as console :: { print }; const N = 3; type Pair = (i64, i64); enum E : u8 { A = 1, B } union U { X(i64), Y } struct S { a: i64 } @macro bit(n: u32) -> u32 { return 1 << n; }");
+    let use_item = item(c, items, 0);
+    expect_i64(nk(c, use_item), K_USE, "import");
+    expect_text(na(c, use_item), "std/io", "module path");
+    expect_text(name_of(c, nc(c, use_item)), "console", "alias");
+    expect_i64(list_len(c, nb(c, use_item)), 1, "imported items");
+    expect_i64(nk(c, item(c, items, 1)), K_CONST, "const");
+    expect_i64(nk(c, item(c, items, 2)), K_TYPEDEF, "type alias");
+    let e = item(c, items, 3);
+    expect_i64(nk(c, e), K_ENUM, "enum");
+    expect_i64(list_len(c, nc(c, e)), 4, "two enum variants");
+    expect_i64(nk(c, item(c, items, 4)), K_UNION, "union");
+    expect_i64(nk(c, item(c, items, 5)), K_STRUCT, "struct");
+    expect_i64(nk(c, item(c, items, 6)), K_MACRODEF, "macro definition");
+    return 0;
+}
+
+fn main() -> i64 {
+    test_arithmetic_precedence_from_fixture();
+    test_logic_comparison_and_unary();
+    test_postfix_calls_and_tuples();
+    test_struct_literals_are_disabled_in_headers();
+    test_functions_and_types();
+    test_match_patterns_and_destructuring();
+    test_declarations();
     print("ok");
+    return 0;
 }

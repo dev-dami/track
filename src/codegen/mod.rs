@@ -152,7 +152,8 @@ impl CodeGen {
     /// Provide enum/union layouts and aliases discovered by the checker
     /// (including imported modules).
     pub fn set_type_info(&mut self, info: TypeInfo) {
-        self.consts.extend(info.consts.iter().map(|(k, v)| (k.clone(), *v)));
+        self.consts
+            .extend(info.consts.iter().map(|(k, v)| (k.clone(), *v)));
         self.info = info;
     }
 
@@ -419,6 +420,12 @@ impl CodeGen {
     }
 }
 
+struct Scope {
+    vars: HashMap<String, Variable>,
+    stack_tuples: HashMap<String, usize>,
+    tuple_params: HashMap<String, usize>,
+}
+
 struct FnContext<'a> {
     var_map: HashMap<String, Variable>,
     var_counter: u32,
@@ -574,6 +581,8 @@ impl<'a> FnContext<'a> {
         module: &mut ObjectModule,
         stmts: &[Expr],
     ) -> Option<Value> {
+        // Bindings introduced inside a block go out of scope at its end.
+        let scope = self.enter_scope();
         let mut last = None;
         for stmt in stmts {
             if self.filled {
@@ -581,7 +590,22 @@ impl<'a> FnContext<'a> {
             }
             last = self.compile_expr(builder, module, stmt);
         }
+        self.exit_scope(scope);
         last
+    }
+
+    fn enter_scope(&self) -> Scope {
+        Scope {
+            vars: self.var_map.clone(),
+            stack_tuples: self.stack_tuples.clone(),
+            tuple_params: self.tuple_params.clone(),
+        }
+    }
+
+    fn exit_scope(&mut self, scope: Scope) {
+        self.var_map = scope.vars;
+        self.stack_tuples = scope.stack_tuples;
+        self.tuple_params = scope.tuple_params;
     }
 
     fn variant_key(&self, name: &str) -> Option<i64> {
@@ -887,6 +911,7 @@ impl<'a> FnContext<'a> {
                 let start_val = self.word(builder, start_val);
                 let end_val = self.word(builder, end_val);
 
+                let loop_scope = self.enter_scope();
                 let loop_var = self.new_var();
                 builder.declare_var(loop_var, W);
                 builder.def_var(loop_var, start_val);
@@ -915,6 +940,7 @@ impl<'a> FnContext<'a> {
                 }
 
                 self.switch_to(builder, exit_block);
+                self.exit_scope(loop_scope);
                 None
             }
 
@@ -980,10 +1006,13 @@ impl<'a> FnContext<'a> {
                 lens_name,
                 body,
             } => {
+                let lens_scope = self.enter_scope();
                 if let Some(&var) = self.var_map.get(target) {
                     self.var_map.insert(lens_name.clone(), var);
                 }
-                self.compile_block(builder, module, body)
+                let value = self.compile_block(builder, module, body);
+                self.exit_scope(lens_scope);
+                value
             }
 
             Expr::TupleLiteral { elements } => {
@@ -1054,6 +1083,7 @@ impl<'a> FnContext<'a> {
                 let result = builder.append_block_param(merge_block, W);
 
                 for arm in arms {
+                    let arm_scope = self.enter_scope();
                     let arm_block = builder.create_block();
                     let next_arm_block = builder.create_block();
 
@@ -1093,6 +1123,7 @@ impl<'a> FnContext<'a> {
                     }
 
                     self.switch_to(builder, next_arm_block);
+                    self.exit_scope(arm_scope);
                 }
 
                 let zero = self.zero(builder);

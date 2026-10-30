@@ -78,6 +78,16 @@ impl LinearChecker {
         }
     }
 
+    /// A new binding is mutable only if declared `let mut`; it shadows any
+    /// earlier binding of the same name.
+    fn set_mutable(&mut self, name: &str, mutable: bool) {
+        if mutable {
+            self.mutables.insert(name.to_string());
+        } else {
+            self.mutables.remove(name);
+        }
+    }
+
     pub fn declare(&mut self, name: String) {
         self.registry.insert(name, VariableState::Active);
     }
@@ -445,7 +455,8 @@ impl LinearChecker {
                 "sys_exit",
                 "clock_ms",
             ] {
-                self.functions.insert(name.to_string(), Some(TrackType::I64));
+                self.functions
+                    .insert(name.to_string(), Some(TrackType::I64));
             }
         } // end if !barebones — std package (import "std") still works via Use handling
 
@@ -781,9 +792,7 @@ impl LinearChecker {
                 };
 
                 self.declare(name.clone());
-                if *mutable {
-                    self.mutables.insert(name.clone());
-                }
+                self.set_mutable(name, *mutable);
                 self.types.insert(name.clone(), final_ty.clone());
 
                 if matches!(final_ty, TrackType::Ref(_)) {
@@ -801,6 +810,7 @@ impl LinearChecker {
             } => {
                 self.enter_lens(target)?;
                 self.declare(lens_name.clone());
+                self.set_mutable(lens_name, false);
                 self.lens_aliases.insert(lens_name.clone());
                 if let Some(ty) = self.types.get(target).cloned() {
                     self.types.insert(lens_name.clone(), ty);
@@ -828,6 +838,7 @@ impl LinearChecker {
                 let pre_if = self.registry.clone();
                 let pre_if_types = self.types.clone();
                 let pre_if_borrows = self.borrows.clone();
+                let pre_if_mutables = self.mutables.clone();
 
                 // Check then branch directly
                 for stmt in then_body {
@@ -837,6 +848,7 @@ impl LinearChecker {
                 let then_end = std::mem::replace(&mut self.registry, pre_if.clone());
                 let _then_types = std::mem::replace(&mut self.types, pre_if_types.clone());
                 let then_end_borrows = std::mem::replace(&mut self.borrows, pre_if_borrows.clone());
+                self.mutables = pre_if_mutables.clone();
 
                 // Check else branch directly
                 for stmt in else_body {
@@ -878,6 +890,7 @@ impl LinearChecker {
                 self.registry = merged;
                 self.types = merged_types;
                 self.borrows = merged_borrows;
+                self.mutables = pre_if_mutables;
                 self.update_borrow_states();
                 Ok(())
             }
@@ -890,6 +903,7 @@ impl LinearChecker {
                 let pre_loop = self.registry.clone();
                 let pre_loop_types = self.types.clone();
                 let pre_loop_borrows = self.borrows.clone();
+                let pre_loop_mutables = self.mutables.clone();
 
                 for stmt in body {
                     self.check_expr(stmt)?;
@@ -913,6 +927,7 @@ impl LinearChecker {
                 self.registry = pre_loop;
                 self.types = pre_loop_types;
                 self.borrows = pre_loop_borrows;
+                self.mutables = pre_loop_mutables;
                 self.update_borrow_states();
                 Ok(())
             }
@@ -928,8 +943,10 @@ impl LinearChecker {
                 let pre_loop = self.registry.clone();
                 let pre_loop_types = self.types.clone();
                 let pre_loop_borrows = self.borrows.clone();
+                let pre_loop_mutables = self.mutables.clone();
 
                 self.declare(var.clone());
+                self.set_mutable(var, false);
                 self.types.insert(var.clone(), elem_ty);
 
                 for stmt in body {
@@ -953,6 +970,7 @@ impl LinearChecker {
                 self.registry = pre_loop;
                 self.types = pre_loop_types;
                 self.borrows = pre_loop_borrows;
+                self.mutables = pre_loop_mutables;
                 self.update_borrow_states();
                 Ok(())
             }
@@ -982,7 +1000,10 @@ impl LinearChecker {
                 self.check_expr(value)?;
                 // For simple variable assignment, check mutability and re-activate variable
                 if let Expr::Variable(name) = target.as_ref() {
-                    if !self.mutables.contains(name) && self.registry.contains_key(name) {
+                    if !self.registry.contains_key(name) {
+                        return Err(format!("Compile Error: Undeclared variable '{}'.", name));
+                    }
+                    if !self.mutables.contains(name) {
                         return Err(format!(
                             "Compile Error: Cannot mutate immutable variable '{}'. Use 'let mut {}' to declare a mutable variable.",
                             name, name
@@ -1021,12 +1042,14 @@ impl LinearChecker {
                 let saved_lens_aliases = std::mem::take(&mut self.lens_aliases);
                 let saved_params = std::mem::take(&mut self.current_params);
                 let saved_ret = self.current_return_type.clone();
+                let saved_mutables = self.mutables.clone();
 
                 self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
                 self.current_return_type = return_type.clone();
 
                 for (name, ty) in params {
                     self.declare(name.clone());
+                    self.set_mutable(name, false);
                     self.types.insert(name.clone(), ty.clone());
                 }
 
@@ -1062,6 +1085,7 @@ impl LinearChecker {
                 self.lens_aliases = saved_lens_aliases;
                 self.current_params = saved_params;
                 self.current_return_type = saved_ret;
+                self.mutables = saved_mutables;
                 Ok(())
             }
 
@@ -1295,12 +1319,14 @@ impl LinearChecker {
                 let saved_lens_aliases = std::mem::take(&mut self.lens_aliases);
                 let saved_params = std::mem::take(&mut self.current_params);
                 let saved_ret = self.current_return_type.clone();
+                let saved_mutables = self.mutables.clone();
 
                 self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
                 self.current_return_type = return_type.clone();
 
                 for (pname, pty) in params {
                     self.declare(pname.clone());
+                    self.set_mutable(pname, false);
                     self.types.insert(pname.clone(), pty.clone());
                 }
 
@@ -1318,6 +1344,7 @@ impl LinearChecker {
                 self.lens_aliases = saved_lens_aliases;
                 self.current_params = saved_params;
                 self.current_return_type = saved_ret;
+                self.mutables = saved_mutables;
                 Ok(())
             }
 
@@ -1399,6 +1426,7 @@ impl LinearChecker {
                     let saved_borrows = self.borrows.clone();
                     let saved_lens = self.lens_locked.clone();
                     let saved_lens_aliases = self.lens_aliases.clone();
+                    let saved_mutables = self.mutables.clone();
 
                     self.bind_pattern_variables(&arm.pattern, &target_ty, false)?;
 
@@ -1413,6 +1441,7 @@ impl LinearChecker {
                     self.borrows = saved_borrows;
                     self.lens_locked = saved_lens;
                     self.lens_aliases = saved_lens_aliases;
+                    self.mutables = saved_mutables;
                 }
                 Ok(())
             }
@@ -1429,9 +1458,7 @@ impl LinearChecker {
             crate::ast::Pattern::Ident(name) => {
                 self.declare(name.clone());
                 self.types.insert(name.clone(), target_type.clone());
-                if mutable {
-                    self.mutables.insert(name.clone());
-                }
+                self.set_mutable(name, mutable);
             }
             crate::ast::Pattern::Wildcard | crate::ast::Pattern::Literal(_) => {}
             crate::ast::Pattern::Tuple(pats) => {
