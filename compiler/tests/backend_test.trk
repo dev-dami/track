@@ -54,6 +54,19 @@ fn test_emitted_c_shape() -> i64 {
     return 0;
 }
 
+fn test_structs_and_arrays_lower_to_cells() -> i64 {
+    let c = compile_text("struct P { x: i64, y: i64 } struct Q { y: i64 } fn main() -> void { let mut p = P { y: 2, x: 1 }; p.x = 3; print(p.y); let a = [4, 5]; print(a[1]); }");
+    let tag = struct_tag(c, intern(c, "P"));
+    expect_true(tag == text_hash("P"), "struct tag is the name hash");
+    expect_i64(vlen(field_candidates(c, intern(c, "y"))), 4, "two structs declare y");
+    let code = generate_c(c);
+    expect_true(contains(code, text_cat3("TK_AT(t0, 0) = ", text_of_int(tag), ";")), "tag in word 0");
+    expect_true(contains(code, "TK_AT(t0, 1) = 1;"), "fields in declaration order");
+    expect_true(contains(code, "track_bad_field()"), "shared field name dispatches on the tag");
+    expect_true(contains(code, "track_array_get("), "bounds-checked indexing");
+    return 0;
+}
+
 fn test_string_literals_are_escaped() -> i64 {
     expect_text(c_string("a\"b\\c?\n"), "TK_S(\"a\\\"b\\\\c\\?\\n\")", "C escapes");
     return 0;
@@ -63,6 +76,7 @@ fn main() -> i64 {
     test_constants_and_enums_are_evaluated();
     test_inference_tracks_copy_types();
     test_emitted_c_shape();
+    test_structs_and_arrays_lower_to_cells();
     test_string_literals_are_escaped();
     print("ok");
     return 0;

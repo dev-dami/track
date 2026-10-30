@@ -110,6 +110,9 @@ fn collect_symbols(c: i64) -> i64 {
             ni_set(c, na(c, n), NI_TYPEKIND, 4);
             ni_set(c, na(c, n), NI_TYPENODE, nb(c, n));
         } else if k == K_STRUCT {
+            if ni(c, na(c, n), NI_TYPEKIND) != 3 {
+                vpush(cx(c, CX_STRUCTS), na(c, n));
+            }
             ni_set(c, na(c, n), NI_TYPEKIND, 3);
             ni_set(c, na(c, n), NI_TYPENODE, n);
         } else if k == K_FN || k == K_MACRODEF {
@@ -181,6 +184,49 @@ fn last_segment(c: i64, name: i64) -> i64 {
         i = i - 1;
     }
     return name;
+}
+
+// Runtime tag in word 0 of a struct value (same hash as the Rust compiler).
+fn struct_tag(c: i64, name: i64) -> i64 {
+    return text_hash(name_text(c, name));
+}
+
+// The K_STRUCT node declaring `name`, or -1.
+fn struct_def(c: i64, name: i64) -> i64 {
+    if ni(c, name, NI_TYPEKIND) != 3 {
+        return -1;
+    }
+    return ni(c, name, NI_TYPENODE);
+}
+
+// Index of `field` among the fields of struct node `s`, or -1.
+fn struct_field_index(c: i64, s: i64, field: i64) -> i64 {
+    let fields = nb(c, s);
+    let mut i: i64 = 0;
+    while i < list_len(c, fields) {
+        if list_at(c, fields, i) == field {
+            return i / 2;
+        }
+        i = i + 2;
+    }
+    return -1;
+}
+
+// Flattened (tag, index) pairs of every struct declaring `field`.
+fn field_candidates(c: i64, field: i64) -> i64 {
+    let out = vnew();
+    let structs = cx(c, CX_STRUCTS);
+    let mut i: i64 = 0;
+    while i < vlen(structs) {
+        let name = vget(structs, i);
+        let idx = struct_field_index(c, struct_def(c, name), field);
+        if idx >= 0 {
+            vpush(out, struct_tag(c, name));
+            vpush(out, idx);
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 fn is_qualified(c: i64, name: i64) -> bool {

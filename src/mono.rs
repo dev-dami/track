@@ -318,10 +318,33 @@ fn walk(
         }
         Expr::UnaryOp { expr, .. }
         | Expr::AddressOf { target: expr }
-        | Expr::ArrayIndex { target: expr, .. }
-        | Expr::SliceIndex { target: expr, .. }
+        | Expr::FieldAccess { target: expr, .. }
         | Expr::TupleIndex { target: expr, .. } => {
             walk(expr, env, templates, concrete_sigs, generated, in_progress)?;
+        }
+        Expr::ArrayIndex { target, index } => {
+            walk(
+                target,
+                env,
+                templates,
+                concrete_sigs,
+                generated,
+                in_progress,
+            )?;
+            walk(index, env, templates, concrete_sigs, generated, in_progress)?;
+        }
+        Expr::SliceIndex { target, start, end } => {
+            walk(
+                target,
+                env,
+                templates,
+                concrete_sigs,
+                generated,
+                in_progress,
+            )?;
+            for bound in [start, end].into_iter().flatten() {
+                walk(bound, env, templates, concrete_sigs, generated, in_progress)?;
+            }
         }
         Expr::BinaryOp { left, right, .. } => {
             walk(left, env, templates, concrete_sigs, generated, in_progress)?;

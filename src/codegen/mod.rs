@@ -39,6 +39,8 @@ pub struct TypeInfo {
     pub aliases: HashMap<String, TrackType>,
     /// Integer constants, including those defined in imported modules.
     pub consts: HashMap<String, i64>,
+    /// Struct name → field names in declaration order.
+    pub structs: HashMap<String, Vec<String>>,
 }
 
 pub struct CodeGen {
@@ -99,6 +101,17 @@ pub fn enum_discriminants(
             (name.clone(), disc)
         })
         .collect()
+}
+
+/// Runtime tag stored in word 0 of every struct value: FNV-1a over the
+/// name with 64-bit wrapping (identical in the self-hosted compiler).
+pub fn struct_tag(name: &str) -> i64 {
+    let mut h: i64 = 2166136261;
+    for b in name.bytes() {
+        h ^= i64::from(b);
+        h = h.wrapping_mul(16777619);
+    }
+    h
 }
 
 /// Number of words in a tuple type, resolving aliases.
@@ -199,6 +212,12 @@ impl CodeGen {
                 }
                 Expr::TypeAlias { name, target } => {
                     self.info.aliases.insert(name.clone(), target.clone());
+                }
+                Expr::StructDef { name, fields } => {
+                    self.info.structs.insert(
+                        name.clone(),
+                        fields.iter().map(|(f, _)| f.clone()).collect(),
+                    );
                 }
                 Expr::EnumDef { name, variants, .. } => {
                     for (vname, disc) in enum_discriminants(&self.consts, variants) {
@@ -575,6 +594,68 @@ impl<'a> FnContext<'a> {
         self.alloc_words(builder, module, &words)
     }
 
+    /// (tag, field index) of every struct declaring `field`, by struct name.
+    fn field_candidates(&self, field: &str) -> Vec<(i64, usize)> {
+        let mut names: Vec<&String> = self.info.structs.keys().collect();
+        names.sort();
+        names
+            .into_iter()
+            .filter_map(|name| {
+                self.info.structs[name]
+                    .iter()
+                    .position(|f| f == field)
+                    .map(|idx| (struct_tag(name), idx))
+            })
+            .collect()
+    }
+
+    /// Load (`store == None`) or store a struct field. A field name shared
+    /// by several structs dispatches on the tag in word 0.
+    fn field_access(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ptr: Value,
+        field: &str,
+        store: Option<Value>,
+    ) -> Value {
+        let candidates = self.field_candidates(field);
+        let access = |builder: &mut FunctionBuilder, idx: usize| -> Value {
+            let offset = ((idx + 1) * 8) as i32;
+            match store {
+                Some(v) => {
+                    builder.ins().store(ir::MemFlags::new(), v, ptr, offset);
+                    v
+                }
+                None => builder.ins().load(W, ir::MemFlags::new(), ptr, offset),
+            }
+        };
+        if candidates.len() == 1 {
+            return access(builder, candidates[0].1);
+        }
+        let merge = builder.create_block();
+        let result = builder.append_block_param(merge, W);
+        let tag = builder.ins().load(W, ir::MemFlags::new(), ptr, 0);
+        for (expected, idx) in candidates {
+            let hit = builder.create_block();
+            let miss = builder.create_block();
+            let want = builder.ins().iconst(W, expected);
+            let is_hit = builder.ins().icmp(IntCC::Equal, tag, want);
+            builder.ins().brif(is_hit, hit, &[], miss, &[]);
+            self.filled = true;
+            self.switch_to(builder, hit);
+            let v = access(builder, idx);
+            self.jump(builder, merge, &[v]);
+            self.switch_to(builder, miss);
+        }
+        let bad = self
+            .call_named(builder, module, "track_bad_field", &[])
+            .unwrap_or_else(|| builder.ins().iconst(W, 0));
+        self.jump(builder, merge, &[bad]);
+        self.switch_to(builder, merge);
+        result
+    }
+
     fn compile_block(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -681,11 +762,30 @@ impl<'a> FnContext<'a> {
 
             Expr::Assign { target, value } => {
                 let val = self.compile_expr(builder, module, value)?;
-                if let Expr::Variable(name) = &**target
-                    && let Some(&var) = self.var_map.get(name)
-                {
-                    builder.def_var(var, val);
-                    self.track_tuple_binding(name, value);
+                let val = self.word(builder, val);
+                match &**target {
+                    Expr::Variable(name) => {
+                        if let Some(&var) = self.var_map.get(name) {
+                            builder.def_var(var, val);
+                            self.track_tuple_binding(name, value);
+                        }
+                    }
+                    Expr::FieldAccess { target, field } => {
+                        let ptr = self.compile_expr(builder, module, target)?;
+                        self.field_access(builder, module, ptr, field, Some(val));
+                    }
+                    Expr::TupleIndex { target, index } => {
+                        let ptr = self.compile_expr(builder, module, target)?;
+                        builder
+                            .ins()
+                            .store(ir::MemFlags::new(), val, ptr, (*index * 8) as i32);
+                    }
+                    Expr::ArrayIndex { target, index } => {
+                        let arr = self.compile_expr(builder, module, target)?;
+                        let idx = self.compile_expr(builder, module, index)?;
+                        self.call_named(builder, module, "track_array_set", &[arr, idx, val]);
+                    }
+                    _ => {}
                 }
                 Some(val)
             }
@@ -1132,14 +1232,70 @@ impl<'a> FnContext<'a> {
                 Some(result)
             }
 
-            Expr::SliceIndex { target, start, .. } => {
-                let ptr = self.compile_expr(builder, module, target)?;
-                if let Some(s) = start
-                    && let Some(start_val) = self.compile_expr(builder, module, s)
-                {
-                    return Some(builder.ins().iadd(ptr, start_val));
+            Expr::StructInitialization { ty_name, fields } => {
+                // Struct values are heap cells: [tag, fields in declaration order].
+                let mut values = Vec::new();
+                for (fname, fexpr) in fields {
+                    let v = self
+                        .compile_expr(builder, module, fexpr)
+                        .unwrap_or_else(|| builder.ins().iconst(W, 0));
+                    if self.filled {
+                        return None;
+                    }
+                    values.push((fname.clone(), self.word(builder, v)));
                 }
-                Some(ptr)
+                let order: Vec<String> = match self.info.structs.get(ty_name) {
+                    Some(decl) => decl.clone(),
+                    None => fields.iter().map(|(f, _)| f.clone()).collect(),
+                };
+                let mut words = vec![builder.ins().iconst(W, struct_tag(ty_name))];
+                for fname in &order {
+                    let v = match values.iter().find(|(f, _)| f == fname) {
+                        Some((_, v)) => *v,
+                        None => builder.ins().iconst(W, 0),
+                    };
+                    words.push(v);
+                }
+                Some(self.alloc_words(builder, module, &words))
+            }
+
+            Expr::FieldAccess { target, field } => {
+                let ptr = self.compile_expr(builder, module, target)?;
+                Some(self.field_access(builder, module, ptr, field, None))
+            }
+
+            Expr::ArrayLiteral { elements } => {
+                // Arrays are heap cells: [length, elements...].
+                let mut words = vec![builder.ins().iconst(W, elements.len() as i64)];
+                for elem in elements {
+                    let v = self
+                        .compile_expr(builder, module, elem)
+                        .unwrap_or_else(|| builder.ins().iconst(W, 0));
+                    if self.filled {
+                        return None;
+                    }
+                    words.push(self.word(builder, v));
+                }
+                Some(self.alloc_words(builder, module, &words))
+            }
+
+            Expr::ArrayIndex { target, index } => {
+                let arr = self.compile_expr(builder, module, target)?;
+                let idx = self.compile_expr(builder, module, index)?;
+                self.call_named(builder, module, "track_array_get", &[arr, idx])
+            }
+
+            Expr::SliceIndex { target, start, end } => {
+                let arr = self.compile_expr(builder, module, target)?;
+                let from = match start {
+                    Some(s) => self.compile_expr(builder, module, s)?,
+                    None => builder.ins().iconst(W, 0),
+                };
+                let to = match end {
+                    Some(e) => self.compile_expr(builder, module, e)?,
+                    None => builder.ins().iconst(W, -1),
+                };
+                self.call_named(builder, module, "track_array_slice", &[arr, from, to])
             }
 
             Expr::Range { start, end } => {
@@ -1199,9 +1355,16 @@ impl<'a> FnContext<'a> {
                     }
                 }
             }
-            Pattern::Struct { fields, .. } => {
-                for (_fname, p) in fields {
-                    self.bind_pattern(builder, p, val);
+            Pattern::Struct { name, fields } => {
+                let decl = self.info.structs.get(name).cloned().unwrap_or_default();
+                for (fname, p) in fields {
+                    if let Some(idx) = decl.iter().position(|f| f == fname) {
+                        let field =
+                            builder
+                                .ins()
+                                .load(W, ir::MemFlags::new(), val, ((idx + 1) * 8) as i32);
+                        self.bind_pattern(builder, p, field);
+                    }
                 }
             }
         }
@@ -1216,8 +1379,25 @@ impl<'a> FnContext<'a> {
         val: Value,
     ) -> Value {
         match pattern {
-            Pattern::Ident(_) | Pattern::Wildcard | Pattern::Struct { .. } => {
-                builder.ins().iconst(W, 1)
+            Pattern::Ident(_) | Pattern::Wildcard => builder.ins().iconst(W, 1),
+            Pattern::Struct { name, fields } => {
+                let Some(decl) = self.info.structs.get(name).cloned() else {
+                    return builder.ins().iconst(W, 1);
+                };
+                let tag = builder.ins().load(W, ir::MemFlags::new(), val, 0);
+                let want = builder.ins().iconst(W, struct_tag(name));
+                let mut cond = self.bool_word(builder, IntCC::Equal, tag, want);
+                for (fname, p) in fields {
+                    if let Some(idx) = decl.iter().position(|f| f == fname) {
+                        let field =
+                            builder
+                                .ins()
+                                .load(W, ir::MemFlags::new(), val, ((idx + 1) * 8) as i32);
+                        let sub = self.compile_pattern_match(builder, module, p, field);
+                        cond = builder.ins().band(cond, sub);
+                    }
+                }
+                cond
             }
             Pattern::Literal(lit_expr) => {
                 if let Expr::StringLiteral(_) = lit_expr.as_ref() {

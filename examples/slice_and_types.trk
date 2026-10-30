@@ -12,5 +12,7 @@ fn main() -> void {
     let arr: [i64; 5] = [10, 20, 30, 40, 50];
     let slice: []i64 = arr[1..4];
 
-    print(slice);
+    print(array_len(&slice));
+    print(slice[0]);
+    print(slice[2]);
 }

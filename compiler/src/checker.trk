@@ -242,6 +242,7 @@ fn register_builtins(c: i64) -> i64 {
     bi(c, "track_words_copy", t_i64);
     bi(c, "sys_exit", t_i64);
     bi(c, "clock_ms", t_i64);
+    bi(c, "array_len", t_i64);
     return 0;
 }
 
@@ -782,6 +783,24 @@ fn infer_type(c: i64, n: i64) -> i64 {
         return ty_ref(c, t);
     }
     if k == K_SINIT { return node1(c, T_CUSTOM, na(c, n), -1); }
+    if k == K_FIELD {
+        let mut t = infer_type(c, na(c, n));
+        if t >= 0 && nk(c, t) == T_REF {
+            t = na(c, t);
+        }
+        if t < 0 || nk(c, t) != T_CUSTOM {
+            return -1;
+        }
+        let s = struct_def(c, na(c, t));
+        if s < 0 {
+            return -1;
+        }
+        let idx = struct_field_index(c, s, nb(c, n));
+        if idx < 0 {
+            return -1;
+        }
+        return list_at(c, nb(c, s), idx * 2 + 1);
+    }
     if k == K_CALL { return call_type(c, na(c, n), nb(c, n)); }
     if k == K_LENS { return infer_last(c, nc(c, n)); }
     if k == K_IF { return infer_last(c, nb(c, n)); }
@@ -834,6 +853,11 @@ fn provenance(c: i64, n: i64) -> i64 {
             vpush(out, na(c, target));
         } else if nk(c, target) == K_INDEX {
             prov_merge(out, provenance(c, na(c, target)));
+        } else if nk(c, target) == K_FIELD {
+            let root = place_root(c, target);
+            if root >= 0 {
+                vpush(out, root);
+            }
         } else {
             prov_merge(out, provenance(c, target));
         }
@@ -870,6 +894,18 @@ fn provenance(c: i64, n: i64) -> i64 {
         }
     }
     return out;
+}
+
+// Variable at the base of `a.b.0[i]`, or -1.
+fn place_root(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_VAR {
+        return na(c, n);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_INDEX {
+        return place_root(c, na(c, n));
+    }
+    return -1;
 }
 
 fn check_escape(c: i64, n: i64, value: i64) -> i64 {
@@ -1374,6 +1410,29 @@ fn check_match(c: i64, n: i64) -> i64 {
     return 0;
 }
 
+// Assignment target `p.x`, `t.0`, or `a[i]`: the root variable must be
+// usable and either `let mut` or a lens alias.
+fn check_place(c: i64, place: i64) -> i64 {
+    let k = nk(c, place);
+    if k == K_FIELD || k == K_TINDEX {
+        return check_place(c, na(c, place));
+    }
+    if k == K_INDEX {
+        check_borrow(c, nb(c, place));
+        return check_place(c, na(c, place));
+    }
+    if k == K_VAR {
+        check_borrow(c, place);
+        let name = na(c, place);
+        let slot = lookup(c, name);
+        if vf(c, slot, V_MUT) == 0 && vf(c, slot, V_LENS) == 0 {
+            return cfail(c, place, text_cat3("Cannot mutate immutable variable ", quoted(c, name), text_cat3(". Use 'let mut ", name_text(c, name), "' to declare a mutable variable.")));
+        }
+        return 0;
+    }
+    return check_expr(c, place);
+}
+
 fn check_assign(c: i64, n: i64) -> i64 {
     let target = na(c, n);
     let value = nb(c, n);
@@ -1398,6 +1457,8 @@ fn check_assign(c: i64, n: i64) -> i64 {
                 vf_set(c, slot, V_BORROWS, -1);
             }
         }
+    } else {
+        check_place(c, target);
     }
     update_borrow_states(c);
     return 0;
@@ -1446,8 +1507,25 @@ fn check_expr(c: i64, n: i64) -> i64 {
     if k == K_ADDR {
         return check_borrow(c, na(c, n));
     }
+    if k == K_FIELD {
+        check_borrow(c, na(c, n));
+        if vlen(field_candidates(c, nb(c, n))) == 0 {
+            cfail(c, n, text_cat3("Unknown field ", quoted(c, nb(c, n)), " (no struct declares it)."));
+        }
+        return 0;
+    }
     if k == K_SINIT {
         let fields = nb(c, n);
+        let decl = struct_def(c, na(c, n));
+        if decl >= 0 {
+            let mut f: i64 = 0;
+            while f < list_len(c, fields) {
+                if struct_field_index(c, decl, list_at(c, fields, f)) < 0 {
+                    cfail(c, n, text_cat3("Struct ", quoted(c, na(c, n)), text_cat3(" has no field ", quoted(c, list_at(c, fields, f)), ".")));
+                }
+                f = f + 2;
+            }
+        }
         let mut i: i64 = 1;
         while i < list_len(c, fields) {
             reject_lens_escape(c, list_at(c, fields, i));

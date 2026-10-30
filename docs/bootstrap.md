@@ -81,9 +81,13 @@ takes and returns words:
 - division by zero (and `INT64_MIN / -1`) raises `SIGFPE`; shifts mask the
   amount to 6 bits and `>>` is logical; arithmetic wraps.
 
-Array literals, indexing, and struct literals are parsed and ownership
-checked but have no runtime representation yet; both backends evaluate
-them to `0`.
+- structs are heap cells `[tag, fields...]` with fields in declaration
+  order; the tag is a hash of the struct name, so separately compiled
+  modules agree. `p.x` reads a field and `p.x = v` writes one; a field name
+  declared by several structs dispatches on the tag;
+- arrays are heap cells `[length, elements...]`; `a[i]` and `a[i] = v` are
+  bounds checked (out of range aborts with status 134), `a[s..e]` / `a[s..]`
+  copy a slice, and `array_len(&a)` returns the length.
 
 ## C backend contract
 

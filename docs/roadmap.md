@@ -24,7 +24,7 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 ## Milestone Breakdown
 
 ### v0.1.6 — Slices, Strings & Memory Primitives ✅
-- First-class slices (`[]T`) with `.len()` and sub-slicing `arr[start..end]`.
+- First-class slices (`[]T`) with sub-slicing `arr[start..end]` (length via `array_len` since v1.0).
 - Owned heap string type (`Str`) and string formatting/concatenation.
 - Byte types (`u8`, `i8`) and safe reference borrows (`&T`).
 - Variable mutability enforcement (`let mut`).
@@ -162,8 +162,9 @@ values that live on the call stack and are passed around explicitly.
 - CI gates on the bootstrap fixed point and on behavioural parity between the
   two compilers.
 
+- Structs, field access/update, struct patterns, and bounds-checked arrays
+  with slicing now have runtime representations in both compilers.
+
 ### Next
-- Runtime representations for arrays, indexing, and struct literals (both
-  backends currently evaluate them to `0`).
 - Generic structs (`struct Stack<T>`), and retiring the Rust compiler once
   `yard` itself is ported.

@@ -246,3 +246,46 @@ fn block_bindings_do_not_leak_into_the_enclosing_scope() {
     );
     assert_eq!(out, "20\n10\n1\n10");
 }
+
+#[test]
+fn structs_and_arrays_have_runtime_values() {
+    let out = run(
+        "structs",
+        r#"
+        struct Point { x: i64, y: i64 }
+        struct Size { w: i64, x: i64 }
+        fn make(n: i64) -> Point { let p = Point { y: n + 1, x: n }; return p; }
+        fn main() -> void {
+            let mut p = make(3);
+            print(p.x); print(p.y);
+            p.x = 10;
+            let s = Size { x: 8, w: 7 };
+            print(p.x + s.x);
+            match p { Point { x: 10, y } => print(y), _ => print(0), }
+            let mut a = [1, 2, 3, 4];
+            a[3] = 40;
+            let tail = a[2..];
+            print(array_len(&tail)); print(tail[1]);
+            let mut t = (1, 2);
+            t.1 = 9;
+            print(t.1);
+        }
+        "#,
+        &[],
+    );
+    assert_eq!(out, "3\n4\n18\n4\n2\n40\n9");
+}
+
+#[test]
+fn array_index_out_of_bounds_aborts() {
+    let temp_dir = env::temp_dir().join(format!("track_sem_bounds_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+    let src = temp_dir.join("bounds.trk");
+    fs::write(&src, "fn main() -> void { let a = [1, 2]; print(a[2]); }").unwrap();
+    let exe = build_file_in_dir(src.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe).output().unwrap();
+    let _ = fs::remove_dir_all(&temp_dir);
+    assert_eq!(output.status.code(), Some(134));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("array index out of bounds"));
+}

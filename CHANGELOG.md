@@ -29,6 +29,13 @@ executables are byte-identical (`scripts/bootstrap.sh`, gated in CI).
 - `tests/codegen_semantics_tests.rs`: run-and-compare regressions for the
   backend fixes below.
 
+- **Structs and arrays at run time** (both compilers): struct literals,
+  `value.field` reads, `p.x = v` / `t.0 = v` / `a[i] = v` updates (root must
+  be `let mut` or a lens alias), struct patterns that match by field,
+  bounds-checked array indexing, `a[s..e]` / `a[s..]` slices, and
+  `array_len`. Previously these parsed but evaluated to `0`. Unknown struct
+  fields are compile errors. `examples/structs_arrays.trk` demonstrates them.
+
 ### Fixed (Rust bootstrap compiler)
 - **Word ABI in the Cranelift backend.** Values mixed I8/I32/I64 and calls to
   functions in other modules were declared with guessed signatures, so a
@@ -56,6 +63,9 @@ executables are byte-identical (`scripts/bootstrap.sh`, gated in CI).
 - `Vec` (a 16-byte struct return truncated to its data pointer) and `math_*`
   (declared with `double` parameters, called with integers) returned garbage.
 - `str_substr`/`str_char_at` scanned the whole string on every call.
+- Open-ended slices (`a[2..]`) failed to parse.
+- Generic calls inside index expressions and slice bounds were not
+  monomorphized.
 - Yard reused cached objects after the compiler changed or after an imported
   module's constants changed; the cache key now covers both.
 - Yard preserves source-relative paths under `target/objects/`, preventing

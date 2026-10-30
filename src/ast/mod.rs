@@ -29,6 +29,12 @@ pub enum Expr {
         index: usize,
     },
 
+    /// `value.field` on a struct.
+    FieldAccess {
+        target: Box<Expr>,
+        field: String,
+    },
+
     ArrayIndex {
         target: Box<Expr>,
         index: Box<Expr>,
@@ -113,6 +119,11 @@ pub enum Expr {
     TypeAlias {
         name: String,
         target: TrackType,
+    },
+
+    StructDef {
+        name: String,
+        fields: Vec<(String, TrackType)>,
     },
 
     MacroDef {

@@ -115,7 +115,8 @@ const CX_TEND = 18;     // parser: token index of the current file's EOF
 const CX_CHK = 19;      // checker state vector
 const CX_GEN = 20;      // C emitter state vector
 const CX_STRCACHE = 21; // string literal pool (unescaped text per literal)
-const CX_SLOTS = 22;
+const CX_STRUCTS = 22;  // struct names in declaration order
+const CX_SLOTS = 23;
 
 fn cx_new() -> i64 {
     let c = vnew_cap(CX_SLOTS);
@@ -138,6 +139,7 @@ fn cx_new() -> i64 {
     vset(c, CX_MODS, vnew());
     vset(c, CX_ITEMFILE, vnew());
     vset(c, CX_STRCACHE, vnew());
+    vset(c, CX_STRUCTS, vnew());
     vset(c, CX_ALLOW, 1);
     vset(c, CX_MAINFILE, 0);
     return c;

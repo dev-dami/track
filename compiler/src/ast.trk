@@ -44,6 +44,7 @@ const K_ENUM = 30;      // a = name, b = underlying type (-1), c = [name, value 
 const K_UNION = 31;     // a = name, b = [name, payload type (-1)]*
 const K_MATCH = 32;     // a = target, b = [pattern, guard (-1), body]*
 const K_STRUCT = 33;    // a = name, b = [field name, type]*
+const K_FIELD = 34;     // a = target, b = field name
 
 // Patterns
 const P_IDENT = 40;     // a = name

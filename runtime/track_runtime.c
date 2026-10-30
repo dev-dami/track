@@ -745,6 +745,43 @@ tk_w track_sb_clear(tk_w h) {
     return 0;
 }
 
+/* ----------------------------------------------------------------- arrays */
+
+/* Array values are cells [length, elements...]; indexing is bounds checked. */
+static void tk_bounds(tk_w a, tk_w i) {
+    if (!a) track_abort(TK_WORD("index into a null array"));
+    if (i < 0 || i >= ((tk_w *)TK_PTR(a))[0]) track_abort(TK_WORD("array index out of bounds"));
+}
+
+tk_w track_array_get(tk_w a, tk_w i) {
+    tk_bounds(a, i);
+    return ((tk_w *)TK_PTR(a))[i + 1];
+}
+
+tk_w track_array_set(tk_w a, tk_w i, tk_w v) {
+    tk_bounds(a, i);
+    ((tk_w *)TK_PTR(a))[i + 1] = v;
+    return v;
+}
+
+/* Copy of a[from..to]; `to` of -1 means the end of the array. */
+tk_w track_array_slice(tk_w a, tk_w from, tk_w to) {
+    tk_w len = a ? ((tk_w *)TK_PTR(a))[0] : 0;
+    if (to < 0) to = len;
+    if (from < 0 || from > to || to > len) track_abort(TK_WORD("array slice out of bounds"));
+    tk_w out = alloc((to - from + 1) * 8);
+    ((tk_w *)TK_PTR(out))[0] = to - from;
+    if (to > from) memcpy((tk_w *)TK_PTR(out) + 1, (tk_w *)TK_PTR(a) + 1 + from, (size_t)(to - from) * 8);
+    return out;
+}
+
+tk_w array_len(tk_w a) { return a ? ((tk_w *)TK_PTR(a))[0] : 0; }
+
+/* A field access whose struct tag matched none of the declaring structs. */
+tk_w track_bad_field(void) {
+    return track_abort(TK_WORD("field access on a value of the wrong struct type"));
+}
+
 /* ---------------------------------------------------------------- network */
 
 tk_w net_socket_tcp_listen(tk_w port) {

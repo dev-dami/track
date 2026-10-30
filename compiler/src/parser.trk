@@ -151,7 +151,9 @@ fn parse_type(c: i64) -> i64 {
 fn parse_expr(c: i64) -> i64 {
     let pos = p_pos(c);
     let left = parse_or(c);
-    if p_accept(c, TK_DOTDOT) {
+    // `a[s..]`: leave an open-ended `..` for the index parser.
+    if p_at(c, TK_DOTDOT) && p_kind_at(c, 1) != TK_RBRACKET {
+        p_advance(c);
         let right = parse_or(c);
         return node2(c, K_RANGE, left, right, pos);
     }
@@ -307,13 +309,16 @@ fn parse_postfix(c: i64) -> i64 {
                 p_advance(c);
                 expr = node2(c, K_TINDEX, expr, index, pos);
             } else {
-                // Uniform function call syntax: x.f(a) == f(x, a)
-                let method = p_ident(c);
-                p_expect(c, TK_LPAREN);
-                let mark = list_begin(c);
-                list_item(c, expr);
-                parse_args_into(c);
-                expr = node2(c, K_CALL, method, list_end(c, mark), npos(c, expr));
+                let member = p_ident(c);
+                if p_accept(c, TK_LPAREN) {
+                    // Uniform function call syntax: x.f(a) == f(x, a)
+                    let mark = list_begin(c);
+                    list_item(c, expr);
+                    parse_args_into(c);
+                    expr = node2(c, K_CALL, member, list_end(c, mark), npos(c, expr));
+                } else {
+                    expr = node2(c, K_FIELD, expr, member, pos);
+                }
             }
         } else if p_accept(c, TK_LBRACKET) {
             expr = parse_index_suffix(c, expr, pos);

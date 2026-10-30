@@ -268,6 +268,41 @@ const VERDICTS: &[(&str, &str, bool)] = &[
         "fn main() -> void { @compile_error(\"stop\"); }",
         false,
     ),
+    (
+        "struct_field_update",
+        "struct P { x: i64 } fn main() -> void { let mut p = P { x: 1 }; p.x = 2; print(p.x); }",
+        true,
+    ),
+    (
+        "immutable_field_update",
+        "struct P { x: i64 } fn main() -> void { let p = P { x: 1 }; p.x = 2; }",
+        false,
+    ),
+    (
+        "lens_field_update",
+        "struct P { x: i64 } fn main() -> void { let mut p = P { x: 1 }; with p -> l { l.x = 5; } print(p.x); }",
+        true,
+    ),
+    (
+        "unknown_struct_field",
+        "struct P { x: i64 } fn main() -> void { let p = P { z: 1 }; }",
+        false,
+    ),
+    (
+        "unknown_field_access",
+        "struct P { x: i64 } fn main() -> void { let p = P { x: 1 }; print(p.q); }",
+        false,
+    ),
+    (
+        "array_moved_by_value",
+        "fn main() -> void { let a = [1, 2]; let n = array_len(a); print(a[0]); }",
+        false,
+    ),
+    (
+        "array_index_update",
+        "fn main() -> void { let mut a = [1, 2]; a[1] = 7; print(a[1]); }",
+        true,
+    ),
 ];
 
 #[test]

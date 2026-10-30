@@ -131,6 +131,14 @@ fn c_string(s: i64) -> i64 {
     return sb_text(b);
 }
 
+// Integer literal text valid for every i64 (INT64_MIN has no literal).
+fn c_int(v: i64) -> i64 {
+    if v == -9223372036854775807 - 1 {
+        return "INT64_MIN";
+    }
+    return text_of_int(v);
+}
+
 fn paren2(a: i64, op: i64, b: i64) -> i64 {
     return text_cat3("(", text_cat3(a, op, b), ")");
 }
@@ -198,6 +206,117 @@ fn gen_logic(c: i64, n: i64) -> i64 {
     return r;
 }
 
+// Struct literal: heap cell [tag, fields in declaration order].
+fn gen_struct_init(c: i64, n: i64) -> i64 {
+    let fields = nb(c, n);
+    let names = vnew();
+    let values = vnew();
+    let mut i: i64 = 0;
+    while i < list_len(c, fields) {
+        vpush(names, list_at(c, fields, i));
+        vpush(values, gen(c, list_at(c, fields, i + 1)));
+        i = i + 2;
+    }
+    let words = vnew();
+    vpush(words, c_int(struct_tag(c, na(c, n))));
+    let decl = struct_def(c, na(c, n));
+    if decl < 0 {
+        let mut j: i64 = 0;
+        while j < vlen(values) {
+            vpush(words, vget(values, j));
+            j = j + 1;
+        }
+        return gen_cell(c, words);
+    }
+    let order = nb(c, decl);
+    let mut f: i64 = 0;
+    while f < list_len(c, order) {
+        let mut v: i64 = "0";
+        let mut k: i64 = 0;
+        while k < vlen(names) {
+            if vget(names, k) == list_at(c, order, f) {
+                v = vget(values, k);
+            }
+            k = k + 1;
+        }
+        vpush(words, v);
+        f = f + 2;
+    }
+    return gen_cell(c, words);
+}
+
+// Read (store == 0) or write a struct field of the cell in temp `base`.
+// A field name declared by several structs dispatches on the tag.
+fn gen_field_access(c: i64, base: i64, field: i64, store: i64) -> i64 {
+    let cands = field_candidates(c, field);
+    if vlen(cands) == 2 {
+        let slot = load_text(base, vget(cands, 1) + 1);
+        if store != 0 {
+            emit(c, text_cat3(slot, " = ", text_cat(store, ";")));
+            return store;
+        }
+        return slot;
+    }
+    let tag = load_text(base, 0);
+    if store != 0 {
+        let mut i: i64 = 0;
+        while i < vlen(cands) {
+            let mut head: i64 = "if (";
+            if i > 0 {
+                head = "} else if (";
+            }
+            emit(c, text_cat3(head, paren2(tag, " == ", c_int(vget(cands, i))), ") {"));
+            emit(c, text_cat3("    ", load_text(base, vget(cands, i + 1) + 1), text_cat3(" = ", store, ";")));
+            i = i + 2;
+        }
+        if vlen(cands) > 0 {
+            emit(c, "} else {");
+            emit(c, "    track_bad_field();");
+            emit(c, "}");
+        } else {
+            emit(c, "track_bad_field();");
+        }
+        return store;
+    }
+    let b = sb_new();
+    sb_add(b, "(");
+    let mut j: i64 = 0;
+    while j < vlen(cands) {
+        sb_add(b, paren2(tag, " == ", c_int(vget(cands, j))));
+        sb_add(b, " ? ");
+        sb_add(b, load_text(base, vget(cands, j + 1) + 1));
+        sb_add(b, " : ");
+        j = j + 2;
+    }
+    sb_add(b, "track_bad_field())");
+    return sb_text(b);
+}
+
+fn gen_into_temp(c: i64, value: i64) -> i64 {
+    let t = temp(c);
+    emit(c, text_cat3(t, " = ", text_cat(value, ";")));
+    return t;
+}
+
+fn gen_assign_place(c: i64, target: i64, v: i64) -> i64 {
+    let k = nk(c, target);
+    if k == K_FIELD {
+        let base = gen_into_temp(c, gen(c, na(c, target)));
+        return gen_field_access(c, base, nb(c, target), v);
+    }
+    if k == K_TINDEX {
+        let base = gen_into_temp(c, gen(c, na(c, target)));
+        emit(c, text_cat3(load_text(base, nb(c, target)), " = ", text_cat(v, ";")));
+        return v;
+    }
+    if k == K_INDEX {
+        let arr = gen(c, na(c, target));
+        let idx = gen(c, nb(c, target));
+        emit(c, text_cat3("track_array_set(", arr, text_cat3(", ", idx, text_cat3(", ", v, ");"))));
+    }
+    return v;
+}
+
 fn gen_var(c: i64, n: i64) -> i64 {
     let name = na(c, n);
     let local = ni(c, name, NI_CVAR);
@@ -215,10 +334,10 @@ fn gen_var(c: i64, n: i64) -> i64 {
             vpush(words, "0");
             return gen_cell(c, words);
         }
-        return text_of_int(disc);
+        return c_int(disc);
     }
     if ni(c, name, NI_CONSTOK) == 1 {
-        return text_of_int(ni(c, name, NI_CONSTVAL));
+        return c_int(ni(c, name, NI_CONSTVAL));
     }
     return "0";
 }
@@ -430,10 +549,17 @@ fn bind_pattern_value(c: i64, p: i64, value: i64) -> i64 {
         return 0;
     }
     if k == P_STRUCT {
+        let decl = struct_def(c, na(c, p));
+        if decl < 0 {
+            return 0;
+        }
         let fields = nb(c, p);
-        let mut i: i64 = 1;
+        let mut i: i64 = 0;
         while i < list_len(c, fields) {
-            bind_pattern_value(c, list_at(c, fields, i), value);
+            let idx = struct_field_index(c, decl, list_at(c, fields, i));
+            if idx >= 0 {
+                bind_pattern_value(c, list_at(c, fields, i + 1), load_text(value, idx + 1));
+            }
             i = i + 2;
         }
     }
@@ -468,6 +594,23 @@ fn pattern_cond(c: i64, p: i64, value: i64) -> i64 {
         while i < list_len(c, pats) {
             cond = text_cat3(cond, " && ", pattern_cond(c, list_at(c, pats, i), load_text(value, i)));
             i = i + 1;
+        }
+        return text_cat(cond, ")");
+    }
+    if k == P_STRUCT {
+        let decl = struct_def(c, na(c, p));
+        if decl < 0 {
+            return "1";
+        }
+        let mut cond = text_cat3("(", paren2(load_text(value, 0), " == ", c_int(struct_tag(c, na(c, p)))), "");
+        let fields = nb(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, fields) {
+            let idx = struct_field_index(c, decl, list_at(c, fields, i));
+            if idx >= 0 {
+                cond = text_cat3(cond, " && ", pattern_cond(c, list_at(c, fields, i + 1), load_text(value, idx + 1)));
+            }
+            i = i + 2;
         }
         return text_cat(cond, ")");
     }
@@ -600,7 +743,7 @@ fn gen(c: i64, n: i64) -> i64 {
             }
             return local_name(c, id);
         }
-        return v;
+        return gen_assign_place(c, target, gen_into_temp(c, v));
     }
     if k == K_IF { return gen_if(c, n); }
     if k == K_WHILE { return gen_while(c, n); }
@@ -613,18 +756,43 @@ fn gen(c: i64, n: i64) -> i64 {
     if k == K_MATCH { return gen_match(c, n); }
     if k == K_SLICE {
         let base = gen(c, na(c, n));
+        let mut from: i64 = "0";
         if nb(c, n) >= 0 {
-            return paren2(base, " + ", gen(c, nb(c, n)));
+            from = gen(c, nb(c, n));
         }
-        return base;
+        let mut to: i64 = "-1";
+        if nc(c, n) >= 0 {
+            to = gen(c, nc(c, n));
+        }
+        return gen_into_temp(c, text_cat3("track_array_slice(", base, text_cat3(", ", from, text_cat3(", ", to, ")"))));
     }
+    if k == K_ARRAY {
+        let words = gen_list_values(c, na(c, n));
+        let cell = vnew();
+        vpush(cell, text_of_int(vlen(words)));
+        let mut i: i64 = 0;
+        while i < vlen(words) {
+            vpush(cell, vget(words, i));
+            i = i + 1;
+        }
+        return gen_cell(c, cell);
+    }
+    if k == K_INDEX {
+        let arr = gen(c, na(c, n));
+        let idx = gen(c, nb(c, n));
+        return gen_into_temp(c, text_cat3("track_array_get(", arr, text_cat3(", ", idx, ")")));
+    }
+    if k == K_FIELD {
+        let base = gen_into_temp(c, gen(c, na(c, n)));
+        return gen_into_temp(c, gen_field_access(c, base, nb(c, n), 0));
+    }
+    if k == K_SINIT { return gen_struct_init(c, n); }
     if k == K_RANGE {
         let s = gen(c, na(c, n));
         let e = gen(c, nb(c, n));
         return paren2(e, " - ", s);
     }
-    // Arrays, indexing, struct literals, and nested declarations have no
-    // runtime representation yet; like the bootstrap backend they yield 0.
+    // Declarations nested in a body produce no code.
     return "0";
 }
 

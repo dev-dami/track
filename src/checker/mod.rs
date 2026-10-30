@@ -26,6 +26,7 @@ pub struct LinearChecker {
     /// Enum/union layouts and aliases for codegen, including imported modules.
     pub type_info: crate::codegen::TypeInfo,
     pub const_values: HashMap<String, i64>,
+    pub structs: HashMap<String, Vec<(String, TrackType)>>,
 }
 
 impl LinearChecker {
@@ -75,6 +76,7 @@ impl LinearChecker {
             loaded_modules: std::collections::HashSet::new(),
             type_info: crate::codegen::TypeInfo::default(),
             const_values: HashMap::new(),
+            structs: HashMap::new(),
         }
     }
 
@@ -454,6 +456,7 @@ impl LinearChecker {
                 "track_words_copy",
                 "sys_exit",
                 "clock_ms",
+                "array_len",
             ] {
                 self.functions
                     .insert(name.to_string(), Some(TrackType::I64));
@@ -473,6 +476,13 @@ impl LinearChecker {
                     if let Some(ty) = self.infer_type(value) {
                         self.types.insert(name.clone(), ty);
                     }
+                }
+                Expr::StructDef { name, fields } => {
+                    self.structs.insert(name.clone(), fields.clone());
+                    self.type_info.structs.insert(
+                        name.clone(),
+                        fields.iter().map(|(f, _)| f.clone()).collect(),
+                    );
                 }
                 Expr::TypeAlias { name, target } => {
                     self.type_aliases.insert(name.clone(), target.clone());
@@ -608,6 +618,22 @@ impl LinearChecker {
                 self.infer_type(target).map(|t| TrackType::Ref(Box::new(t)))
             }
             Expr::StructInitialization { ty_name, .. } => Some(TrackType::Custom(ty_name.clone())),
+            Expr::FieldAccess { target, field } => {
+                let ty = match self.infer_type(target)? {
+                    TrackType::Ref(inner) => *inner,
+                    other => other,
+                };
+                match ty {
+                    TrackType::Custom(name) => self
+                        .structs
+                        .get(&name)?
+                        .iter()
+                        .find(|(f, _)| f == field)
+                        .map(|(_, t)| t.clone()),
+                    _ => None,
+                }
+            }
+            Expr::StructDef { .. } => Some(TrackType::Void),
             Expr::FunctionCall { name, .. } => self.functions.get(name).cloned().flatten(),
             Expr::LensBlock { body, .. } => body.last().and_then(|e| self.infer_type(e)),
             Expr::IfElse { then_body, .. } => then_body.last().and_then(|e| self.infer_type(e)),
@@ -639,7 +665,23 @@ impl LinearChecker {
             Expr::IntLiteral(_)
             | Expr::StringLiteral(_)
             | Expr::BoolLiteral(_)
-            | Expr::TypeAlias { .. } => Ok(()),
+            | Expr::TypeAlias { .. }
+            | Expr::StructDef { .. } => Ok(()),
+
+            Expr::FieldAccess { target, field } => {
+                self.check_borrow(target)?;
+                if !self
+                    .structs
+                    .values()
+                    .any(|fs| fs.iter().any(|(f, _)| f == field))
+                {
+                    return Err(format!(
+                        "Compile Error: Unknown field '{}' (no struct declares it).",
+                        field
+                    ));
+                }
+                Ok(())
+            }
 
             Expr::Variable(name) => {
                 self.read_or_move(name)?;
@@ -723,7 +765,17 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::StructInitialization { fields, .. } => {
+            Expr::StructInitialization { ty_name, fields } => {
+                if let Some(decl) = self.structs.get(ty_name) {
+                    for (fname, _) in fields {
+                        if !decl.iter().any(|(f, _)| f == fname) {
+                            return Err(format!(
+                                "Compile Error: Struct '{}' has no field '{}'.",
+                                ty_name, fname
+                            ));
+                        }
+                    }
+                }
                 for (_, fval) in fields {
                     self.reject_lens_escape(fval)?;
                     self.check_expr(fval)?;
@@ -1010,15 +1062,9 @@ impl LinearChecker {
                         ));
                     }
                     self.registry.insert(name.clone(), VariableState::Active);
-                    if let Some(ty) = self.infer_type(value) {
-                        self.types.insert(name.clone(), ty.clone());
-                        if matches!(ty, TrackType::Ref(_)) {
-                            let prov = self.get_provenance(value);
-                            self.borrows.insert(name.clone(), prov);
-                        } else {
-                            self.borrows.remove(name);
-                        }
-                    }
+                    self.assign_types(name, value);
+                } else {
+                    self.check_place(target)?;
                 }
                 self.update_borrow_states();
                 Ok(())
@@ -1448,6 +1494,45 @@ impl LinearChecker {
         }
     }
 
+    /// After `name = value`, the variable takes the value's type and
+    /// provenance.
+    fn assign_types(&mut self, name: &str, value: &Expr) {
+        if let Some(ty) = self.infer_type(value) {
+            self.types.insert(name.to_string(), ty.clone());
+            if matches!(ty, TrackType::Ref(_)) {
+                let prov = self.get_provenance(value);
+                self.borrows.insert(name.to_string(), prov);
+            } else {
+                self.borrows.remove(name);
+            }
+        }
+    }
+
+    /// Check an assignment target such as `p.x`, `t.0`, or `a[i]`: the root
+    /// variable must be usable and either `let mut` or a lens alias.
+    fn check_place(&mut self, place: &Expr) -> Result<(), String> {
+        match place {
+            Expr::FieldAccess { target, .. } | Expr::TupleIndex { target, .. } => {
+                self.check_place(target)
+            }
+            Expr::ArrayIndex { target, index } => {
+                self.check_borrow(index)?;
+                self.check_place(target)
+            }
+            Expr::Variable(name) => {
+                self.check_borrow(place)?;
+                if !self.mutables.contains(name) && !self.lens_aliases.contains(name) {
+                    return Err(format!(
+                        "Compile Error: Cannot mutate immutable variable '{}'. Use 'let mut {}' to declare a mutable variable.",
+                        name, name
+                    ));
+                }
+                Ok(())
+            }
+            other => self.check_expr(other),
+        }
+    }
+
     fn bind_pattern_variables(
         &mut self,
         pattern: &crate::ast::Pattern,
@@ -1525,6 +1610,10 @@ impl LinearChecker {
                     target: inner_target,
                     ..
                 } => self.get_provenance(inner_target),
+                Expr::FieldAccess { .. } => match place_root(target) {
+                    Some(name) => vec![name.to_string()],
+                    None => Vec::new(),
+                },
                 _ => self.get_provenance(target),
             },
             Expr::Variable(name) => {
@@ -1641,6 +1730,8 @@ impl LinearChecker {
                 elements.iter().find_map(|e| self.find_lens_alias(e))
             }
             Expr::TupleIndex { target, .. } => self.find_lens_alias(target),
+            // Reading a field yields the field's value, not the lens itself.
+            Expr::FieldAccess { .. } => None,
             Expr::FunctionCall { .. } => None,
             Expr::MacroCall { args, body, .. } => args
                 .iter()
@@ -1667,9 +1758,21 @@ impl LinearChecker {
             | Expr::EnumDef { .. }
             | Expr::UnionDef { .. }
             | Expr::TypeAlias { .. }
+            | Expr::StructDef { .. }
             | Expr::ForIn { .. }
             | Expr::Variable(_) => None,
         }
+    }
+}
+
+/// The variable at the base of `a.b.0[i]`, if any.
+fn place_root(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Variable(name) => Some(name),
+        Expr::FieldAccess { target, .. }
+        | Expr::TupleIndex { target, .. }
+        | Expr::ArrayIndex { target, .. } => place_root(target),
+        _ => None,
     }
 }
 

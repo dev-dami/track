@@ -99,7 +99,17 @@ A variable is usable after the loop only if the merged state is consistent acros
 
 ---
 
-## 6. Anonymous Tuples & Destructuring
+## 6. Structs, Arrays, Anonymous Tuples & Destructuring
+
+- **Structs**: `struct Point { x: i64, y: i64 }` declares a linear record.
+  `Point { x: 1, y: 2 }` constructs one (unknown fields are rejected),
+  `p.x` reads a field, and `p.x = v` updates it when `p` is `let mut` or a
+  lens alias. Struct patterns `Point { x: 0, y }` match by field.
+- **Arrays**: `[a, b, c]` creates a linear, fixed-length array. `a[i]` and
+  `a[i] = v` are bounds checked at run time (out-of-range access aborts),
+  `a[s..e]` and `a[s..]` copy a slice, and `array_len(&a)` gives the length.
+- Tuple elements can be updated in place with `t.0 = v`.
+
 
 Tuples are heterogeneous value containers specified with `(T1, T2, ...)`.
 
@@ -158,8 +168,9 @@ lens aliases are immutable. Assigning to an undeclared name is an error.
 Every value is one 64-bit word: integers and booleans directly (comparisons
 and `&&`/`||` yield `0` or `1`; `&&`/`||` short-circuit), strings as
 NUL-terminated byte pointers, references as the referenced value, tuples as
-pointers to word arrays, enums as their discriminant, and values of unions
-with payload variants as heap cells `[tag, payload...]`. Arithmetic wraps,
+pointers to word arrays, enums as their discriminant, values of unions
+with payload variants as heap cells `[tag, payload...]`, structs as
+`[name hash, fields...]`, and arrays as `[length, elements...]`. Arithmetic wraps,
 shift amounts are taken modulo 64, `>>` is logical, and integer division by
 zero traps. Both compilers share this model and the runtime in
 `runtime/track_runtime.c`; see [docs/bootstrap.md](docs/bootstrap.md).
