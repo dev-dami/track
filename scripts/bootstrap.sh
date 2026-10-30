@@ -18,6 +18,11 @@ if [ -z "$yard" ]; then
     (cd "$root" && cargo build --release --quiet)
     yard="$root/target/release/yard"
 fi
+# The stages run from other directories, so pin an absolute path.
+case "$yard" in
+    /*) ;;
+    *) yard="$(pwd)/$yard" ;;
+esac
 
 "$root/scripts/embed_runtime.sh" --check
 
