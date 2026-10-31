@@ -16,7 +16,7 @@ struct Vec {
 let mut v: Vec = vec_init(16);
 vec_push(&mut v, 42);
 let val = vec_get(&v, 0);
-// v is automatically freed when spent (linear type)
+// v is a linear type: the checker tracks every move
 ```
 
 ## Memory
@@ -25,7 +25,7 @@ let val = vec_get(&v, 0);
 // Allocate raw memory
 let buf: ptr<u8> = alloc(1024);
 
-// buf is freed when spent — no manual free needed
+// buf is linear — manual frees are rejected
 
 // Zero memory
 memset(buf, 0, 1024);
@@ -71,7 +71,7 @@ let eq = str_eq(&a, &b);
 // Concatenate (allocates new buffer)
 let combined = str_concat(&a, &b);
 
-// s is automatically freed when spent
+// s is linear — the checker rejects use after a move
 ```
 
 ## Dynamic Arrays (Your Own Vec)

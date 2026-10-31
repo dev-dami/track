@@ -5,7 +5,9 @@ use crate::lexer::Token;
 impl Parser {
     pub fn parse_expr(&mut self) -> Result<Expr, String> {
         let left = self.parse_or()?;
-        if self.peek() == Some(&Token::DotDot) {
+        // `a[s..]`: leave an open-ended `..` for the index parser.
+        let open_slice = matches!(self.tokens.get(self.pos + 1), Some((Token::RBracket, _)));
+        if self.peek() == Some(&Token::DotDot) && !open_slice {
             self.advance();
             let right = self.parse_or()?;
             Ok(Expr::Range {
@@ -218,6 +220,13 @@ impl Parser {
                         }
                         _ => {
                             let method_name = self.expect_ident()?;
+                            if self.peek() != Some(&Token::LParen) {
+                                expr = Expr::FieldAccess {
+                                    target: Box::new(expr),
+                                    field: method_name,
+                                };
+                                continue;
+                            }
                             self.expect(&Token::LParen)?;
                             let mut args = vec![expr];
                             if self.peek() != Some(&Token::RParen) {

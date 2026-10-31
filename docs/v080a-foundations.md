@@ -1,5 +1,9 @@
 # v0.8.0a: Native Compiler Foundations
 
+> Historical design record. The Phase 3 subset parser and six-word AST
+> described below were replaced in v1.0.0 by the full parser and node pool
+> documented in [bootstrap.md](bootstrap.md).
+
 ## Decision record
 
 The Rust bootstrap compiler continues to use Cranelift. The self-hosted
@@ -109,5 +113,5 @@ metadata after a clean build, and execution of the linked binary. These
 guarantees concern build ordering and artifact identity; byte-for-byte native
 binary reproducibility across toolchains or Stage 2/3 remains a separate gate.
 
-The remaining v0.8.0a exit criterion is the native C-emitter interface and its
-external compiler invocation contract.
+The native C-emitter interface and its external compiler invocation contract
+were completed in v1.0.0; see [bootstrap.md](bootstrap.md).

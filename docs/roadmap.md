@@ -1,6 +1,6 @@
-# Track Language Roadmap: Path to Self-Bootstrapping (v0.1.6 → v0.9.0)
+# Track Language Roadmap: Path to Self-Bootstrapping (v0.1.6 → v1.0.0)
 
-This roadmap outlines the incremental milestone releases for the Track programming language and toolchain leading up to full compiler self-bootstrapping in **v0.9.0**.
+This roadmap outlines the incremental milestone releases for the Track programming language and toolchain leading up to full compiler self-bootstrapping, reached in **v1.0.0**.
 
 ---
 
@@ -14,8 +14,9 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 [v0.5.0] Explicit Error Handling    ✅ DONE
 [v0.6.0] Monomorphized Generics     ✅ DONE
 [v0.7.0] Track Lexer in Track       ✅ DONE
-[v0.8.0] Track Parser, Checker & Codegen ⏳ PLANNED
-[v0.9.0] Self-Bootstrapping Verified 🎯 MILESTONE
+[v0.8.0] Track Parser, Checker & Codegen ✅ DONE
+[v0.9.0] Self-Bootstrapping Verified     ✅ DONE
+[v1.0.0] Self-Hosted Release            ✅ DONE
 ```
 
 ---
@@ -23,7 +24,7 @@ This roadmap outlines the incremental milestone releases for the Track programmi
 ## Milestone Breakdown
 
 ### v0.1.6 — Slices, Strings & Memory Primitives ✅
-- First-class slices (`[]T`) with `.len()` and sub-slicing `arr[start..end]`.
+- First-class slices (`[]T`) with sub-slicing `arr[start..end]` (length via `array_len` since v1.0).
 - Owned heap string type (`Str`) and string formatting/concatenation.
 - Byte types (`u8`, `i8`) and safe reference borrows (`&T`).
 - Variable mutability enforcement (`let mut`).
@@ -116,7 +117,7 @@ values that live on the call stack and are passed around explicitly.
 
 ---
 
-### v0.8.0a — Native Compiler Foundations ⏳ IN PROGRESS
+### v0.8.0a — Native Compiler Foundations ✅
 - **Lexer parity gate** ✅: native lexer recognizes every host reserved word and
   primitive type before parser work begins; native tests prevent regressions.
 - **Source spans and diagnostics** ✅: normalized end-exclusive byte spans,
@@ -125,30 +126,47 @@ values that live on the call stack and are passed around explicitly.
 - **AST, collections, and parser subset** ✅: compact source-ranged AST nodes,
   growable opaque 64-bit storage, arithmetic precedence, foundational
   statements, and structured parser errors are implemented and natively tested.
-- **Backend contract**: the self-hosted compiler emits portable C as its first
+- **Backend contract** ✅: the self-hosted compiler emits portable C as its first
   backend and invokes the platform C compiler through the existing explicit OS
   process API. Cranelift remains the bootstrap compiler backend, not a library
-  to reimplement in Track.
+  to reimplement in Track. See [bootstrap.md](bootstrap.md#c-backend-contract).
 - **Bootstrap build ordering and artifacts** ✅: Yard sorts module discovery,
   dependency resolution, build failures, link inputs, and cache metadata.
   Source-relative object paths prevent duplicate module basenames from racing
   or colliding with the runtime. Stage 2/3 binary identity remains the v0.9.0 gate.
 
-### v0.8.0b — Native Parser ⏳ PLANNED
-- **Native Parser**:
-  - Port AST representation (`union Expr`) and recursive descent parser to native Track code in `compiler/parser.trk`.
-  - Detailed compile-time error reporting with source code line/column highlighting.
-### v0.8.0c — Native Checker ⏳ PLANNED
-- **Native Checker**:
-  - Port `LinearChecker` borrow-checker, escape analysis, and type inference to Track in `compiler/checker.trk`.
-### v0.8.0d — Native Codegen ⏳ PLANNED
-- **Native Codegen**:
-  - Implement the portable C emitter in Track and invoke the system C compiler.
+### v0.8.0b — Native Parser ✅
+- Full grammar in `compiler/src/parser.trk` over a node pool (`ast.trk`), with
+  line/column code frames for every lexer and parser error.
+### v0.8.0c — Native Checker ✅
+- The ownership checker (moves, borrows, lenses, CFG merge, loop rules, escape
+  analysis) in `compiler/src/checker.trk`, verdict-for-verdict with the Rust checker.
+### v0.8.0d — Native Codegen ✅
+- Portable C99 emitter (`compiler/src/cgen.trk`) on the shared word-ABI runtime
+  (`runtime/track_runtime.c`).
 
 ---
 
-### v0.9.0 — Bootstrap Milestone (Stage 0 → Stage 1 → Stage 2 Verification) 🎯
+### v0.9.0 — Bootstrap Milestone (Stage 0 → Stage 1 → Stage 2 Verification) ✅
 - **Stage 0 (Bootstrap)**: The Rust `track` compiler compiles `compiler/*.trk` → produces `track_stage1` executable.
 - **Stage 1 (Self-Compile)**: `track_stage1` compiles `compiler/*.trk` → produces `track_stage2` executable.
 - **Stage 2 (Verification)**: `track_stage2` compiles `compiler/*.trk` → produces `track_stage3` executable.
-- **Verification Gate**: Assert byte-for-byte binary identity between `track_stage2` and `track_stage3` (`cmp track_stage2 track_stage3`). Full self-hosting achieved!
+- **Verification Gate**: stage1 and stage2 emit byte-identical C, and `cmp track_stage2 track_stage3` passes. Run with `scripts/bootstrap.sh`.
+
+---
+
+### v1.0.0 — Self-Hosted Release ✅
+- `trackc` ships `build`, `run`, `check`, `emit-c`, and `tokens`.
+- One word-ABI runtime shared by both compilers; the Cranelift backend moved to
+  the same value model, fixing the miscompilations listed in the CHANGELOG.
+- CI gates on the bootstrap fixed point and on behavioural parity between the
+  two compilers.
+
+- Structs, field access/update, struct patterns, and bounds-checked arrays
+  with slicing now have runtime representations in both compilers.
+
+### Next
+- Emit deallocation at scope exit from the ownership analysis (linear values
+  are currently reclaimed at process exit).
+- Generic structs (`struct Stack<T>`), and retiring the Rust compiler once
+  `yard` itself is ported.

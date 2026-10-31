@@ -55,7 +55,10 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Track v0.4.0 — Systems programming with linear types\n");
+    eprintln!(
+        "Track v{} — Systems programming with linear types\n",
+        env!("CARGO_PKG_VERSION")
+    );
     eprintln!("USAGE:");
     eprintln!("    track build <file.trk>    Compile to native executable");
     eprintln!("    track run <file.trk>      Compile and run");

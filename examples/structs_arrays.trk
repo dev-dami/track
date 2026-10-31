@@ -1,0 +1,51 @@
+// v1.0: struct values, field access and update, struct patterns, and
+// bounds-checked arrays with slicing.
+
+struct Point { x: i64, y: i64 }
+struct Account { id: i64, balance: i64 }
+
+fn manhattan(p: &Point) -> i64 {
+    return p.x + p.y;
+}
+
+fn quadrant(p: Point) -> i64 {
+    let mut q: i64 = 0;
+    match p {
+        Point { x: 0, y: 0 } => q = 0,
+        Point { x, y } if x > 0 && y > 0 => q = 1,
+        _ => q = 2,
+    }
+    return q;
+}
+
+fn total(values: &[]i64) -> i64 {
+    let mut sum: i64 = 0;
+    for i in 0..array_len(values) {
+        sum = sum + values[i];
+    }
+    return sum;
+}
+
+fn main() -> void {
+    let mut p = Point { x: 3, y: 4 };
+    print(manhattan(&p));
+    p.y = 10;
+    print(p.y);
+
+    let mut acct = Account { id: 7, balance: 100 };
+    with acct -> a {
+        a.balance = a.balance - 25;
+    }
+    print(acct.balance);
+
+    print(quadrant(Point { x: 0, y: 0 }));
+    print(quadrant(Point { x: 2, y: 5 }));
+    print(quadrant(Point { x: -1, y: 5 }));
+
+    let mut xs = [5, 10, 15, 20];
+    xs[0] = 1;
+    print(total(&xs));
+    let tail = xs[2..];
+    print(total(&tail));
+    print(array_len(&tail));
+}

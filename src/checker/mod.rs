@@ -23,6 +23,10 @@ pub struct LinearChecker {
     pub current_return_type: Option<TrackType>,
     pub barebones: bool,
     pub loaded_modules: std::collections::HashSet<String>,
+    /// Enum/union layouts and aliases for codegen, including imported modules.
+    pub type_info: crate::codegen::TypeInfo,
+    pub const_values: HashMap<String, i64>,
+    pub structs: HashMap<String, Vec<(String, TrackType)>>,
 }
 
 impl LinearChecker {
@@ -70,6 +74,19 @@ impl LinearChecker {
             current_return_type: None,
             barebones: false,
             loaded_modules: std::collections::HashSet::new(),
+            type_info: crate::codegen::TypeInfo::default(),
+            const_values: HashMap::new(),
+            structs: HashMap::new(),
+        }
+    }
+
+    /// A new binding is mutable only if declared `let mut`; it shadows any
+    /// earlier binding of the same name.
+    fn set_mutable(&mut self, name: &str, mutable: bool) {
+        if mutable {
+            self.mutables.insert(name.to_string());
+        } else {
+            self.mutables.remove(name);
         }
     }
 
@@ -414,14 +431,71 @@ impl LinearChecker {
                 "path_join".to_string(),
                 Some(TrackType::Custom("Str".to_string())),
             );
+
+            // Runtime support used by the self-hosted compiler (word ABI).
+            for name in [
+                "track_i64_collection_new",
+                "track_i64_collection_len",
+                "track_i64_collection_push",
+                "track_i64_collection_get",
+                "track_i64_collection_set",
+                "track_i64_collection_pop",
+                "track_i64_collection_truncate",
+                "track_sb_new",
+                "track_sb_push",
+                "track_sb_push_byte",
+                "track_sb_push_int",
+                "track_sb_len",
+                "track_sb_str",
+                "track_sb_clear",
+                "track_str_bytes",
+                "track_file_read",
+                "track_file_write_all",
+                "track_out",
+                "track_err",
+                "track_words_copy",
+                "sys_exit",
+                "clock_ms",
+                "array_len",
+            ] {
+                self.functions
+                    .insert(name.to_string(), Some(TrackType::I64));
+            }
         } // end if !barebones — std package (import "std") still works via Use handling
 
         for stmt in program {
             match stmt {
+                Expr::ConstDef { name, value } => {
+                    if let Some(v) = crate::codegen::eval_const(&self.const_values, value) {
+                        self.const_values.insert(name.clone(), v);
+                        self.type_info.consts.insert(name.clone(), v);
+                    }
+                    // Constants are module-level: visible to functions
+                    // defined before them in the file.
+                    self.declare(name.clone());
+                    if let Some(ty) = self.infer_type(value) {
+                        self.types.insert(name.clone(), ty);
+                    }
+                }
+                Expr::StructDef { name, fields } => {
+                    self.structs.insert(name.clone(), fields.clone());
+                    self.type_info.structs.insert(
+                        name.clone(),
+                        fields.iter().map(|(f, _)| f.clone()).collect(),
+                    );
+                }
                 Expr::TypeAlias { name, target } => {
                     self.type_aliases.insert(name.clone(), target.clone());
+                    self.type_info.aliases.insert(name.clone(), target.clone());
                 }
                 Expr::EnumDef { name, variants, .. } => {
+                    for (vname, disc) in
+                        crate::codegen::enum_discriminants(&self.const_values, variants)
+                    {
+                        self.type_info
+                            .variants
+                            .insert(format!("{}::{}", name, vname), disc);
+                    }
                     for (var_name, _) in variants {
                         let fullname = format!("{}::{}", name, var_name);
                         self.types
@@ -431,6 +505,14 @@ impl LinearChecker {
                 }
                 Expr::UnionDef { name, variants } => {
                     self.unions.insert(name.clone(), variants.clone());
+                    for (idx, (vname, ty)) in variants.iter().enumerate() {
+                        self.type_info
+                            .variants
+                            .insert(format!("{}::{}", name, vname), idx as i64);
+                        if ty.is_some() {
+                            self.type_info.payload_unions.insert(name.clone());
+                        }
+                    }
                     for (var_name, ty_opt) in variants {
                         let fullname = format!("{}::{}", name, var_name);
                         if ty_opt.is_some() {
@@ -536,6 +618,22 @@ impl LinearChecker {
                 self.infer_type(target).map(|t| TrackType::Ref(Box::new(t)))
             }
             Expr::StructInitialization { ty_name, .. } => Some(TrackType::Custom(ty_name.clone())),
+            Expr::FieldAccess { target, field } => {
+                let ty = match self.infer_type(target)? {
+                    TrackType::Ref(inner) => *inner,
+                    other => other,
+                };
+                match ty {
+                    TrackType::Custom(name) => self
+                        .structs
+                        .get(&name)?
+                        .iter()
+                        .find(|(f, _)| f == field)
+                        .map(|(_, t)| t.clone()),
+                    _ => None,
+                }
+            }
+            Expr::StructDef { .. } => Some(TrackType::Void),
             Expr::FunctionCall { name, .. } => self.functions.get(name).cloned().flatten(),
             Expr::LensBlock { body, .. } => body.last().and_then(|e| self.infer_type(e)),
             Expr::IfElse { then_body, .. } => then_body.last().and_then(|e| self.infer_type(e)),
@@ -567,7 +665,23 @@ impl LinearChecker {
             Expr::IntLiteral(_)
             | Expr::StringLiteral(_)
             | Expr::BoolLiteral(_)
-            | Expr::TypeAlias { .. } => Ok(()),
+            | Expr::TypeAlias { .. }
+            | Expr::StructDef { .. } => Ok(()),
+
+            Expr::FieldAccess { target, field } => {
+                self.check_borrow(target)?;
+                if !self
+                    .structs
+                    .values()
+                    .any(|fs| fs.iter().any(|(f, _)| f == field))
+                {
+                    return Err(format!(
+                        "Compile Error: Unknown field '{}' (no struct declares it).",
+                        field
+                    ));
+                }
+                Ok(())
+            }
 
             Expr::Variable(name) => {
                 self.read_or_move(name)?;
@@ -651,7 +765,17 @@ impl LinearChecker {
                 Ok(())
             }
 
-            Expr::StructInitialization { fields, .. } => {
+            Expr::StructInitialization { ty_name, fields } => {
+                if let Some(decl) = self.structs.get(ty_name) {
+                    for (fname, _) in fields {
+                        if !decl.iter().any(|(f, _)| f == fname) {
+                            return Err(format!(
+                                "Compile Error: Struct '{}' has no field '{}'.",
+                                ty_name, fname
+                            ));
+                        }
+                    }
+                }
                 for (_, fval) in fields {
                     self.reject_lens_escape(fval)?;
                     self.check_expr(fval)?;
@@ -720,9 +844,7 @@ impl LinearChecker {
                 };
 
                 self.declare(name.clone());
-                if *mutable {
-                    self.mutables.insert(name.clone());
-                }
+                self.set_mutable(name, *mutable);
                 self.types.insert(name.clone(), final_ty.clone());
 
                 if matches!(final_ty, TrackType::Ref(_)) {
@@ -740,6 +862,7 @@ impl LinearChecker {
             } => {
                 self.enter_lens(target)?;
                 self.declare(lens_name.clone());
+                self.set_mutable(lens_name, false);
                 self.lens_aliases.insert(lens_name.clone());
                 if let Some(ty) = self.types.get(target).cloned() {
                     self.types.insert(lens_name.clone(), ty);
@@ -767,6 +890,7 @@ impl LinearChecker {
                 let pre_if = self.registry.clone();
                 let pre_if_types = self.types.clone();
                 let pre_if_borrows = self.borrows.clone();
+                let pre_if_mutables = self.mutables.clone();
 
                 // Check then branch directly
                 for stmt in then_body {
@@ -776,6 +900,7 @@ impl LinearChecker {
                 let then_end = std::mem::replace(&mut self.registry, pre_if.clone());
                 let _then_types = std::mem::replace(&mut self.types, pre_if_types.clone());
                 let then_end_borrows = std::mem::replace(&mut self.borrows, pre_if_borrows.clone());
+                self.mutables = pre_if_mutables.clone();
 
                 // Check else branch directly
                 for stmt in else_body {
@@ -817,6 +942,7 @@ impl LinearChecker {
                 self.registry = merged;
                 self.types = merged_types;
                 self.borrows = merged_borrows;
+                self.mutables = pre_if_mutables;
                 self.update_borrow_states();
                 Ok(())
             }
@@ -829,6 +955,7 @@ impl LinearChecker {
                 let pre_loop = self.registry.clone();
                 let pre_loop_types = self.types.clone();
                 let pre_loop_borrows = self.borrows.clone();
+                let pre_loop_mutables = self.mutables.clone();
 
                 for stmt in body {
                     self.check_expr(stmt)?;
@@ -852,6 +979,7 @@ impl LinearChecker {
                 self.registry = pre_loop;
                 self.types = pre_loop_types;
                 self.borrows = pre_loop_borrows;
+                self.mutables = pre_loop_mutables;
                 self.update_borrow_states();
                 Ok(())
             }
@@ -867,8 +995,10 @@ impl LinearChecker {
                 let pre_loop = self.registry.clone();
                 let pre_loop_types = self.types.clone();
                 let pre_loop_borrows = self.borrows.clone();
+                let pre_loop_mutables = self.mutables.clone();
 
                 self.declare(var.clone());
+                self.set_mutable(var, false);
                 self.types.insert(var.clone(), elem_ty);
 
                 for stmt in body {
@@ -892,6 +1022,7 @@ impl LinearChecker {
                 self.registry = pre_loop;
                 self.types = pre_loop_types;
                 self.borrows = pre_loop_borrows;
+                self.mutables = pre_loop_mutables;
                 self.update_borrow_states();
                 Ok(())
             }
@@ -921,22 +1052,19 @@ impl LinearChecker {
                 self.check_expr(value)?;
                 // For simple variable assignment, check mutability and re-activate variable
                 if let Expr::Variable(name) = target.as_ref() {
-                    if !self.mutables.contains(name) && self.registry.contains_key(name) {
+                    if !self.registry.contains_key(name) {
+                        return Err(format!("Compile Error: Undeclared variable '{}'.", name));
+                    }
+                    if !self.mutables.contains(name) {
                         return Err(format!(
                             "Compile Error: Cannot mutate immutable variable '{}'. Use 'let mut {}' to declare a mutable variable.",
                             name, name
                         ));
                     }
                     self.registry.insert(name.clone(), VariableState::Active);
-                    if let Some(ty) = self.infer_type(value) {
-                        self.types.insert(name.clone(), ty.clone());
-                        if matches!(ty, TrackType::Ref(_)) {
-                            let prov = self.get_provenance(value);
-                            self.borrows.insert(name.clone(), prov);
-                        } else {
-                            self.borrows.remove(name);
-                        }
-                    }
+                    self.assign_types(name, value);
+                } else {
+                    self.check_place(target)?;
                 }
                 self.update_borrow_states();
                 Ok(())
@@ -960,12 +1088,14 @@ impl LinearChecker {
                 let saved_lens_aliases = std::mem::take(&mut self.lens_aliases);
                 let saved_params = std::mem::take(&mut self.current_params);
                 let saved_ret = self.current_return_type.clone();
+                let saved_mutables = self.mutables.clone();
 
                 self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
                 self.current_return_type = return_type.clone();
 
                 for (name, ty) in params {
                     self.declare(name.clone());
+                    self.set_mutable(name, false);
                     self.types.insert(name.clone(), ty.clone());
                 }
 
@@ -1001,6 +1131,7 @@ impl LinearChecker {
                 self.lens_aliases = saved_lens_aliases;
                 self.current_params = saved_params;
                 self.current_return_type = saved_ret;
+                self.mutables = saved_mutables;
                 Ok(())
             }
 
@@ -1234,12 +1365,14 @@ impl LinearChecker {
                 let saved_lens_aliases = std::mem::take(&mut self.lens_aliases);
                 let saved_params = std::mem::take(&mut self.current_params);
                 let saved_ret = self.current_return_type.clone();
+                let saved_mutables = self.mutables.clone();
 
                 self.current_params = params.iter().map(|(n, _)| n.clone()).collect();
                 self.current_return_type = return_type.clone();
 
                 for (pname, pty) in params {
                     self.declare(pname.clone());
+                    self.set_mutable(pname, false);
                     self.types.insert(pname.clone(), pty.clone());
                 }
 
@@ -1257,6 +1390,7 @@ impl LinearChecker {
                 self.lens_aliases = saved_lens_aliases;
                 self.current_params = saved_params;
                 self.current_return_type = saved_ret;
+                self.mutables = saved_mutables;
                 Ok(())
             }
 
@@ -1338,6 +1472,7 @@ impl LinearChecker {
                     let saved_borrows = self.borrows.clone();
                     let saved_lens = self.lens_locked.clone();
                     let saved_lens_aliases = self.lens_aliases.clone();
+                    let saved_mutables = self.mutables.clone();
 
                     self.bind_pattern_variables(&arm.pattern, &target_ty, false)?;
 
@@ -1352,9 +1487,49 @@ impl LinearChecker {
                     self.borrows = saved_borrows;
                     self.lens_locked = saved_lens;
                     self.lens_aliases = saved_lens_aliases;
+                    self.mutables = saved_mutables;
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// After `name = value`, the variable takes the value's type and
+    /// provenance.
+    fn assign_types(&mut self, name: &str, value: &Expr) {
+        if let Some(ty) = self.infer_type(value) {
+            self.types.insert(name.to_string(), ty.clone());
+            if matches!(ty, TrackType::Ref(_)) {
+                let prov = self.get_provenance(value);
+                self.borrows.insert(name.to_string(), prov);
+            } else {
+                self.borrows.remove(name);
+            }
+        }
+    }
+
+    /// Check an assignment target such as `p.x`, `t.0`, or `a[i]`: the root
+    /// variable must be usable and either `let mut` or a lens alias.
+    fn check_place(&mut self, place: &Expr) -> Result<(), String> {
+        match place {
+            Expr::FieldAccess { target, .. } | Expr::TupleIndex { target, .. } => {
+                self.check_place(target)
+            }
+            Expr::ArrayIndex { target, index } => {
+                self.check_borrow(index)?;
+                self.check_place(target)
+            }
+            Expr::Variable(name) => {
+                self.check_borrow(place)?;
+                if !self.mutables.contains(name) && !self.lens_aliases.contains(name) {
+                    return Err(format!(
+                        "Compile Error: Cannot mutate immutable variable '{}'. Use 'let mut {}' to declare a mutable variable.",
+                        name, name
+                    ));
+                }
+                Ok(())
+            }
+            other => self.check_expr(other),
         }
     }
 
@@ -1368,9 +1543,7 @@ impl LinearChecker {
             crate::ast::Pattern::Ident(name) => {
                 self.declare(name.clone());
                 self.types.insert(name.clone(), target_type.clone());
-                if mutable {
-                    self.mutables.insert(name.clone());
-                }
+                self.set_mutable(name, mutable);
             }
             crate::ast::Pattern::Wildcard | crate::ast::Pattern::Literal(_) => {}
             crate::ast::Pattern::Tuple(pats) => {
@@ -1437,6 +1610,10 @@ impl LinearChecker {
                     target: inner_target,
                     ..
                 } => self.get_provenance(inner_target),
+                Expr::FieldAccess { .. } => match place_root(target) {
+                    Some(name) => vec![name.to_string()],
+                    None => Vec::new(),
+                },
                 _ => self.get_provenance(target),
             },
             Expr::Variable(name) => {
@@ -1553,6 +1730,8 @@ impl LinearChecker {
                 elements.iter().find_map(|e| self.find_lens_alias(e))
             }
             Expr::TupleIndex { target, .. } => self.find_lens_alias(target),
+            // Reading a field yields the field's value, not the lens itself.
+            Expr::FieldAccess { .. } => None,
             Expr::FunctionCall { .. } => None,
             Expr::MacroCall { args, body, .. } => args
                 .iter()
@@ -1579,9 +1758,21 @@ impl LinearChecker {
             | Expr::EnumDef { .. }
             | Expr::UnionDef { .. }
             | Expr::TypeAlias { .. }
+            | Expr::StructDef { .. }
             | Expr::ForIn { .. }
             | Expr::Variable(_) => None,
         }
+    }
+}
+
+/// The variable at the base of `a.b.0[i]`, if any.
+fn place_root(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Variable(name) => Some(name),
+        Expr::FieldAccess { target, .. }
+        | Expr::TupleIndex { target, .. }
+        | Expr::ArrayIndex { target, .. } => place_root(target),
+        _ => None,
     }
 }
 

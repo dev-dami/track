@@ -1,0 +1,313 @@
+// base.trk — shared constants, runtime wrappers, and the compiler context.
+//
+// Every compiler value is a 64-bit word: integers, booleans, string
+// pointers, and handles to runtime-owned word vectors. Handles are plain
+// `i64`s so they are copy values for the ownership checker; the compiler
+// owns all of its tables for the life of the process.
+
+import "source_span";
+import "diagnostic";
+
+// ----------------------------------------------------------------- vectors
+
+fn vnew() -> i64 { return track_i64_collection_new(16); }
+fn vnew_cap(cap: i64) -> i64 { return track_i64_collection_new(cap); }
+fn vlen(v: i64) -> i64 { return track_i64_collection_len(v); }
+fn vpush(v: i64, x: i64) -> i64 { return track_i64_collection_push(v, x); }
+fn vget(v: i64, i: i64) -> i64 { return track_i64_collection_get(v, i); }
+fn vset(v: i64, i: i64, x: i64) -> i64 { return track_i64_collection_set(v, i, x); }
+fn vpop(v: i64) -> i64 { return track_i64_collection_pop(v); }
+fn vtrunc(v: i64, n: i64) -> i64 { return track_i64_collection_truncate(v, n); }
+fn vlast(v: i64) -> i64 { return vget(v, vlen(v) - 1); }
+
+fn vfill(v: i64, n: i64, x: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        vpush(v, x);
+        i = i + 1;
+    }
+    return v;
+}
+
+// --------------------------------------------------------- string builders
+
+fn sb_new() -> i64 { return track_sb_new(); }
+fn sb_add(b: i64, s: i64) -> i64 { return track_sb_push(b, s); }
+fn sb_byte(b: i64, x: i64) -> i64 { return track_sb_push_byte(b, x); }
+fn sb_int(b: i64, n: i64) -> i64 { return track_sb_push_int(b, n); }
+fn sb_size(b: i64) -> i64 { return track_sb_len(b); }
+fn sb_text(b: i64) -> i64 { return track_sb_str(b); }
+fn sb_reset(b: i64) -> i64 { return track_sb_clear(b); }
+
+fn sb_line(b: i64, s: i64) -> i64 {
+    sb_add(b, s);
+    return sb_byte(b, 10);
+}
+
+// ------------------------------------------------------------- text & I/O
+
+fn text_eq(a: i64, b: i64) -> bool { return str_eq(a, b); }
+fn text_len(s: i64) -> i64 { return str_len(s); }
+fn text_cat(a: i64, b: i64) -> i64 { return str_concat(a, b); }
+fn text_cat3(a: i64, b: i64, c: i64) -> i64 { return text_cat(text_cat(a, b), c); }
+fn text_of_int(n: i64) -> i64 { return int_to_str(n); }
+fn text_bytes(s: i64) -> i64 { return track_str_bytes(s); }
+fn text_ends(s: i64, suffix: i64) -> bool { return str_ends_with(s, suffix); }
+fn text_starts(s: i64, prefix: i64) -> bool { return str_starts_with(s, prefix); }
+
+fn out(s: i64) -> i64 { return track_out(s); }
+fn err(s: i64) -> i64 { return track_err(s); }
+fn read_text(path: i64) -> i64 { return track_file_read(path); }
+fn write_text(path: i64, s: i64) -> i64 { return track_file_write_all(path, s); }
+fn path_exists(path: i64) -> bool { return file_exists(path) != 0; }
+fn shell(cmd: i64) -> i64 { return sys_exec(cmd); }
+fn arg_count() -> i64 { return os_args_count(); }
+fn arg_text(i: i64) -> i64 { return os_arg(i); }
+fn quit(code: i64) -> i64 { return sys_exit(code); }
+
+// Byte offset of the last '/' in `s`, or -1.
+fn last_slash(s: i64) -> i64 {
+    let bytes = text_bytes(s);
+    let mut i: i64 = vlen(bytes) - 1;
+    while i >= 0 {
+        if vget(bytes, i) == 47 {
+            return i;
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
+// Directory part of a path ("" when there is none, "/" for root files).
+fn path_dir(s: i64) -> i64 {
+    let slash = last_slash(s);
+    if slash < 0 {
+        return "";
+    }
+    if slash == 0 {
+        return "/";
+    }
+    return str_substr(s, 0, slash);
+}
+
+// ------------------------------------------------------- compiler context
+
+// Context slots: one word vector holds every table the compiler uses.
+const CX_SRCS = 0;      // file id -> source text
+const CX_BYTES = 1;     // file id -> byte vector of the source
+const CX_PATHS = 2;     // file id -> path
+const CX_BASES = 3;     // file id -> base offset in the global position space
+const CX_TOKS = 4;      // token records (TK_WIDTH words each)
+const CX_NODES = 5;     // AST nodes (N_WIDTH words each)
+const CX_LISTS = 6;     // list pool: [len, items...]
+const CX_NAMES = 7;     // name id -> interned string
+const CX_HASH = 8;      // open-addressed intern table (name id + 1, 0 = empty)
+const CX_INFO = 9;      // per-name info (NI_WIDTH words per name)
+const CX_STACK = 10;    // scratch stack used while building lists
+const CX_SB = 11;       // scratch string builder
+const CX_ITEMS = 12;    // top-level items of every loaded module, in load order
+const CX_POS = 13;      // parser: current token index
+const CX_ALLOW = 14;    // parser: struct literals allowed
+const CX_MODS = 15;     // loaded module paths
+const CX_ITEMFILE = 16; // file id of each top-level item
+const CX_MAINFILE = 17; // file id of the root module
+const CX_TEND = 18;     // parser: token index of the current file's EOF
+const CX_CHK = 19;      // checker state vector
+const CX_GEN = 20;      // C emitter state vector
+const CX_STRCACHE = 21; // string literal pool (unescaped text per literal)
+const CX_STRUCTS = 22;  // struct names in declaration order
+const CX_SLOTS = 23;
+
+fn cx_new() -> i64 {
+    let c = vnew_cap(CX_SLOTS);
+    vfill(c, CX_SLOTS, 0);
+    vset(c, CX_SRCS, vnew());
+    vset(c, CX_BYTES, vnew());
+    vset(c, CX_PATHS, vnew());
+    vset(c, CX_BASES, vnew());
+    vset(c, CX_TOKS, vnew_cap(65536));
+    vset(c, CX_NODES, vnew_cap(65536));
+    let lists = vnew_cap(65536);
+    vpush(lists, 0); // list id 0 is the shared empty list
+    vset(c, CX_LISTS, lists);
+    vset(c, CX_NAMES, vnew_cap(4096));
+    vset(c, CX_HASH, vfill(vnew_cap(16384), 16384, 0));
+    vset(c, CX_INFO, vnew_cap(4096 * NI_WIDTH));
+    vset(c, CX_STACK, vnew_cap(1024));
+    vset(c, CX_SB, sb_new());
+    vset(c, CX_ITEMS, vnew());
+    vset(c, CX_MODS, vnew());
+    vset(c, CX_ITEMFILE, vnew());
+    vset(c, CX_STRCACHE, vnew());
+    vset(c, CX_STRUCTS, vnew());
+    vset(c, CX_ALLOW, 1);
+    vset(c, CX_MAINFILE, 0);
+    return c;
+}
+
+fn cx(c: i64, slot: i64) -> i64 { return vget(c, slot); }
+
+// ------------------------------------------------------- name interning
+
+// Per-name information slots (indexed by interned name id).
+const NI_FN = 0;          // FN / MACRODEF node, -1 if none
+const NI_VARIANT = 1;     // discriminant when the name is `Type::Variant`
+const NI_OWNER = 2;       // owning enum/union name id of a variant
+const NI_TYPEKIND = 3;    // 0 none, 1 enum, 2 union, 3 struct, 4 alias
+const NI_TYPENODE = 4;    // defining node (alias target type for aliases)
+const NI_PAYLOAD = 5;     // 1 when a union has payload variants
+const NI_CONST = 6;       // CONST node
+const NI_VARSLOT = 7;     // checker: newest variable slot with this name
+const NI_FNKNOWN = 8;     // checker: 1 when present in the function table
+const NI_FNRET = 9;       // checker: return type node (-1 = no return type)
+const NI_GLOBAL = 10;     // checker: global declaration (variant/const) state
+const NI_CVAR = 11;       // emitter: C local index bound to this name
+const NI_MARK = 12;       // scratch mark used by individual passes
+const NI_CONSTOK = 13;    // 1 when the name is an evaluated integer constant
+const NI_CONSTVAL = 14;   // value of an evaluated integer constant
+const NI_EXTERN = 15;     // emitter: arity of an extern/runtime function, -1 if unknown
+const NI_WIDTH = 16;
+
+fn name_count(c: i64) -> i64 { return vlen(cx(c, CX_NAMES)); }
+fn name_text(c: i64, id: i64) -> i64 { return vget(cx(c, CX_NAMES), id); }
+
+fn ni(c: i64, id: i64, slot: i64) -> i64 {
+    return vget(cx(c, CX_INFO), id * NI_WIDTH + slot);
+}
+
+fn ni_set(c: i64, id: i64, slot: i64, value: i64) -> i64 {
+    return vset(cx(c, CX_INFO), id * NI_WIDTH + slot, value);
+}
+
+// FNV-1a over the bytes of a string.
+fn text_hash(s: i64) -> i64 {
+    let bytes = text_bytes(s);
+    let n = vlen(bytes);
+    let mut h: i64 = 2166136261;
+    let mut i: i64 = 0;
+    while i < n {
+        let b = vget(bytes, i);
+        h = (h | b) - (h & b); // xor
+        h = h * 16777619;
+        i = i + 1;
+    }
+    return h;
+}
+
+fn grow_intern_table(c: i64) -> i64 {
+    let old = cx(c, CX_HASH);
+    let cap = vlen(old) * 2;
+    let table = vfill(vnew_cap(cap), cap, 0);
+    vset(c, CX_HASH, table);
+    let names = cx(c, CX_NAMES);
+    let mut id: i64 = 0;
+    while id < vlen(names) {
+        let mut slot = text_hash(vget(names, id)) & (cap - 1);
+        while vget(table, slot) != 0 {
+            slot = (slot + 1) & (cap - 1);
+        }
+        vset(table, slot, id + 1);
+        id = id + 1;
+    }
+    return 0;
+}
+
+// Return the id for `s`, adding it to the table when new.
+fn intern(c: i64, s: i64) -> i64 {
+    let names = cx(c, CX_NAMES);
+    if vlen(names) * 2 >= vlen(cx(c, CX_HASH)) {
+        grow_intern_table(c);
+    }
+    let table = cx(c, CX_HASH);
+    let mask = vlen(table) - 1;
+    let mut slot = text_hash(s) & mask;
+    while vget(table, slot) != 0 {
+        let id = vget(table, slot) - 1;
+        if text_eq(vget(names, id), s) {
+            return id;
+        }
+        slot = (slot + 1) & mask;
+    }
+    let id = vpush(names, s);
+    vset(table, slot, id + 1);
+    let info = cx(c, CX_INFO);
+    vfill(info, NI_WIDTH, -1);
+    ni_set(c, id, NI_TYPEKIND, 0);
+    ni_set(c, id, NI_PAYLOAD, 0);
+    ni_set(c, id, NI_FNKNOWN, 0);
+    ni_set(c, id, NI_MARK, 0);
+    ni_set(c, id, NI_CONSTOK, 0);
+    return id;
+}
+
+// ---------------------------------------------------------------- lists
+
+// Lists are built on the scratch stack: remember `list_begin`, push items,
+// then `list_end` copies them into the pool and returns the list id.
+fn list_begin(c: i64) -> i64 { return vlen(cx(c, CX_STACK)); }
+fn list_item(c: i64, x: i64) -> i64 { return vpush(cx(c, CX_STACK), x); }
+
+fn list_end(c: i64, mark: i64) -> i64 {
+    let stack = cx(c, CX_STACK);
+    let n = vlen(stack) - mark;
+    if n == 0 {
+        return 0;
+    }
+    let lists = cx(c, CX_LISTS);
+    let id = vpush(lists, n);
+    let mut i: i64 = 0;
+    while i < n {
+        vpush(lists, vget(stack, mark + i));
+        i = i + 1;
+    }
+    vtrunc(stack, mark);
+    return id;
+}
+
+fn list_len(c: i64, l: i64) -> i64 {
+    if l <= 0 {
+        return 0;
+    }
+    return vget(cx(c, CX_LISTS), l);
+}
+
+fn list_at(c: i64, l: i64, i: i64) -> i64 {
+    return vget(cx(c, CX_LISTS), l + 1 + i);
+}
+
+// ------------------------------------------------------------- diagnostics
+
+fn file_of_pos(c: i64, pos: i64) -> i64 {
+    let bases = cx(c, CX_BASES);
+    let mut f: i64 = vlen(bases) - 1;
+    while f > 0 && vget(bases, f) > pos {
+        f = f - 1;
+    }
+    return f;
+}
+
+// Print `error[code]: message` with a source frame at global position `pos`
+// and exit with status 1. Compilation stops at the first error.
+fn fail_at(c: i64, pos: i64, code: i64, message: i64) -> i64 {
+    if vlen(cx(c, CX_BASES)) == 0 || pos < 0 {
+        err(text_cat3("error[", code, "]: "));
+        err(message);
+        err("\n");
+        quit(1);
+        return 0;
+    }
+    let f = file_of_pos(c, pos);
+    let src = vget(cx(c, CX_SRCS), f);
+    let path = vget(cx(c, CX_PATHS), f);
+    let offset = pos - vget(cx(c, CX_BASES), f);
+    let span = source_span(&src, offset, offset + 1);
+    let text = format_error(&src, &path, &code, &message, "here", span);
+    err(text);
+    err("\n");
+    quit(1);
+    return 0;
+}
+
+fn fail(c: i64, code: i64, message: i64) -> i64 {
+    return fail_at(c, -1, code, message);
+}

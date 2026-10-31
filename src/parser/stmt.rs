@@ -343,10 +343,7 @@ impl Parser {
             }
         }
         self.expect(&Token::RBrace)?;
-        Ok(Expr::TypeAlias {
-            name,
-            target: crate::ast::TrackType::Custom("Struct".to_string()),
-        })
+        Ok(Expr::StructDef { name, fields })
     }
 
     fn parse_macro_def(&mut self) -> Result<Expr, String> {

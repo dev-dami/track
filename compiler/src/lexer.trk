@@ -1,659 +1,433 @@
-// lexer.trk — Native tokenizer core (v0.7)
-// Self-contained for `yard build` — duplicates `Token` from `token.trk`
-// so codegen sees the union in this compilation unit. `token.trk` remains
-// the canonical definition; this copy must stay in sync.
+// lexer.trk — tokenizer for Track source files.
+//
+// Mirrors the bootstrap lexer (`src/lexer/mod.rs`): whitespace is
+// [ \t\r\n], `//` comments run to the end of the line, identifiers are
+// ASCII [A-Za-z_][A-Za-z0-9_]*, integers are decimal i64, and strings are
+// unescaped at lex time. Each token is a TK_WIDTH-word record
+// (kind, value, start, end) with positions in the global position space.
 
-union Token {
-    Import, Use, Let, Mut, With, Fn, Return, If, Else, While, For, In, True, False,
-    Struct, Enum, Union, Match, As, AtMacro, Const, TypeDef, At,
-    TyU8, TyI8, TyI32, TyU32, TyI64, TyU64, TyBool, TyVoid, TyPtr,
-    Int(i64), StrLit(Str), Ident(Str),
-    Eq, EqEq, Neq, Bang, LBrace, RBrace, LParen, RParen, LBracket, RBracket,
-    Comma, Colon, ColonColon, Arrow, FatArrow, Semicolon, DotDot, Dot,
-    Underscore, Amp, Pipe, Star, Plus, Minus, Slash, Percent, Lt, Gt, Lte, Gte,
-    AmpAmp, PipePipe, Shl, Shr, Eof, Unknown,
+import "base";
+
+const TK_WIDTH = 4;
+
+const TK_EOF = 0;
+const TK_INT = 1;
+const TK_STR = 2;
+const TK_IDENT = 3;
+
+// Keywords (their spellings are interned first, in this order, so the
+// name id of a keyword spelling is its index in `keyword_spellings`).
+const TK_IMPORT = 10;
+const TK_USE = 11;
+const TK_LET = 12;
+const TK_MUT = 13;
+const TK_WITH = 14;
+const TK_FN = 15;
+const TK_RETURN = 16;
+const TK_IF = 17;
+const TK_ELSE = 18;
+const TK_WHILE = 19;
+const TK_FOR = 20;
+const TK_IN = 21;
+const TK_TRUE = 22;
+const TK_FALSE = 23;
+const TK_STRUCT = 24;
+const TK_ENUM = 25;
+const TK_UNION = 26;
+const TK_MATCH = 27;
+const TK_AS = 28;
+const TK_CONST = 29;
+const TK_TYPE = 30;
+const TK_TY_U8 = 31;
+const TK_TY_I8 = 32;
+const TK_TY_I32 = 33;
+const TK_TY_U32 = 34;
+const TK_TY_I64 = 35;
+const TK_TY_U64 = 36;
+const TK_TY_BOOL = 37;
+const TK_TY_VOID = 38;
+const TK_TY_PTR = 39;
+const KW_COUNT = 30;
+
+const TK_ATMACRO = 40;
+const TK_AT = 41;
+const TK_EQ = 60;
+const TK_EQEQ = 61;
+const TK_NEQ = 62;
+const TK_BANG = 63;
+const TK_LBRACE = 64;
+const TK_RBRACE = 65;
+const TK_LPAREN = 66;
+const TK_RPAREN = 67;
+const TK_LBRACKET = 68;
+const TK_RBRACKET = 69;
+const TK_COMMA = 70;
+const TK_COLON = 71;
+const TK_COLONCOLON = 72;
+const TK_ARROW = 73;
+const TK_FATARROW = 74;
+const TK_SEMI = 75;
+const TK_DOTDOT = 76;
+const TK_DOT = 77;
+const TK_UNDERSCORE = 78;
+const TK_AMP = 79;
+const TK_PIPE = 80;
+const TK_STAR = 81;
+const TK_PLUS = 82;
+const TK_MINUS = 83;
+const TK_SLASH = 84;
+const TK_PERCENT = 85;
+const TK_LT = 86;
+const TK_GT = 87;
+const TK_LTE = 88;
+const TK_GTE = 89;
+const TK_AMPAMP = 90;
+const TK_PIPEPIPE = 91;
+const TK_SHL = 92;
+const TK_SHR = 93;
+
+fn keyword_spelling(i: i64) -> i64 {
+    if i == 0 { return "import"; }
+    if i == 1 { return "use"; }
+    if i == 2 { return "let"; }
+    if i == 3 { return "mut"; }
+    if i == 4 { return "with"; }
+    if i == 5 { return "fn"; }
+    if i == 6 { return "return"; }
+    if i == 7 { return "if"; }
+    if i == 8 { return "else"; }
+    if i == 9 { return "while"; }
+    if i == 10 { return "for"; }
+    if i == 11 { return "in"; }
+    if i == 12 { return "true"; }
+    if i == 13 { return "false"; }
+    if i == 14 { return "struct"; }
+    if i == 15 { return "enum"; }
+    if i == 16 { return "union"; }
+    if i == 17 { return "match"; }
+    if i == 18 { return "as"; }
+    if i == 19 { return "const"; }
+    if i == 20 { return "type"; }
+    if i == 21 { return "u8"; }
+    if i == 22 { return "i8"; }
+    if i == 23 { return "i32"; }
+    if i == 24 { return "u32"; }
+    if i == 25 { return "i64"; }
+    if i == 26 { return "u64"; }
+    if i == 27 { return "bool"; }
+    if i == 28 { return "void"; }
+    return "ptr";
 }
 
-fn keyword_or_ident_extended(lex: Str) -> Token {
-    let eq_use = str_eq(&lex, "use");
-    if eq_use { let _used = lex; return Token::Use; } else {
-    let eq_with = str_eq(&lex, "with");
-    if eq_with { let _used = lex; return Token::With; } else {
-    let eq_for = str_eq(&lex, "for");
-    if eq_for { let _used = lex; return Token::For; } else {
-    let eq_in = str_eq(&lex, "in");
-    if eq_in { let _used = lex; return Token::In; } else {
-    let eq_as = str_eq(&lex, "as");
-    if eq_as { let _used = lex; return Token::As; } else {
-    let eq_const = str_eq(&lex, "const");
-    if eq_const { let _used = lex; return Token::Const; } else {
-    let eq_type = str_eq(&lex, "type");
-    if eq_type { let _used = lex; return Token::TypeDef; } else {
-    let eq_u8 = str_eq(&lex, "u8");
-    if eq_u8 { let _used = lex; return Token::TyU8; } else {
-    let eq_i8 = str_eq(&lex, "i8");
-    if eq_i8 { let _used = lex; return Token::TyI8; } else {
-    let eq_i32 = str_eq(&lex, "i32");
-    if eq_i32 { let _used = lex; return Token::TyI32; } else {
-    let eq_u32 = str_eq(&lex, "u32");
-    if eq_u32 { let _used = lex; return Token::TyU32; } else {
-    let eq_i64 = str_eq(&lex, "i64");
-    if eq_i64 { let _used = lex; return Token::TyI64; } else {
-    let eq_u64 = str_eq(&lex, "u64");
-    if eq_u64 { let _used = lex; return Token::TyU64; } else {
-    let eq_bool = str_eq(&lex, "bool");
-    if eq_bool { let _used = lex; return Token::TyBool; } else {
-    let eq_void = str_eq(&lex, "void");
-    if eq_void { let _used = lex; return Token::TyVoid; } else {
-    let eq_ptr = str_eq(&lex, "ptr");
-    if eq_ptr { let _used = lex; return Token::TyPtr; } else {
-        return keyword_or_ident(lex);
-    } } } } } } } } } } } } } } } }
+// Intern keyword spellings so that name id == keyword index. Must run on a
+// fresh context before anything else is interned.
+fn lex_init(c: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < KW_COUNT {
+        intern(c, keyword_spelling(i));
+        i = i + 1;
+    }
+    return 0;
 }
 
-fn keyword_or_ident(lex: Str) -> Token {
-    // Keep this table in lock-step with src/lexer/mod.rs. Parser work depends
-    // on every reserved word being classified before it reaches the AST.
-    let eq_import = str_eq(&lex, "import");
-    if eq_import {
-        let _c = lex;
-        return Token::Import;
+fn tok_count(c: i64) -> i64 { return vlen(cx(c, CX_TOKS)) / TK_WIDTH; }
+fn tok_kind(c: i64, t: i64) -> i64 { return vget(cx(c, CX_TOKS), t * TK_WIDTH); }
+fn tok_value(c: i64, t: i64) -> i64 { return vget(cx(c, CX_TOKS), t * TK_WIDTH + 1); }
+fn tok_start(c: i64, t: i64) -> i64 { return vget(cx(c, CX_TOKS), t * TK_WIDTH + 2); }
+fn tok_end(c: i64, t: i64) -> i64 { return vget(cx(c, CX_TOKS), t * TK_WIDTH + 3); }
+
+fn push_token(c: i64, kind: i64, value: i64, start: i64, end: i64) -> i64 {
+    let toks = cx(c, CX_TOKS);
+    vpush(toks, kind);
+    vpush(toks, value);
+    vpush(toks, start);
+    vpush(toks, end);
+    return 0;
+}
+
+fn is_ident_start_byte(b: i64) -> bool {
+    if b >= 97 && b <= 122 { return true; }
+    if b >= 65 && b <= 90 { return true; }
+    return b == 95;
+}
+
+fn is_digit_byte(b: i64) -> bool {
+    return b >= 48 && b <= 57;
+}
+
+fn is_ident_byte(b: i64) -> bool {
+    if is_ident_start_byte(b) { return true; }
+    return is_digit_byte(b);
+}
+
+fn is_space_byte(b: i64) -> bool {
+    if b == 32 || b == 10 { return true; }
+    return b == 9 || b == 13;
+}
+
+// Byte at `i`, or -1 past the end.
+fn byte_at(bytes: i64, i: i64) -> i64 {
+    if i >= vlen(bytes) {
+        return -1;
+    }
+    return vget(bytes, i);
+}
+
+// Punctuation token kind starting at `i`, and its length (0 if none).
+fn punct(b: i64, b2: i64) -> (i64, i64) {
+    if b == 61 {
+        if b2 == 61 { return (TK_EQEQ, 2); }
+        if b2 == 62 { return (TK_FATARROW, 2); }
+        return (TK_EQ, 1);
+    }
+    if b == 33 {
+        if b2 == 61 { return (TK_NEQ, 2); }
+        return (TK_BANG, 1);
+    }
+    if b == 58 {
+        if b2 == 58 { return (TK_COLONCOLON, 2); }
+        return (TK_COLON, 1);
+    }
+    if b == 45 {
+        if b2 == 62 { return (TK_ARROW, 2); }
+        return (TK_MINUS, 1);
+    }
+    if b == 46 {
+        if b2 == 46 { return (TK_DOTDOT, 2); }
+        return (TK_DOT, 1);
+    }
+    if b == 60 {
+        if b2 == 61 { return (TK_LTE, 2); }
+        if b2 == 60 { return (TK_SHL, 2); }
+        return (TK_LT, 1);
+    }
+    if b == 62 {
+        if b2 == 61 { return (TK_GTE, 2); }
+        if b2 == 62 { return (TK_SHR, 2); }
+        return (TK_GT, 1);
+    }
+    if b == 38 {
+        if b2 == 38 { return (TK_AMPAMP, 2); }
+        return (TK_AMP, 1);
+    }
+    if b == 124 {
+        if b2 == 124 { return (TK_PIPEPIPE, 2); }
+        return (TK_PIPE, 1);
+    }
+    if b == 123 { return (TK_LBRACE, 1); }
+    if b == 125 { return (TK_RBRACE, 1); }
+    if b == 40 { return (TK_LPAREN, 1); }
+    if b == 41 { return (TK_RPAREN, 1); }
+    if b == 91 { return (TK_LBRACKET, 1); }
+    if b == 93 { return (TK_RBRACKET, 1); }
+    if b == 44 { return (TK_COMMA, 1); }
+    if b == 59 { return (TK_SEMI, 1); }
+    if b == 42 { return (TK_STAR, 1); }
+    if b == 43 { return (TK_PLUS, 1); }
+    if b == 47 { return (TK_SLASH, 1); }
+    if b == 37 { return (TK_PERCENT, 1); }
+    return (0, 0);
+}
+
+fn lex_ident(c: i64, bytes: i64, start: i64, base: i64) -> i64 {
+    let mut i = start;
+    while is_ident_byte(byte_at(bytes, i)) {
+        i = i + 1;
+    }
+    if i - start == 1 && vget(bytes, start) == 95 {
+        push_token(c, TK_UNDERSCORE, 0, base + start, base + i);
+        return i;
+    }
+    let sb = cx(c, CX_SB);
+    sb_reset(sb);
+    let mut j = start;
+    while j < i {
+        sb_byte(sb, vget(bytes, j));
+        j = j + 1;
+    }
+    let id = intern(c, sb_text(sb));
+    if id < KW_COUNT {
+        push_token(c, TK_IMPORT + id, id, base + start, base + i);
     } else {
-        let eq_let = str_eq(&lex, "let");
-        if eq_let {
-            let _c2 = lex;
-            return Token::Let;
-        } else {
-            let eq_mut = str_eq(&lex, "mut");
-            if eq_mut {
-                let _c3 = lex;
-                return Token::Mut;
-            } else {
-                let eq_fn = str_eq(&lex, "fn");
-                if eq_fn {
-                    let _c4 = lex;
-                    return Token::Fn;
-                } else {
-                    let eq_return = str_eq(&lex, "return");
-                    if eq_return {
-                        let _c5 = lex;
-                        return Token::Return;
-                    } else {
-                        let eq_if = str_eq(&lex, "if");
-                        if eq_if {
-                            let _c6 = lex;
-                            return Token::If;
-                        } else {
-                            let eq_else = str_eq(&lex, "else");
-                            if eq_else {
-                                let _c7 = lex;
-                                return Token::Else;
-                            } else {
-                                let eq_while = str_eq(&lex, "while");
-                                if eq_while {
-                                    let _c8 = lex;
-                                    return Token::While;
-                                } else {
-                                    let eq_true = str_eq(&lex, "true");
-                                    if eq_true {
-                                        let _c9 = lex;
-                                        return Token::True;
-                                    } else {
-                                        let eq_false = str_eq(&lex, "false");
-                                        if eq_false {
-                                            let _c10 = lex;
-                                            return Token::False;
-                                        } else {
-                                            let eq_struct = str_eq(&lex, "struct");
-                                            if eq_struct {
-                                                let _c11 = lex;
-                                                return Token::Struct;
-                                            } else {
-                                                let eq_enum = str_eq(&lex, "enum");
-                                                if eq_enum {
-                                                    let _c12 = lex;
-                                                    return Token::Enum;
-                                                } else {
-                                                    let eq_union = str_eq(&lex, "union");
-                                                    if eq_union {
-                                                        let _c13 = lex;
-                                                        return Token::Union;
-                                                    } else {
-                                                        let eq_match = str_eq(&lex, "match");
-                                                        if eq_match {
-                                                            let _c14 = lex;
-                                                            return Token::Match;
-                                                        } else {
-                                                            return Token::Ident(lex);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        push_token(c, TK_IDENT, id, base + start, base + i);
+    }
+    return i;
+}
+
+fn lex_int(c: i64, bytes: i64, start: i64, base: i64) -> i64 {
+    let mut i = start;
+    let mut value: i64 = 0;
+    while is_digit_byte(byte_at(bytes, i)) {
+        let digit = vget(bytes, i) - 48;
+        if value > (9223372036854775807 - digit) / 10 {
+            fail_at(c, base + start, "E0002", "integer literal is out of range for i64");
         }
+        value = value * 10 + digit;
+        i = i + 1;
     }
+    push_token(c, TK_INT, value, base + start, base + i);
+    return i;
 }
 
-fn token_kind_name(tok: Token) -> Str {
-    let mut out = "Other";
-    match tok {
-        Token::Import => out = "Import",
-        Token::Use => out = "Use",
-        Token::Let => out = "Let",
-        Token::Mut => out = "Mut",
-        Token::With => out = "With",
-        Token::Fn => out = "Fn",
-        Token::Return => out = "Return",
-        Token::If => out = "If",
-        Token::Else => out = "Else",
-        Token::While => out = "While",
-        Token::For => out = "For",
-        Token::In => out = "In",
-        Token::True => out = "True",
-        Token::False => out = "False",
-        Token::Struct => out = "Struct",
-        Token::Enum => out = "Enum",
-        Token::Union => out = "Union",
-        Token::Match => out = "Match",
-        Token::As => out = "As",
-        Token::Const => out = "Const",
-        Token::TypeDef => out = "TypeDef",
-        Token::TyU8 => out = "TyU8",
-        Token::TyI8 => out = "TyI8",
-        Token::TyI32 => out = "TyI32",
-        Token::TyU32 => out = "TyU32",
-        Token::TyI64 => out = "TyI64",
-        Token::TyU64 => out = "TyU64",
-        Token::TyBool => out = "TyBool",
-        Token::TyVoid => out = "TyVoid",
-        Token::TyPtr => out = "TyPtr",
-        Token::Eof => out = "Eof",
-        Token::Unknown => out = "Unknown",
-        Token::Int(_) => out = "Int",
-        Token::StrLit(_) => out = "StrLit",
-        Token::Ident(_) => out = "Ident",
-        _ => out = "Other",
-    }
-    return out;
-}
-
-fn token_kind_code(tok: Token) -> i64 {
-    let mut out: i64 = 0;
-    match tok {
-        Token::Use => out = 1,
-        Token::With => out = 2,
-        Token::For => out = 3,
-        Token::In => out = 4,
-        Token::As => out = 5,
-        Token::Const => out = 6,
-        Token::TypeDef => out = 7,
-        Token::TyI32 => out = 8,
-        Token::TyU64 => out = 9,
-        Token::TyBool => out = 10,
-        Token::TyVoid => out = 11,
-        Token::TyPtr => out = 12,
-        _ => out = 0,
-    }
-    return out;
-}
-
-fn is_alpha_char(c: u8) -> bool {
-    return char_is_alpha(c);
-}
-
-fn is_digit_char(c: u8) -> bool {
-    return char_is_digit(c);
-}
-
-fn is_ident_start(c: u8) -> bool {
-    if char_is_alpha(c) {
-        return true;
-    }
-    if c == 95 {
-        return true;
-    }
-    return false;
-}
-
-fn is_ident_continue(c: u8) -> bool {
-    if char_is_alphanumeric(c) {
-        return true;
-    }
-    if c == 95 {
-        return true;
-    }
-    return false;
-}
-
-fn skip_ws_and_comments(src: &Str, pos: i64) -> i64 {
-    let len = str_len(src);
-    let mut p = pos;
-    let mut skipping = true;
-    while p < len && skipping {
-        let ch = str_char_at(src, p);
-        if char_is_space(ch) {
-            p = p + 1;
-        } else {
-            if ch == 47 {
-                let nxt = str_char_at(src, p + 1);
-                if nxt == 47 {
-                    p = p + 2;
-                    let mut in_comment = true;
-                    while p < len && in_comment {
-                        let c2 = str_char_at(src, p);
-                        if c2 == 10 {
-                            in_comment = false;
-                            p = p + 1;
-                        } else {
-                            p = p + 1;
-                        }
-                    }
-                } else {
-                    skipping = false;
-                }
-            } else {
-                skipping = false;
-            }
-        }
-    }
-    return p;
-}
-
-fn lex_number(src: &Str, start: i64) -> (Token, i64) {
-    let len = str_len(src);
-    let mut p = start;
-    let mut val: i64 = 0;
-    let mut cont = true;
-    while p < len && cont {
-        let ch = str_char_at(src, p);
-        if char_is_digit(ch) {
-            let digit: i64 = ch - 48;
-            val = val * 10 + digit;
-            p = p + 1;
-        } else {
-            cont = false;
-        }
-    }
-    let tok = Token::Int(val);
-    return (tok, p);
-}
-
-fn lex_ident(src: &Str, start: i64) -> (Token, i64) {
-    let len = str_len(src);
-    let mut p = start;
-    let mut cont = true;
-    while p < len && cont {
-        let ch = str_char_at(src, p);
-        if is_ident_continue(ch) {
-            p = p + 1;
-        } else {
-            cont = false;
-        }
-    }
-    let slice_len = p - start;
-    let lexeme = str_substr(src, start, slice_len);
-    let tok = keyword_or_ident_extended(lexeme);
-    return (tok, p);
-}
-
-fn lex_string(src: &Str, start: i64) -> (Token, i64) {
-    let len = str_len(src);
-    let mut p = start + 1;
+fn lex_string(c: i64, bytes: i64, start: i64, base: i64) -> i64 {
+    let sb = cx(c, CX_SB);
+    sb_reset(sb);
+    let mut i = start + 1;
     let mut open = true;
-    while p < len && open {
-        let ch = str_char_at(src, p);
-        if ch == 92 {
-            p = p + 2;
-        } else {
-            if ch == 34 {
-                p = p + 1;
-                open = false;
-            } else {
-                p = p + 1;
+    while open {
+        let b = byte_at(bytes, i);
+        if b < 0 {
+            fail_at(c, base + start, "E0003", "unterminated string literal");
+        }
+        if b == 34 {
+            open = false;
+            i = i + 1;
+        } else if b == 92 {
+            let e = byte_at(bytes, i + 1);
+            if e < 0 {
+                fail_at(c, base + start, "E0003", "unterminated string literal");
             }
-        }
-    }
-    let inner_len = p - start - 2;
-    let inner = str_substr(src, start + 1, inner_len);
-    let tok = Token::StrLit(inner);
-    return (tok, p);
-}
-
-fn lex_next(src: &Str, pos: i64) -> (Token, i64) {
-    let p0 = skip_ws_and_comments(src, pos);
-    let len = str_len(src);
-    if p0 >= len {
-        return (Token::Eof, p0);
-    }
-    let ch = str_char_at(src, p0);
-    let ch2 = str_char_at(src, p0 + 1);
-
-    if ch == 34 {
-        return lex_string(src, p0);
-    }
-    if char_is_digit(ch) {
-        return lex_number(src, p0);
-    }
-    if ch == 95 && !is_ident_continue(ch2) {
-        return (Token::Underscore, p0 + 1);
-    }
-    if is_ident_start(ch) {
-        return lex_ident(src, p0);
-    }
-
-    if ch == 58 {
-        if ch2 == 58 {
-            return (Token::ColonColon, p0 + 2);
-        }
-        return (Token::Colon, p0 + 1);
-    }
-    if ch == 61 {
-        if ch2 == 61 {
-            return (Token::EqEq, p0 + 2);
-        }
-        if ch2 == 62 {
-            return (Token::FatArrow, p0 + 2);
-        }
-        return (Token::Eq, p0 + 1);
-    }
-    if ch == 33 {
-        if ch2 == 61 {
-            return (Token::Neq, p0 + 2);
-        }
-        return (Token::Bang, p0 + 1);
-    }
-    if ch == 60 {
-        if ch2 == 61 {
-            return (Token::Lte, p0 + 2);
-        }
-        if ch2 == 60 {
-            return (Token::Shl, p0 + 2);
-        }
-        return (Token::Lt, p0 + 1);
-    }
-    if ch == 62 {
-        if ch2 == 61 {
-            return (Token::Gte, p0 + 2);
-        }
-        if ch2 == 62 {
-            return (Token::Shr, p0 + 2);
-        }
-        return (Token::Gt, p0 + 1);
-    }
-    if ch == 45 {
-        if ch2 == 62 {
-            return (Token::Arrow, p0 + 2);
-        }
-        return (Token::Minus, p0 + 1);
-    }
-    if ch == 46 {
-        if ch2 == 46 {
-            return (Token::DotDot, p0 + 2);
-        }
-        return (Token::Dot, p0 + 1);
-    }
-    if ch == 38 {
-        if ch2 == 38 {
-            return (Token::AmpAmp, p0 + 2);
-        }
-        return (Token::Amp, p0 + 1);
-    }
-    if ch == 124 {
-        if ch2 == 124 {
-            return (Token::PipePipe, p0 + 2);
-        }
-        return (Token::Pipe, p0 + 1);
-    }
-
-    if ch == 123 {
-        return (Token::LBrace, p0 + 1);
-    }
-    if ch == 125 {
-        return (Token::RBrace, p0 + 1);
-    }
-    if ch == 40 {
-        return (Token::LParen, p0 + 1);
-    }
-    if ch == 41 {
-        return (Token::RParen, p0 + 1);
-    }
-    if ch == 91 {
-        return (Token::LBracket, p0 + 1);
-    }
-    if ch == 93 {
-        return (Token::RBracket, p0 + 1);
-    }
-    if ch == 44 {
-        return (Token::Comma, p0 + 1);
-    }
-    if ch == 59 {
-        return (Token::Semicolon, p0 + 1);
-    }
-    if ch == 42 {
-        return (Token::Star, p0 + 1);
-    }
-    if ch == 43 {
-        return (Token::Plus, p0 + 1);
-    }
-    if ch == 47 {
-        return (Token::Slash, p0 + 1);
-    }
-    if ch == 37 {
-        return (Token::Percent, p0 + 1);
-    }
-    if ch == 95 {
-        return (Token::Underscore, p0 + 1);
-    }
-    if ch == 64 {
-        let maybe = str_substr(src, p0, 6);
-        let is_macro = str_eq(&maybe, "@macro");
-        if is_macro {
-            let _c = maybe;
-            return (Token::AtMacro, p0 + 6);
-        } else {
-            let _c2 = maybe;
-            return (Token::At, p0 + 1);
-        }
-    }
-
-    return (Token::Unknown, p0 + 1);
-}
-
-// Parser-facing API: preserves the token's end-exclusive byte range while
-// retaining the existing two-value lexer API for v0.7 callers.
-fn lex_next_spanned(src: &Str, pos: i64) -> (Token, i64, i64) {
-    let start = skip_ws_and_comments(src, pos);
-    let (token, next) = lex_next(src, pos);
-    return (token, start, next);
-}
-
-// Stable parser token record: (tag, start byte, end byte, next byte).
-// Payloads are recovered from the source span, avoiding ABI coupling between
-// tagged-union payloads and the bootstrap parser's object files.
-type TokenRecord = (i64, i64, i64, i64);
-
-fn token_tag_eof() -> i64 { return 0; }
-fn token_tag_let() -> i64 { return 3; }
-fn token_tag_mut() -> i64 { return 4; }
-fn token_tag_return() -> i64 { return 7; }
-fn token_tag_true() -> i64 { return 13; }
-fn token_tag_false() -> i64 { return 14; }
-fn token_tag_int() -> i64 { return 32; }
-fn token_tag_string() -> i64 { return 33; }
-fn token_tag_identifier() -> i64 { return 34; }
-fn token_tag_eq() -> i64 { return 35; }
-fn token_tag_bang() -> i64 { return 38; }
-fn token_tag_lparen() -> i64 { return 41; }
-fn token_tag_rparen() -> i64 { return 42; }
-fn token_tag_semicolon() -> i64 { return 50; }
-fn token_tag_underscore() -> i64 { return 53; }
-fn token_tag_star() -> i64 { return 56; }
-fn token_tag_plus() -> i64 { return 57; }
-fn token_tag_minus() -> i64 { return 58; }
-fn token_tag_slash() -> i64 { return 59; }
-fn token_tag_percent() -> i64 { return 60; }
-
-fn token_text_tag(text: &Str) -> i64 {
-    if str_eq(text, "import") { return 1; }
-    if str_eq(text, "use") { return 2; }
-    if str_eq(text, "let") { return 3; }
-    if str_eq(text, "mut") { return 4; }
-    if str_eq(text, "with") { return 5; }
-    if str_eq(text, "fn") { return 6; }
-    if str_eq(text, "return") { return 7; }
-    if str_eq(text, "if") { return 8; }
-    if str_eq(text, "else") { return 9; }
-    if str_eq(text, "while") { return 10; }
-    if str_eq(text, "for") { return 11; }
-    if str_eq(text, "in") { return 12; }
-    if str_eq(text, "true") { return 13; }
-    if str_eq(text, "false") { return 14; }
-    if str_eq(text, "struct") { return 15; }
-    if str_eq(text, "enum") { return 16; }
-    if str_eq(text, "union") { return 17; }
-    if str_eq(text, "match") { return 18; }
-    if str_eq(text, "as") { return 19; }
-    if str_eq(text, "const") { return 21; }
-    if str_eq(text, "type") { return 22; }
-    if str_eq(text, "u8") { return 23; }
-    if str_eq(text, "i8") { return 24; }
-    if str_eq(text, "i32") { return 25; }
-    if str_eq(text, "u32") { return 26; }
-    if str_eq(text, "i64") { return 27; }
-    if str_eq(text, "u64") { return 28; }
-    if str_eq(text, "bool") { return 29; }
-    if str_eq(text, "void") { return 30; }
-    if str_eq(text, "ptr") { return 31; }
-    if str_eq(text, "_") { return 53; }
-    return 34;
-}
-
-fn token_symbol_tag(ch: u8, ch2: u8) -> i64 {
-    if ch == 61 && ch2 == 61 { return 36; }
-    if ch == 61 && ch2 == 62 { return 49; }
-    if ch == 33 && ch2 == 61 { return 37; }
-    if ch == 58 && ch2 == 58 { return 47; }
-    if ch == 45 && ch2 == 62 { return 48; }
-    if ch == 46 && ch2 == 46 { return 51; }
-    if ch == 60 && ch2 == 61 { return 63; }
-    if ch == 62 && ch2 == 61 { return 64; }
-    if ch == 38 && ch2 == 38 { return 65; }
-    if ch == 124 && ch2 == 124 { return 66; }
-    if ch == 60 && ch2 == 60 { return 67; }
-    if ch == 62 && ch2 == 62 { return 68; }
-    if ch == 61 { return 35; }
-    if ch == 33 { return 38; }
-    if ch == 123 { return 39; }
-    if ch == 125 { return 40; }
-    if ch == 40 { return 41; }
-    if ch == 41 { return 42; }
-    if ch == 91 { return 43; }
-    if ch == 93 { return 44; }
-    if ch == 44 { return 45; }
-    if ch == 58 { return 46; }
-    if ch == 59 { return 50; }
-    if ch == 46 { return 52; }
-    if ch == 38 { return 54; }
-    if ch == 124 { return 55; }
-    if ch == 95 { return 53; }
-    if ch == 42 { return 56; }
-    if ch == 43 { return 57; }
-    if ch == 45 { return 58; }
-    if ch == 47 { return 59; }
-    if ch == 37 { return 60; }
-    if ch == 60 { return 61; }
-    if ch == 62 { return 62; }
-    if ch == 64 { return 69; }
-    return -1;
-}
-
-fn lex_next_record(src: &Str, pos: i64) -> TokenRecord {
-    let (_token, start, end) = lex_next_spanned(src, pos);
-    let length: i64 = str_len(src);
-    if start >= length {
-        return (token_tag_eof(), start, end, end);
-    }
-    let ch = str_char_at(src, start);
-    let ch2 = str_char_at(src, start + 1);
-    if char_is_digit(ch) {
-        return (token_tag_int(), start, end, end);
-    }
-    if ch == 34 {
-        return (token_tag_string(), start, end, end);
-    }
-    if is_ident_start(ch) {
-        let text = str_substr(src, start, end - start);
-        let tag = token_text_tag(&text);
-        return (tag, start, end, end);
-    }
-    if ch == 64 {
-        let macro_text = str_substr(src, start, end - start);
-        if str_eq(&macro_text, "@macro") {
-            return (20, start, end, end);
-        }
-    }
-    return (token_symbol_tag(ch, ch2), start, end, end);
-}
-
-fn is_eof_token(tok: Token) -> bool {
-    let mut out = false;
-    match tok {
-        Token::Eof => out = true,
-        _ => out = false,
-    }
-    return out;
-}
-
-fn count_tokens(src: &Str) -> i64 {
-    let len = str_len(src);
-    let mut pos: i64 = 0;
-    let mut count: i64 = 0;
-    let mut done = false;
-    while pos < len {
-        if done {
-            pos = len;
-        } else {
-            let (tok, next) = lex_next(src, pos);
-            let eof = is_eof_token(tok);
-            if eof {
-                done = true;
+            if e == 110 {
+                sb_byte(sb, 10);
+            } else if e == 114 {
+                sb_byte(sb, 13);
+            } else if e == 116 {
+                sb_byte(sb, 9);
+            } else if e == 48 {
+                sb_byte(sb, 0);
+            } else if e == 34 || e == 39 || e == 92 {
+                sb_byte(sb, e);
             } else {
-                count = count + 1;
-                pos = next;
-                if count > 100 {
-                    done = true;
-                }
+                sb_byte(sb, 92);
+                sb_byte(sb, e);
             }
+            i = i + 2;
+        } else {
+            sb_byte(sb, b);
+            i = i + 1;
         }
     }
-    return count;
+    push_token(c, TK_STR, sb_text(sb), base + start, base + i);
+    return i;
 }
 
-fn dump_tokens(src: &Str) -> void {
-    let len = str_len(src);
-    let mut pos: i64 = 0;
-    let mut done = false;
-    while pos < len {
-        if done {
-            pos = len;
-        } else {
-            let (tok, next) = lex_next(src, pos);
-            let kind = token_kind_name(tok);
-            let is_eof = str_eq(&kind, "Eof");
-            if is_eof {
-                let _c = kind;
-                done = true;
-            } else {
-                print(kind);
-                pos = next;
+fn lex_at(c: i64, bytes: i64, start: i64, base: i64) -> i64 {
+    let mut is_macro = true;
+    let word: i64 = "macro";
+    let mut k: i64 = 0;
+    while k < 5 {
+        if byte_at(bytes, start + 1 + k) != str_char_at(word, k) {
+            is_macro = false;
+        }
+        k = k + 1;
+    }
+    if is_macro {
+        push_token(c, TK_ATMACRO, 0, base + start, base + start + 6);
+        return start + 6;
+    }
+    push_token(c, TK_AT, 0, base + start, base + start + 1);
+    return start + 1;
+}
+
+// Tokenize file `f`, appending its tokens (terminated by TK_EOF) to the
+// token table. Returns the index of the file's first token.
+fn lex_file(c: i64, f: i64) -> i64 {
+    let bytes = vget(cx(c, CX_BYTES), f);
+    let base = vget(cx(c, CX_BASES), f);
+    let first = tok_count(c);
+    let n = vlen(bytes);
+    let mut i: i64 = 0;
+    while i < n {
+        let b = vget(bytes, i);
+        let b2 = byte_at(bytes, i + 1);
+        if is_space_byte(b) {
+            i = i + 1;
+        } else if b == 47 && b2 == 47 {
+            while i < n && vget(bytes, i) != 10 {
+                i = i + 1;
             }
+        } else if is_ident_start_byte(b) {
+            i = lex_ident(c, bytes, i, base);
+        } else if is_digit_byte(b) {
+            i = lex_int(c, bytes, i, base);
+        } else if b == 34 {
+            i = lex_string(c, bytes, i, base);
+        } else if b == 64 {
+            i = lex_at(c, bytes, i, base);
+        } else {
+            let (kind, width) = punct(b, b2);
+            if width == 0 {
+                fail_at(c, base + i, "E0001", "unexpected character");
+            }
+            push_token(c, kind, 0, base + i, base + i + width);
+            i = i + width;
         }
     }
+    push_token(c, TK_EOF, 0, base + n, base + n);
+    return first;
+}
+
+// Human-readable token kind, used by diagnostics and `trackc tokens`.
+fn token_kind_text(kind: i64) -> i64 {
+    if kind == TK_EOF { return "end of file"; }
+    if kind == TK_INT { return "integer"; }
+    if kind == TK_STR { return "string"; }
+    if kind == TK_IDENT { return "identifier"; }
+    if kind >= TK_IMPORT && kind < TK_IMPORT + KW_COUNT {
+        return text_cat3("'", keyword_spelling(kind - TK_IMPORT), "'");
+    }
+    if kind == TK_ATMACRO { return "'@macro'"; }
+    if kind == TK_AT { return "'@'"; }
+    if kind == TK_EQ { return "'='"; }
+    if kind == TK_EQEQ { return "'=='"; }
+    if kind == TK_NEQ { return "'!='"; }
+    if kind == TK_BANG { return "'!'"; }
+    if kind == TK_LBRACE { return "'{'"; }
+    if kind == TK_RBRACE { return "'}'"; }
+    if kind == TK_LPAREN { return "'('"; }
+    if kind == TK_RPAREN { return "')'"; }
+    if kind == TK_LBRACKET { return "'['"; }
+    if kind == TK_RBRACKET { return "']'"; }
+    if kind == TK_COMMA { return "','"; }
+    if kind == TK_COLON { return "':'"; }
+    if kind == TK_COLONCOLON { return "'::'"; }
+    if kind == TK_ARROW { return "'->'"; }
+    if kind == TK_FATARROW { return "'=>'"; }
+    if kind == TK_SEMI { return "';'"; }
+    if kind == TK_DOTDOT { return "'..'"; }
+    if kind == TK_DOT { return "'.'"; }
+    if kind == TK_UNDERSCORE { return "'_'"; }
+    if kind == TK_AMP { return "'&'"; }
+    if kind == TK_PIPE { return "'|'"; }
+    if kind == TK_STAR { return "'*'"; }
+    if kind == TK_PLUS { return "'+'"; }
+    if kind == TK_MINUS { return "'-'"; }
+    if kind == TK_SLASH { return "'/'"; }
+    if kind == TK_PERCENT { return "'%'"; }
+    if kind == TK_LT { return "'<'"; }
+    if kind == TK_GT { return "'>'"; }
+    if kind == TK_LTE { return "'<='"; }
+    if kind == TK_GTE { return "'>='"; }
+    if kind == TK_AMPAMP { return "'&&'"; }
+    if kind == TK_PIPEPIPE { return "'||'"; }
+    if kind == TK_SHL { return "'<<'"; }
+    return "'>>'";
+}
+
+// Register a source file and return its id. Positions of file `f` start at
+// the end of the previous file plus one, so every byte has a unique
+// global position.
+fn add_source(c: i64, path: i64, src: i64) -> i64 {
+    let srcs = cx(c, CX_SRCS);
+    let bases = cx(c, CX_BASES);
+    let f = vlen(srcs);
+    let mut base: i64 = 0;
+    if f > 0 {
+        base = vget(bases, f - 1) + vlen(vget(cx(c, CX_BYTES), f - 1)) + 1;
+    }
+    vpush(srcs, src);
+    vpush(cx(c, CX_PATHS), path);
+    vpush(bases, base);
+    vpush(cx(c, CX_BYTES), text_bytes(src));
+    return f;
 }

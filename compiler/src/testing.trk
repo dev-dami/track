@@ -1,0 +1,45 @@
+// testing.trk — helpers for the native test suite (compiler/tests/).
+
+import "base";
+import "lexer";
+import "parser";
+
+fn expect_i64(actual: i64, expected: i64, what: i64) -> i64 {
+    if actual != expected {
+        err(text_cat3("expected ", text_of_int(expected), text_cat3(", got ", text_of_int(actual), "\n")));
+        track_abort(what);
+    }
+    return 0;
+}
+
+fn expect_true(value: bool, what: i64) -> i64 {
+    if !value {
+        track_abort(what);
+    }
+    return 0;
+}
+
+fn expect_text(actual: i64, expected: i64, what: i64) -> i64 {
+    if !text_eq(actual, expected) {
+        err(text_cat3("expected \"", expected, text_cat3("\", got \"", actual, "\"\n")));
+        track_abort(what);
+    }
+    return 0;
+}
+
+fn test_context() -> i64 {
+    let c = cx_new();
+    lex_init(c);
+    return c;
+}
+
+// Lex `text` as a file named test.trk; returns the first token index.
+fn lex_text(c: i64, text: i64) -> i64 {
+    let f = add_source(c, "test.trk", text);
+    return lex_file(c, f);
+}
+
+// Parse `text` and return its top-level statement list.
+fn parse_text(c: i64, text: i64) -> i64 {
+    return parse_file(c, lex_text(c, text));
+}
