@@ -78,6 +78,8 @@ const LT_BYNAME = 1;
 const LT_RTRECS = 2;
 const LT_RTBYNAME = 3;
 const LT_CALLEE = 4;
+const LT_READ = 5;  // by record offset: 1 when a call read it since its last change
+const LT_STALE = 6; // 1 when a pass changed a summary some call had already read
 
 // Callee cache values: >= 0 is a program record offset, <= C_RT0 a runtime
 // record (offset C_RT0 - value), C_UNKNOWN a conservative callee.
@@ -337,17 +339,15 @@ fn ev_call(c: i64, s: i64, n: i64) -> i64 {
     let mut at: i64 = 0;
     let mut params: i64 = -1;
     if callee >= 0 {
-        recs = vget(ck(c, CK_LIFE), LT_RECS);
+        let table = ck(c, CK_LIFE);
+        recs = vget(table, LT_RECS);
         at = callee;
         params = nc(c, vget(recs, at + LR_FN));
+        // Seen by the fixpoint: a later change makes this pass stale.
+        vset(vget(table, LT_READ), at, 1);
     } else if callee <= C_RT0 {
         recs = vget(ck(c, CK_LIFE), LT_RTRECS);
         at = C_RT0 - callee;
-    } else {
-        let f = callee_fn(c, name);
-        if f >= 0 {
-            params = nc(c, f);
-        }
     }
     let mut np: i64 = 0;
     let mut r: i64 = O_UNKNOWN;
@@ -811,11 +811,8 @@ fn life_function(c: i64, f: i64, at: i64) -> bool {
         vset(recs, at + LR_RES, res);
         changed = true;
     }
-    let flags = vget(recs, at + LR_FLAGS) | lsg(s, LS_FLAGS);
-    if flags != vget(recs, at + LR_FLAGS) {
-        vset(recs, at + LR_FLAGS, flags);
-        changed = true;
-    }
+    // Callers never read the flags, so a flag change makes nothing stale.
+    vset(recs, at + LR_FLAGS, vget(recs, at + LR_FLAGS) | lsg(s, LS_FLAGS));
     let uses = lsg(s, LS_USE);
     let ends = lsg(s, LS_END);
     let mut j: i64 = 0;
@@ -834,6 +831,15 @@ fn life_function(c: i64, f: i64, at: i64) -> bool {
             changed = true;
         }
         j = j + 1;
+    }
+    if changed {
+        // A call that read the old summary saw a stale one.
+        let table = ck(c, CK_LIFE);
+        let read = vget(table, LT_READ);
+        if vget(read, at) == 1 {
+            vset(table, LT_STALE, 1);
+        }
+        vset(read, at, 0);
     }
     return changed;
 }
@@ -1027,22 +1033,23 @@ fn life_component(c: i64, g: i64, from: i64, to: i64) -> i64 {
         vset(out, b, x);
         a = a + 1;
     }
+    // A pass is the fixpoint when every summary a call read during it was
+    // already final: re-walking would read the same summaries and compute
+    // the same records. Most components of word-typed code never change a
+    // summary after its first read, so they finish in one pass.
+    let table = ck(c, CK_LIFE);
     let mut passes: i64 = 0;
-    let mut changed = true;
-    while changed {
-        changed = false;
+    let mut again = true;
+    while again {
+        vset(table, LT_STALE, 0);
         passes = passes + 1;
         let mut m = from;
         while m < to {
             let at = vget(out, m);
-            if life_function(c, vget(recs, at + LR_FN), at) {
-                changed = true;
-            }
+            life_function(c, vget(recs, at + LR_FN), at);
             m = m + 1;
         }
-        if !recursive {
-            changed = false;
-        }
+        again = recursive && vget(table, LT_STALE) == 1;
     }
     if recursive {
         let mut m = from;
@@ -1060,13 +1067,15 @@ fn life_component(c: i64, g: i64, from: i64, to: i64) -> i64 {
 // order, analysed callees first.
 fn life_program(c: i64) -> i64 {
     let nn = name_count(c);
-    let table = vnew_cap(5);
+    let table = vnew_cap(7);
     let recs = vnew_cap(4096);
     vpush(table, recs);
     vpush(table, vfill(vnew_cap(nn + 1), nn, -1));
     vpush(table, vnew_cap(1024));
     vpush(table, vfill(vnew_cap(nn + 1), nn, -1));
     vpush(table, vfill(vnew_cap(nn + 1), nn, C_UNSET));
+    vpush(table, 0); // LT_READ, sized once the records exist
+    vpush(table, 0);
     ck_set(c, CK_LIFE, table);
     rt_summaries(c);
     let byname = vget(table, LT_BYNAME);
@@ -1086,6 +1095,7 @@ fn life_program(c: i64) -> i64 {
     }
     // The call graph, indexed by record offset.
     let nr = vlen(recs);
+    vset(table, LT_READ, vfill(vnew_cap(nr + 1), nr, 0));
     let adj = vfill(vnew_cap(nr + 1), nr, 0);
     i = 0;
     while i < vlen(fns) {

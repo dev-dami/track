@@ -2,7 +2,7 @@ fn fib
   param n copy
   result copy
   effects calls
-  scc size=1 passes=2
+  scc size=1 passes=1
 fn main
   result void
   effects calls
