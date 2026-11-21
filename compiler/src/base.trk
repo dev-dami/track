@@ -116,7 +116,9 @@ const CX_CHK = 19;      // checker state vector
 const CX_GEN = 20;      // C emitter state vector
 const CX_STRCACHE = 21; // string literal pool (unescaped text per literal)
 const CX_STRUCTS = 22;  // struct names in declaration order
-const CX_SLOTS = 23;
+const CX_WARN = 23;     // pending warnings: (pos, code, message) per entry
+const CX_NWARN = 24;    // warnings already printed by flush_warnings
+const CX_SLOTS = 25;
 
 fn cx_new() -> i64 {
     let c = vnew_cap(CX_SLOTS);
@@ -140,6 +142,7 @@ fn cx_new() -> i64 {
     vset(c, CX_ITEMFILE, vnew());
     vset(c, CX_STRCACHE, vnew());
     vset(c, CX_STRUCTS, vnew());
+    vset(c, CX_WARN, vnew());
     vset(c, CX_ALLOW, 1);
     vset(c, CX_MAINFILE, 0);
     return c;
@@ -286,14 +289,14 @@ fn file_of_pos(c: i64, pos: i64) -> i64 {
     return f;
 }
 
-// Print `error[code]: message` with a source frame at global position `pos`
-// and exit with status 1. Compilation stops at the first error.
-fn fail_at(c: i64, pos: i64, code: i64, message: i64) -> i64 {
+// Print `severity[code]: message` to stderr, with a source frame when `pos`
+// is a known global position (-1 = no location).
+fn print_diagnostic(c: i64, severity: i64, pos: i64, code: i64, message: i64) -> i64 {
     if vlen(cx(c, CX_BASES)) == 0 || pos < 0 {
-        err(text_cat3("error[", code, "]: "));
+        err(text_cat3(severity, "[", code));
+        err("]: ");
         err(message);
         err("\n");
-        quit(1);
         return 0;
     }
     let f = file_of_pos(c, pos);
@@ -301,9 +304,77 @@ fn fail_at(c: i64, pos: i64, code: i64, message: i64) -> i64 {
     let path = vget(cx(c, CX_PATHS), f);
     let offset = pos - vget(cx(c, CX_BASES), f);
     let span = source_span(&src, offset, offset + 1);
-    let text = format_error(&src, &path, &code, &message, "here", span);
+    let text = format_diagnostic(&src, &path, &severity, &code, &message, "here", span);
     err(text);
     err("\n");
+    return 0;
+}
+
+// Record `warning[code]: message` at global position `pos`. Warnings never
+// stop compilation; they print, sorted by position, at flush_warnings or
+// together with the first error.
+fn warn_at(c: i64, pos: i64, code: i64, message: i64) -> i64 {
+    let w = cx(c, CX_WARN);
+    vpush(w, pos);
+    vpush(w, code);
+    vpush(w, message);
+    return 0;
+}
+
+// Indices of the pending warnings, stably sorted by position.
+fn sorted_warnings(c: i64) -> i64 {
+    let w = cx(c, CX_WARN);
+    let n = vlen(w) / 3;
+    let order = vnew_cap(n + 1);
+    let mut i: i64 = 0;
+    while i < n {
+        vpush(order, i);
+        let mut j = i;
+        while j > 0 && vget(w, vget(order, j - 1) * 3) > vget(w, i * 3) {
+            vset(order, j, vget(order, j - 1));
+            j = j - 1;
+        }
+        vset(order, j, i);
+        i = i + 1;
+    }
+    return order;
+}
+
+fn print_warning_entry(c: i64, k: i64) -> i64 {
+    let w = cx(c, CX_WARN);
+    return print_diagnostic(c, "warning", vget(w, k * 3), vget(w, k * 3 + 1), vget(w, k * 3 + 2));
+}
+
+// Print the pending warnings sorted by position and return how many
+// warnings have been printed so far in total.
+fn flush_warnings(c: i64) -> i64 {
+    let order = sorted_warnings(c);
+    let mut i: i64 = 0;
+    while i < vlen(order) {
+        print_warning_entry(c, vget(order, i));
+        i = i + 1;
+    }
+    vset(c, CX_NWARN, cx(c, CX_NWARN) + vlen(order));
+    vtrunc(cx(c, CX_WARN), 0);
+    return cx(c, CX_NWARN);
+}
+
+// Print `error[code]: message` with a source frame at global position `pos`
+// and exit with status 1. Compilation stops at the first error; pending
+// warnings print with it, everything sorted by position.
+fn fail_at(c: i64, pos: i64, code: i64, message: i64) -> i64 {
+    let order = sorted_warnings(c);
+    let w = cx(c, CX_WARN);
+    let mut i: i64 = 0;
+    while i < vlen(order) && vget(w, vget(order, i) * 3) <= pos {
+        print_warning_entry(c, vget(order, i));
+        i = i + 1;
+    }
+    print_diagnostic(c, "error", pos, code, message);
+    while i < vlen(order) {
+        print_warning_entry(c, vget(order, i));
+        i = i + 1;
+    }
     quit(1);
     return 0;
 }
