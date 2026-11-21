@@ -42,7 +42,10 @@ const NG_OPV = 17;     // scratch: value of the last classified operand
 const NG_INL = 18;     // name id -> 0 unknown, 1 inlinable, 2 not
 const NG_COLD = 19;    // out-of-line stubs: (jump list, runtime name id, nargs)
 const NG_CBIND = 20;   // constants bound to inlined parameters (NI_CVAR -2 - i)
-const NG_SLOTS = 21;
+const NG_BODYOK = 21;  // name id -> 0 unknown, -1 no, else names declared
+const NG_EXITS = 22;   // stack of return-jump lists of inlined bodies
+const NG_NONE = 23;    // an empty vector
+const NG_SLOTS = 24;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -388,12 +391,32 @@ fn ng_inline_begin(c: i64, f: i64, args: i64) -> i64 {
     if count * 2 != list_len(c, params) || !ng_free_ok(c, e, f) {
         return -1;
     }
+    return ng_bind_args(c, params, args, ng(c, NG_NONE));
+}
+
+
+// Evaluate `args` and bind them to the parameter names; returns the scope
+// mark for ng_inline_end.
+fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
+    let count = list_len(c, args);
     let vals = vnew();
     let kinds = vnew();
     let mut i: i64 = 0;
     while i < count {
         let a = list_at(c, args, i);
-        if ng_fold(c, a) {
+        let mut fixed = true;
+        let mut q: i64 = 0;
+        while q < vlen(assigned) {
+            if vget(assigned, q) == list_at(c, params, i * 2) {
+                fixed = false;
+            }
+            q = q + 1;
+        }
+        if !fixed {
+            ng_gen(c, a);
+            vpush(kinds, 2);
+            vpush(vals, ng_temp(c));
+        } else if ng_fold(c, a) {
             vpush(kinds, 1);
             vpush(vals, ng(c, NG_OPV));
         } else if ng_opnd(c, a) == 2 {
@@ -441,6 +464,231 @@ fn ng_call_target(c: i64, n: i64) -> i64 {
     return ni(c, target, NI_FN);
 }
 
+
+
+// Size of statement or expression `n` for whole-body inlining (over any
+// budget for kinds it does not handle); names it declares go on `names`.
+fn ng_node_size(c: i64, n: i64, names: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL || k == K_VAR || k == K_STR {
+        return 1;
+    }
+    if k == K_BIN || k == K_INDEX || k == K_RANGE || k == K_ASSIGN {
+        if k == K_BIN || k == K_ASSIGN {
+            if k == K_BIN {
+                return 1 + ng_node_size(c, nb(c, n), names) + ng_node_size(c, nc(c, n), names);
+            }
+        }
+        return 1 + ng_node_size(c, na(c, n), names) + ng_node_size(c, nb(c, n), names);
+    }
+    if k == K_UN {
+        return 1 + ng_node_size(c, nb(c, n), names);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR || k == K_RETURN {
+        return 1 + ng_node_size(c, na(c, n), names);
+    }
+    if k == K_SLICE {
+        return 1 + ng_node_size(c, na(c, n), names) + ng_node_size(c, nb(c, n), names) + ng_node_size(c, nc(c, n), names);
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return 1 + ng_list_size(c, na(c, n), names);
+    }
+    if k == K_CALL {
+        return 2 + ng_list_size(c, nb(c, n), names);
+    }
+    if k == K_LET {
+        vpush(names, na(c, n));
+        return 1 + ng_node_size(c, nd(c, n), names);
+    }
+    if k == K_IF {
+        return 1 + ng_node_size(c, na(c, n), names) + ng_list_size(c, nb(c, n), names) + ng_list_size(c, nc(c, n), names);
+    }
+    // loops amortize their call, and inlined loops would compete for the
+    // caller's registers
+    return 1000;
+}
+
+fn ng_list_size(c: i64, l: i64, names: i64) -> i64 {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        total = total + ng_node_size(c, list_at(c, l, i), names);
+        i = i + 1;
+    }
+    return total;
+}
+
+// Every variable of `n` is declared by the inlined function (`names`) or
+// unbound at this site.
+fn ng_names_ok(c: i64, n: i64, names: i64) -> bool {
+    if n < 0 {
+        return true;
+    }
+    let k = nk(c, n);
+    if k == K_VAR {
+        let name = na(c, n);
+        if ni(c, name, NI_CVAR) == -1 {
+            return true;
+        }
+        let mut i: i64 = 0;
+        while i < vlen(names) {
+            if vget(names, i) == name {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    if k == K_BIN {
+        return ng_names_ok(c, nb(c, n), names) && ng_names_ok(c, nc(c, n), names);
+    }
+    if k == K_INDEX || k == K_RANGE || k == K_ASSIGN {
+        return ng_names_ok(c, na(c, n), names) && ng_names_ok(c, nb(c, n), names);
+    }
+    if k == K_UN {
+        return ng_names_ok(c, nb(c, n), names);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR || k == K_RETURN {
+        return ng_names_ok(c, na(c, n), names);
+    }
+    if k == K_SLICE {
+        return ng_names_ok(c, na(c, n), names) && ng_names_ok(c, nb(c, n), names) && ng_names_ok(c, nc(c, n), names);
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return ng_list_names_ok(c, na(c, n), names);
+    }
+    if k == K_CALL {
+        return ng_list_names_ok(c, nb(c, n), names);
+    }
+    if k == K_LET {
+        return ng_names_ok(c, nd(c, n), names);
+    }
+    if k == K_IF {
+        return ng_names_ok(c, na(c, n), names) && ng_list_names_ok(c, nb(c, n), names) && ng_list_names_ok(c, nc(c, n), names);
+    }
+    if k == K_WHILE {
+        return ng_names_ok(c, na(c, n), names) && ng_list_names_ok(c, nb(c, n), names);
+    }
+    if k == K_FOR {
+        return ng_names_ok(c, nb(c, n), names) && ng_list_names_ok(c, nc(c, n), names);
+    }
+    return true;
+}
+
+fn ng_list_names_ok(c: i64, l: i64, names: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        if !ng_names_ok(c, list_at(c, l, i), names) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Names declared by `f` (parameters and locals) when its whole body is
+// small enough to inline, else -1. Cached in NG_BODYOK by name id.
+fn ng_body_names(c: i64, f: i64) -> i64 {
+    if nk(c, f) != K_FN {
+        return -1;
+    }
+    let name = na(c, f);
+    let map = ng(c, NG_BODYOK);
+    if vlen(map) <= name {
+        vfill(map, name + 1 - vlen(map), 0);
+    }
+    let known = vget(map, name);
+    if known == -1 {
+        return -1;
+    }
+    if known != 0 {
+        return known;
+    }
+    let names = vnew();
+    let params = nc(c, f);
+    let mut i: i64 = 0;
+    while i < list_len(c, params) {
+        vpush(names, list_at(c, params, i));
+        i = i + 2;
+    }
+    let size = ng_list_size(c, ne(c, f), names);
+    let mut ok = size <= NG_INLINE_BUDGET && !text_eq(name_text(c, name), "main");
+    let mut j: i64 = 0;
+    while j < vlen(names) {
+        if ni(c, vget(names, j), NI_CONSTOK) == 1 {
+            ok = false;
+        }
+        j = j + 1;
+    }
+    if !ok {
+        vset(map, name, -1);
+        return -1;
+    }
+    vset(map, name, names);
+    return names;
+}
+
+const NG_INLINE_BUDGET = 32;
+
+// Names of locals assigned anywhere in statement list `l`.
+fn ng_assigns(c: i64, l: i64, out: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        let n = list_at(c, l, i);
+        let k = nk(c, n);
+        if k == K_ASSIGN && nk(c, na(c, n)) == K_VAR {
+            vpush(out, na(c, na(c, n)));
+        }
+        if k == K_IF {
+            ng_assigns(c, nb(c, n), out);
+            ng_assigns(c, nc(c, n), out);
+        }
+        if k == K_WHILE {
+            ng_assigns(c, nb(c, n), out);
+        }
+        if k == K_FOR {
+            ng_assigns(c, nc(c, n), out);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Inline the whole body of `f` at a call with `args`; false if not done.
+fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
+    let names = ng_body_names(c, f);
+    if names < 0 || ng(c, NG_INLDEPTH) >= 1 {
+        return false;
+    }
+    let params = nc(c, f);
+    let count = list_len(c, args);
+    if count * 2 != list_len(c, params) || !ng_list_names_ok(c, ne(c, f), names) {
+        return false;
+    }
+    let assigned = vnew();
+    ng_assigns(c, ne(c, f), assigned);
+    let mark = ng_bind_args(c, params, args, assigned);
+    let saved_ret = ng(c, NG_RETVAL);
+    let ret = nd(c, f);
+    let mut returns: i64 = 0;
+    if ret >= 0 && !is_prim(c, ret, PRIM_VOID) {
+        returns = 1;
+    }
+    ng_set(c, NG_RETVAL, returns);
+    let exits = ng(c, NG_EXITS);
+    vpush(exits, vnew());
+    ng_block_v(c, ne(c, f), returns != 1);
+    if returns != 1 {
+        x_mov_rax_imm(ncode(c), 0);
+    }
+    ng_patch_all(c, vpop(exits));
+    ng_set(c, NG_RETVAL, saved_ret);
+    ng_inline_end(c, mark);
+    return true;
+}
 
 // ------------------------------------------------------------ primitives
 
@@ -1304,6 +1552,9 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
         if ng_prim(c, name_text(c, callee), args, count) {
             return 0;
         }
+        if ng_inline_full(c, f, args) {
+            return 0;
+        }
     }
     if builtin >= 0 && ng_mem_builtin(c, name_text(c, target), args) {
         return 0;
@@ -1576,6 +1827,10 @@ fn ng_return(c: i64, n: i64) -> i64 {
     }
     if ng(c, NG_RETVAL) != 1 || value < 0 {
         x_mov_rax_imm(b, 0);
+    }
+    let exits = ng(c, NG_EXITS);
+    if vlen(exits) > 0 {
+        return vpush(vget(exits, vlen(exits) - 1), x_jmp(b));
     }
     return ng_epilogue(c);
 }
@@ -2059,6 +2314,9 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     }
     ng_set(c, NG_NSAVE, vlen(saved));
     ng_set(c, NG_PASS, 2);
+    if env_exists("TRACKC_NATIVE_MAP") == 1 {
+        err(text_cat3(int_to_str(vlen(b) + 176), " ", text_cat(name_text(c, na(c, f)), "\n")));
+    }
     return ng_function_pass(c, f, prelude);
 }
 
@@ -2105,6 +2363,9 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_INL, vnew());
     ng_set(c, NG_COLD, vnew());
     ng_set(c, NG_CBIND, vnew());
+    ng_set(c, NG_BODYOK, vnew());
+    ng_set(c, NG_EXITS, vnew());
+    ng_set(c, NG_NONE, vnew());
     ng_set(c, NG_PASS, 2);
     ng_entry(c);
     let items = cx(c, CX_ITEMS);
