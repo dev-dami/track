@@ -3945,12 +3945,17 @@ fn ng_epilogue(c: i64) -> i64 {
 fn ng_unframe(c: i64) -> i64 {
     let b = ncode(c);
     let saved = ng(c, NG_SAVED);
-    let mut i: i64 = 0;
-    while i < vlen(saved) {
-        x_rm(b, 139, vget(saved, i), 5, 0 - 8 * (i + 1));
-        i = i + 1;
+    let n = vlen(saved);
+    if n == 0 {
+        return x_byte(b, 201); // leave
     }
-    return x_byte(b, 201); // leave
+    x_rm(b, 141, 4, 5, 0 - 8 * n); // lea rsp, [rbp - 8n]
+    let mut i = n - 1;
+    while i >= 0 {
+        x_pop_r(b, vget(saved, i));
+        i = i - 1;
+    }
+    return x_pop_r(b, 5); // pop rbp
 }
 
 // Tear down the frame for a tail call whose `nargs` (> 6, else 0) stack
@@ -4064,12 +4069,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     let mut frame: i64 = -1;
     let saved = ng(c, NG_SAVED);
     if ng(c, NG_FRAMELESS) == 0 {
-        frame = x_prologue(b);
-        let mut s: i64 = 0;
-        while s < vlen(saved) {
-            x_rm(b, 137, vget(saved, s), 5, 0 - 8 * (s + 1));
-            s = s + 1;
-        }
+        frame = x_prologue(b, saved);
     }
     let mark = ng_scope_begin(c);
     let pass = ng(c, NG_PASS);
@@ -4146,7 +4146,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         return 0;
     }
     let size = ((locals + vlen(saved)) * 8 + 15) / 16 * 16;
-    return x_patch32(b, frame, size);
+    return x_patch32(b, frame, size - 8 * vlen(saved));
 }
 
 const NG_CALLEE_SAVED = 7;
