@@ -7,6 +7,7 @@
 //   trackc emit-c <file.trk> [-o <file.c>] write the generated C
 //   trackc tokens <file.trk>              dump the token stream
 //   trackc life <file.trk>                dump inferred lifecycle summaries
+//   trackc life --place <file.trk>        dump the placement plan per site
 //   trackc --version
 //
 // Pipeline: loader (lexer + parser for every imported module) → checker →
@@ -38,6 +39,7 @@ fn usage() -> i64 {
     err("    trackc emit-c <file.trk> [-o <out.c>]  Write the generated C\n");
     err("    trackc tokens <file.trk>               Dump the token stream\n");
     err("    trackc life <file.trk>                 Dump inferred lifecycle summaries\n");
+    err("    trackc life --place <file.trk>         Dump the placement plan per allocation site\n");
     err("    trackc --version                       Show version info\n");
     err("\nOPTIONS:\n");
     err("    --rt=track   link the runtime written in Track (compiler/rt/)\n");
@@ -345,7 +347,7 @@ fn file_arg_index() -> i64 {
         let a = arg_text(i);
         if text_eq(a, "-o") {
             i = i + 2;
-        } else if text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") {
+        } else if text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") || text_eq(a, "--place") {
             i = i + 1;
         } else {
             return i;
@@ -526,7 +528,13 @@ fn main() -> i64 {
         return 0;
     }
     if text_eq(command, "life") {
-        out(life_dump(front_end(require_file())));
+        let c = front_end(require_file());
+        if has_flag("--place") {
+            life_place_program(c);
+            out(life_place_dump(c));
+            return 0;
+        }
+        out(life_dump(c));
         return 0;
     }
     if text_eq(command, "tokens") {
