@@ -1,0 +1,20 @@
+fn count
+  param xs ref use=read end=-
+  result copy
+  effects calls
+fn count_own
+  param xs owned use=read end=die
+  result copy
+  effects calls
+fn size
+  param s owned use=read end=die
+  result copy
+  effects calls
+fn join
+  param a owned use=read end=die
+  param b owned use=read end=die
+  result fresh
+  effects calls
+fn main
+  result void
+  effects calls

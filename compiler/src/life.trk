@@ -10,10 +10,21 @@
 // parameter k"), then FRESH, STATIC and UNKNOWN. Joins are `|`. Copy
 // values (integers, bools) have the empty origin.
 //
-// Calls are conservative here: a callee may mutate every `&` argument,
-// every by-value argument escapes, and a non-copy result is UNKNOWN (plus
-// whatever its arguments carry). Card L4 replaces that with the callee's
-// summary from the table this pass fills (`life_summary`).
+// Calls use the callee's summary (card L4, docs/lifecycles.md §1.3-1.4).
+// `life_program` builds the call graph, orders it into strongly connected
+// components (Tarjan, callees first) and iterates each recursive component
+// from bottom until no member's summary changes. Runtime functions get
+// their summary from a fixed table (`rt_summaries`); a callee that is
+// neither a program function nor in the table stays conservative: it may
+// mutate every `&` argument, every by-value argument escapes, and a
+// non-copy result is UNKNOWN plus whatever its arguments carry.
+//
+// Generics: a template is analysed once, with its type parameters treated
+// as opaque linear values (tracked). That over-approximates the join over
+// its instantiations (docs/lifecycles.md §1.4 step 6): an instantiation
+// with a Copy argument passes the empty origin at the call site, so the
+// extra facts cost nothing there. trackc emits one function per template,
+// so one summary per template is what the backends need.
 
 import "base";
 import "ast";
@@ -49,13 +60,32 @@ const LS_FLAGS = 8;
 const LS_RTRACK = 9; // 1 when the result type carries an origin
 const LS_WIDTH = 10;
 
-// Summary table (checker slot CK_LIFE): [records, record offset by name].
-// A record is [fn node, param count, result, flags, (use, end) per param].
+// Summary table (checker slot CK_LIFE): [records, record offset by name,
+// runtime records, runtime record offset by name, callee cache by name].
+// A record is [fn node (-1 for a runtime function), param count, result,
+// flags, recursive component size (0 when not recursive), fixpoint passes,
+// (use, end) per param].
 const LR_FN = 0;
 const LR_NP = 1;
 const LR_RES = 2;
 const LR_FLAGS = 3;
-const LR_PARAMS = 4;
+const LR_SCC = 4;
+const LR_PASSES = 5;
+const LR_PARAMS = 6;
+
+const LT_RECS = 0;
+const LT_BYNAME = 1;
+const LT_RTRECS = 2;
+const LT_RTBYNAME = 3;
+const LT_CALLEE = 4;
+const LT_READ = 5;  // by record offset: 1 when a call read it since its last change
+const LT_STALE = 6; // 1 when a pass changed a summary some call had already read
+
+// Callee cache values: >= 0 is a program record offset, <= C_RT0 a runtime
+// record (offset C_RT0 - value), C_UNKNOWN a conservative callee.
+const C_UNSET = -1;
+const C_UNKNOWN = -2;
+const C_RT0 = -3;
 
 fn lsg(s: i64, i: i64) -> i64 { return vget(s, i); }
 fn lsg_set(s: i64, i: i64, x: i64) -> i64 { return vset(s, i, x); }
@@ -251,19 +281,82 @@ fn ev_list(c: i64, s: i64, l: i64, from: i64, step: i64) -> i64 {
     return o;
 }
 
-fn ev_call(c: i64, s: i64, n: i64) -> i64 {
-    let name = na(c, n);
-    let args = nb(c, n);
+// The K_FN node a call's name resolves to, or -1.
+fn callee_fn(c: i64, name: i64) -> i64 {
     let mut f = ni(c, name, NI_FN);
     if f < 0 {
         f = ni(c, last_segment(c, name), NI_FN);
     }
-    let mut params: i64 = -1;
     if f >= 0 && nk(c, f) == K_FN {
-        params = nc(c, f);
+        return f;
+    }
+    return -1;
+}
+
+// Resolve a call's name to its summary: a program function's record, a
+// runtime table record, or C_UNKNOWN. Cached per name id.
+fn life_callee(c: i64, name: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    let cache = vget(table, LT_CALLEE);
+    if name < 0 || name >= vlen(cache) {
+        return C_UNKNOWN;
+    }
+    let hit = vget(cache, name);
+    if hit != C_UNSET {
+        return hit;
+    }
+    let mut v = C_UNKNOWN;
+    let f = callee_fn(c, name);
+    if f >= 0 {
+        let at = life_summary(c, na(c, f));
+        if at >= 0 {
+            v = at;
+        }
+    } else {
+        let rt = vget(table, LT_RTBYNAME);
+        let mut at = vget(rt, name);
+        if at < 0 {
+            let key = last_segment(c, name);
+            if key < vlen(rt) {
+                at = vget(rt, key);
+            }
+        }
+        if at >= 0 {
+            v = C_RT0 - at;
+        }
+    }
+    vset(cache, name, v);
+    return v;
+}
+
+fn ev_call(c: i64, s: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    let args = nb(c, n);
+    let callee = life_callee(c, name);
+    // The callee's summary, if any: record vector, offset, parameter
+    // count, result origin; and its parameter list for program functions.
+    let mut recs: i64 = -1;
+    let mut at: i64 = 0;
+    let mut params: i64 = -1;
+    if callee >= 0 {
+        let table = ck(c, CK_LIFE);
+        recs = vget(table, LT_RECS);
+        at = callee;
+        params = nc(c, vget(recs, at + LR_FN));
+        // Seen by the fixpoint: a later change makes this pass stale.
+        vset(vget(table, LT_READ), at, 1);
+    } else if callee <= C_RT0 {
+        recs = vget(ck(c, CK_LIFE), LT_RTRECS);
+        at = C_RT0 - callee;
+    }
+    let mut np: i64 = 0;
+    let mut r: i64 = O_UNKNOWN;
+    if recs >= 0 {
+        np = vget(recs, at + LR_NP);
+        r = vget(recs, at + LR_RES);
     }
     lsg_set(s, LS_FLAGS, lsg(s, LS_FLAGS) | LF_EFFECT);
-    let mut res: i64 = 0;
+    let mut res = r & (O_FRESH | O_STATIC | O_UNKNOWN);
     let mut i: i64 = 0;
     while i < list_len(c, args) {
         let a = list_at(c, args, i);
@@ -273,28 +366,63 @@ fn ev_call(c: i64, s: i64, n: i64) -> i64 {
         } else {
             pty = infer_type(c, a);
         }
+        let is_ref = ty_is_ref(c, pty);
         let mut o: i64 = 0;
-        if ty_is_ref(c, pty) {
+        if is_ref {
             o = ev(c, s, a);
         } else {
             o = ev_move(c, s, a);
         }
-        if ty_is_ref(c, pty) {
+        if i < np {
+            // The callee's summary of parameter i (docs/lifecycles.md §1.3).
+            let pu = vget(recs, at + LR_PARAMS + i * 2);
+            let pe = vget(recs, at + LR_PARAMS + i * 2 + 1);
+            if is_ref {
+                // Lending is a read; the callee may raise it to mutate.
+                touch(s, o, U_READ);
+                touch(s, o, pu);
+                if (pe & E_ESC) != 0 {
+                    sink_esc(s, o);
+                }
+            } else if life_tracked(c, pty) {
+                // The callee uses the same value, so its use is ours. A
+                // borrowed value stays the lender's and is read.
+                touch(s, o & lsg(s, LS_REFS), U_READ);
+                touch(s, o, pu);
+                if (pe & E_ESC) != 0 {
+                    sink_esc(s, o);
+                } else if pe == 0 {
+                    // The callee never ends it: it diverges, or its
+                    // summary is still bottom in a recursive component.
+                    lsg_set(s, LS_LIVE, bit_clear(lsg(s, LS_LIVE), o));
+                } else if (pe & E_DIE) != 0 {
+                    // die: the caller ends it after the call (caller-ends
+                    // convention), so an owned value stays live here. A
+                    // borrowed one would be ended by a frame that only
+                    // borrowed it (E0211's root cause): record the die.
+                    end_add(s, o & lsg(s, LS_REFS), E_DIE);
+                }
+                // ret: the result carries it, below.
+            }
+            if i < O_MAXPARAMS && ((r >> i) & 1) == 1 {
+                res = res | o;
+            }
+        } else if is_ref {
             touch(s, o, U_MUT);
-            res = res | o;
+            res = res | o | O_UNKNOWN;
         } else if life_tracked(c, pty) {
             // A moved owned value is the callee's now, but a borrowed one
             // stays the lender's: the callee may read through it.
             touch(s, o & lsg(s, LS_REFS), U_READ);
             sink_esc(s, o);
-            res = res | o;
+            res = res | o | O_UNKNOWN;
         }
         i = i + 1;
     }
     if !life_tracked(c, call_type(c, name, args)) {
         return 0;
     }
-    return res | O_UNKNOWN;
+    return res;
 }
 
 // Variable at the base of a place (`a.b.0[i]`, `*r`), or -1.
@@ -633,8 +761,9 @@ fn fn_returns_value(c: i64, f: i64) -> bool {
     return ret >= 0 && !is_prim(c, ret, PRIM_VOID);
 }
 
-// Analyze one function and append its record to the summary table.
-fn life_function(c: i64, f: i64) -> i64 {
+// Analyze one function and join the result into its record at `at`. True
+// when the record changed.
+fn life_function(c: i64, f: i64, at: i64) -> bool {
     let params = nc(c, f);
     let np = list_len(c, params) / 2;
     let s = vfill(vnew_cap(LS_WIDTH), LS_WIDTH, 0);
@@ -672,49 +801,523 @@ fn life_function(c: i64, f: i64) -> i64 {
         exit_with(s, v);
     }
     truncate_vars(c, base);
-    let table = ck(c, CK_LIFE);
-    let recs = vget(table, 0);
-    let at = vlen(recs);
-    vpush(recs, f);
-    vpush(recs, np);
-    vpush(recs, lsg(s, LS_RES));
-    vpush(recs, lsg(s, LS_FLAGS));
+    // Join into the record: summaries only grow, so a recursive component
+    // reaches its fixpoint even where a caller's facts are not monotone in
+    // a callee's (more `ret` can mean less `die`).
+    let recs = life_records(c);
+    let mut changed = false;
+    let res = vget(recs, at + LR_RES) | lsg(s, LS_RES);
+    if res != vget(recs, at + LR_RES) {
+        vset(recs, at + LR_RES, res);
+        changed = true;
+    }
+    // Callers never read the flags, so a flag change makes nothing stale.
+    vset(recs, at + LR_FLAGS, vget(recs, at + LR_FLAGS) | lsg(s, LS_FLAGS));
     let uses = lsg(s, LS_USE);
     let ends = lsg(s, LS_END);
     let mut j: i64 = 0;
     while j < np {
-        vpush(recs, vget(uses, j));
-        let mut e = vget(ends, j);
+        let ua = at + LR_PARAMS + j * 2;
+        if vget(uses, j) > vget(recs, ua) {
+            vset(recs, ua, vget(uses, j));
+            changed = true;
+        }
+        let mut e = vget(recs, ua + 1) | vget(ends, j);
         if (e & E_ESC) != 0 {
             e = E_ESC; // esc absorbs
         }
-        vpush(recs, e);
+        if e != vget(recs, ua + 1) {
+            vset(recs, ua + 1, e);
+            changed = true;
+        }
         j = j + 1;
     }
-    let byname = vget(table, 1);
-    let name = na(c, f);
-    while vlen(byname) <= name {
-        vpush(byname, -1);
+    if changed {
+        // A call that read the old summary saw a stale one.
+        let table = ck(c, CK_LIFE);
+        let read = vget(table, LT_READ);
+        if vget(read, at) == 1 {
+            vset(table, LT_STALE, 1);
+        }
+        vset(read, at, 0);
     }
-    vset(byname, name, at);
+    return changed;
+}
+
+// ------------------------------------------------------------ call graph
+
+// Append the record of `f` at bottom (no use, no end, empty result) and
+// return its offset.
+fn rec_alloc(c: i64, recs: i64, f: i64, np: i64) -> i64 {
+    let at = vlen(recs);
+    vpush(recs, f);
+    vpush(recs, np);
+    vpush(recs, 0);
+    vpush(recs, 0);
+    vpush(recs, 0);
+    vpush(recs, 0);
+    let mut k: i64 = 0;
+    while k < np * 2 {
+        vpush(recs, 0);
+        k = k + 1;
+    }
+    return at;
+}
+
+// Push the record offset of every program function `n` calls.
+fn scan_calls(c: i64, n: i64, out: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL || k == K_STR || k == K_VAR {
+        return 0;
+    }
+    if k == K_CALL {
+        let at = life_callee(c, na(c, n));
+        if at >= 0 {
+            vpush(out, at);
+        }
+        return scan_list(c, nb(c, n), 0, 1, out);
+    }
+    if k == K_BIN {
+        scan_calls(c, nb(c, n), out);
+        return scan_calls(c, nc(c, n), out);
+    }
+    if k == K_UN {
+        return scan_calls(c, nb(c, n), out);
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return scan_list(c, na(c, n), 0, 1, out);
+    }
+    if k == K_SINIT {
+        return scan_list(c, nb(c, n), 1, 2, out);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR || k == K_RETURN {
+        return scan_calls(c, na(c, n), out);
+    }
+    if k == K_INDEX || k == K_RANGE || k == K_ASSIGN {
+        scan_calls(c, na(c, n), out);
+        return scan_calls(c, nb(c, n), out);
+    }
+    if k == K_SLICE {
+        scan_calls(c, na(c, n), out);
+        scan_calls(c, nb(c, n), out);
+        return scan_calls(c, nc(c, n), out);
+    }
+    if k == K_LENS {
+        return scan_list(c, nc(c, n), 0, 1, out);
+    }
+    if k == K_IF {
+        scan_calls(c, na(c, n), out);
+        scan_list(c, nb(c, n), 0, 1, out);
+        return scan_list(c, nc(c, n), 0, 1, out);
+    }
+    if k == K_WHILE {
+        scan_calls(c, na(c, n), out);
+        return scan_list(c, nb(c, n), 0, 1, out);
+    }
+    if k == K_FOR {
+        scan_calls(c, nb(c, n), out);
+        return scan_list(c, nc(c, n), 0, 1, out);
+    }
+    if k == K_MACROCALL {
+        scan_list(c, nb(c, n), 0, 1, out);
+        return scan_list(c, nc(c, n), 0, 1, out);
+    }
+    if k == K_MATCH {
+        scan_calls(c, na(c, n), out);
+        let arms = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            scan_calls(c, list_at(c, arms, i + 1), out);
+            scan_calls(c, list_at(c, arms, i + 2), out);
+            i = i + 3;
+        }
+        return 0;
+    }
+    if k == K_LET {
+        return scan_calls(c, nd(c, n), out);
+    }
+    if k == K_LETD {
+        return scan_calls(c, nc(c, n), out);
+    }
     return 0;
 }
 
-// Summaries for every function of the checked program, in load order.
+fn scan_list(c: i64, l: i64, from: i64, step: i64, out: i64) -> i64 {
+    let mut i = from;
+    while i < list_len(c, l) {
+        scan_calls(c, list_at(c, l, i), out);
+        i = i + step;
+    }
+    return 0;
+}
+
+// Tarjan's strongly connected components over record offsets. `g` is
+// [callees by record offset, index, lowlink, on-stack, stack, counter,
+// components]; a component is pushed as its members then -1, callees'
+// components before their callers'.
+const TG_ADJ = 0;
+const TG_INDEX = 1;
+const TG_LOW = 2;
+const TG_ON = 3;
+const TG_STACK = 4;
+const TG_NEXT = 5;
+const TG_OUT = 6;
+
+fn tarjan(g: i64, v: i64) -> i64 {
+    let index = vget(g, TG_INDEX);
+    let low = vget(g, TG_LOW);
+    let on = vget(g, TG_ON);
+    let stack = vget(g, TG_STACK);
+    vset(index, v, vget(g, TG_NEXT));
+    vset(low, v, vget(g, TG_NEXT));
+    vset(g, TG_NEXT, vget(g, TG_NEXT) + 1);
+    vpush(stack, v);
+    vset(on, v, 1);
+    let edges = vget(vget(g, TG_ADJ), v);
+    let mut i: i64 = 0;
+    while i < vlen(edges) {
+        let w = vget(edges, i);
+        if vget(index, w) < 0 {
+            tarjan(g, w);
+            if vget(low, w) < vget(low, v) {
+                vset(low, v, vget(low, w));
+            }
+        } else if vget(on, w) == 1 && vget(index, w) < vget(low, v) {
+            vset(low, v, vget(index, w));
+        }
+        i = i + 1;
+    }
+    if vget(low, v) == vget(index, v) {
+        let out = vget(g, TG_OUT);
+        let mut w: i64 = -1;
+        while w != v {
+            w = vpop(stack);
+            vset(on, w, 0);
+            vpush(out, w);
+        }
+        vpush(out, -1);
+    }
+    return 0;
+}
+
+// Analyse one component (members out[from..to)): once when it is not
+// recursive, else from bottom until a pass changes no member's summary.
+fn life_component(c: i64, g: i64, from: i64, to: i64) -> i64 {
+    let out = vget(g, TG_OUT);
+    let recs = life_records(c);
+    let size = to - from;
+    let mut recursive = size > 1;
+    if !recursive {
+        let v = vget(out, from);
+        let edges = vget(vget(g, TG_ADJ), v);
+        let mut i: i64 = 0;
+        while i < vlen(edges) {
+            if vget(edges, i) == v {
+                recursive = true;
+            }
+            i = i + 1;
+        }
+    }
+    // Members in load order (record offsets ascend with it).
+    let mut a = from + 1;
+    while a < to {
+        let x = vget(out, a);
+        let mut b = a;
+        while b > from && vget(out, b - 1) > x {
+            vset(out, b, vget(out, b - 1));
+            b = b - 1;
+        }
+        vset(out, b, x);
+        a = a + 1;
+    }
+    // A pass is the fixpoint when every summary a call read during it was
+    // already final: re-walking would read the same summaries and compute
+    // the same records. Most components of word-typed code never change a
+    // summary after its first read, so they finish in one pass.
+    let table = ck(c, CK_LIFE);
+    let mut passes: i64 = 0;
+    let mut again = true;
+    while again {
+        vset(table, LT_STALE, 0);
+        passes = passes + 1;
+        let mut m = from;
+        while m < to {
+            let at = vget(out, m);
+            life_function(c, vget(recs, at + LR_FN), at);
+            m = m + 1;
+        }
+        again = recursive && vget(table, LT_STALE) == 1;
+    }
+    if recursive {
+        let mut m = from;
+        while m < to {
+            let at = vget(out, m);
+            vset(recs, at + LR_SCC, size);
+            vset(recs, at + LR_PASSES, passes);
+            m = m + 1;
+        }
+    }
+    return 0;
+}
+
+// Summaries for every function of the checked program: records in load
+// order, analysed callees first.
 fn life_program(c: i64) -> i64 {
-    let table = vnew_cap(2);
-    vpush(table, vnew_cap(4096));
-    vpush(table, vfill(vnew_cap(name_count(c) + 1), name_count(c), -1));
+    let nn = name_count(c);
+    let table = vnew_cap(7);
+    let recs = vnew_cap(4096);
+    vpush(table, recs);
+    vpush(table, vfill(vnew_cap(nn + 1), nn, -1));
+    vpush(table, vnew_cap(1024));
+    vpush(table, vfill(vnew_cap(nn + 1), nn, -1));
+    vpush(table, vfill(vnew_cap(nn + 1), nn, C_UNSET));
+    vpush(table, 0); // LT_READ, sized once the records exist
+    vpush(table, 0);
     ck_set(c, CK_LIFE, table);
+    rt_summaries(c);
+    let byname = vget(table, LT_BYNAME);
     let items = cx(c, CX_ITEMS);
+    let fns = vnew_cap(1024);
     let mut i: i64 = 0;
     while i < vlen(items) {
         let n = vget(items, i);
         if nk(c, n) == K_FN {
-            life_function(c, n);
+            let at = rec_alloc(c, recs, n, list_len(c, nc(c, n)) / 2);
+            vpush(fns, at);
+            if na(c, n) < vlen(byname) {
+                vset(byname, na(c, n), at);
+            }
         }
         i = i + 1;
     }
+    // The call graph, indexed by record offset.
+    let nr = vlen(recs);
+    vset(table, LT_READ, vfill(vnew_cap(nr + 1), nr, 0));
+    let adj = vfill(vnew_cap(nr + 1), nr, 0);
+    i = 0;
+    while i < vlen(fns) {
+        let at = vget(fns, i);
+        let edges = vnew_cap(8);
+        scan_list(c, ne(c, vget(recs, at + LR_FN)), 0, 1, edges);
+        vset(adj, at, edges);
+        i = i + 1;
+    }
+    let g = vnew_cap(7);
+    vpush(g, adj);
+    vpush(g, vfill(vnew_cap(nr + 1), nr, -1));
+    vpush(g, vfill(vnew_cap(nr + 1), nr, 0));
+    vpush(g, vfill(vnew_cap(nr + 1), nr, 0));
+    vpush(g, vnew_cap(64));
+    vpush(g, 0);
+    vpush(g, vnew_cap(vlen(fns) * 2 + 1));
+    i = 0;
+    while i < vlen(fns) {
+        let at = vget(fns, i);
+        if vget(vget(g, TG_INDEX), at) < 0 {
+            tarjan(g, at);
+        }
+        i = i + 1;
+    }
+    let out = vget(g, TG_OUT);
+    let mut from: i64 = 0;
+    i = 0;
+    while i < vlen(out) {
+        if vget(out, i) < 0 {
+            life_component(c, g, from, i);
+            from = i + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ------------------------------------------------------ runtime summaries
+
+// One runtime function: `params` has one letter per parameter, `result`
+// one letter (docs/lifecycles.md §1.4 step 5).
+//   params: n none/die, r read/die, m mutate/die, s read/esc (stored or
+//           freed: ownership leaves the caller), k none/ret (handed back)
+//   result: - none, f fresh, t static, u unknown, 0-9 derived(param)
+fn rt(c: i64, name: i64, params: i64, result: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    let recs = vget(table, LT_RTRECS);
+    let byname = vget(table, LT_RTBYNAME);
+    let id = name_find(c, name);
+    if id < 0 || id >= vlen(byname) {
+        return 0; // the program never names it
+    }
+    let p = text_bytes(params);
+    let np = vlen(p);
+    let at = rec_alloc(c, recs, -1, np);
+    let r = vget(text_bytes(result), 0);
+    let mut o: i64 = 0;
+    if r == 102 { o = O_FRESH; }
+    if r == 116 { o = O_STATIC; }
+    if r == 117 { o = O_UNKNOWN; }
+    if r >= 48 && r <= 57 { o = 1 << (r - 48); }
+    vset(recs, at + LR_RES, o);
+    let mut k: i64 = 0;
+    while k < np {
+        let ch = vget(p, k);
+        let mut u = U_NONE;
+        let mut e = E_DIE;
+        if ch == 114 { u = U_READ; }
+        if ch == 109 { u = U_MUT; }
+        if ch == 115 { u = U_READ; e = E_ESC; }
+        if ch == 107 { e = E_RET; }
+        vset(recs, at + LR_PARAMS + k * 2, u);
+        vset(recs, at + LR_PARAMS + k * 2 + 1, e);
+        k = k + 1;
+    }
+    vset(byname, id, at);
+    return 0;
+}
+
+// The id of an interned name, or -1. Unlike `intern`, never adds one, so
+// the runtime table leaves the name ids of later passes unchanged.
+fn name_find(c: i64, s: i64) -> i64 {
+    let names = cx(c, CX_NAMES);
+    let table = cx(c, CX_HASH);
+    let mask = vlen(table) - 1;
+    let mut slot = text_hash(s) & mask;
+    while vget(table, slot) != 0 {
+        let id = vget(table, slot) - 1;
+        if text_eq(vget(names, id), s) {
+            return id;
+        }
+        slot = (slot + 1) & mask;
+    }
+    return -1;
+}
+
+// Summaries of the runtime functions (checker builtins, runtime/
+// track_runtime.c, compiler/rt). Raw machine builtins (syscall6, load64,
+// store64, load8, store8) are deliberately absent: an argument to them
+// escapes (docs/lifecycles.md §1.1).
+fn rt_summaries(c: i64) -> i64 {
+    // output
+    rt(c, "print", "r", "-");
+    rt(c, "println", "r", "-");
+    rt(c, "print_int", "r", "-");
+    rt(c, "print_hex", "r", "-");
+    rt(c, "print_str", "r", "-");
+    rt(c, "print_err", "r", "-");
+    rt(c, "eprint", "r", "-");
+    rt(c, "track_out", "r", "-");
+    rt(c, "track_err", "r", "-");
+    // memory
+    rt(c, "alloc", "n", "f");
+    rt(c, "dealloc", "s", "-");
+    rt(c, "mem_realloc", "kn", "0");
+    rt(c, "memset", "mnn", "-");
+    rt(c, "memcpy", "mrn", "-");
+    rt(c, "memcmp", "rrn", "-");
+    rt(c, "track_words_copy", "rn", "f");
+    rt(c, "array_len", "r", "-");
+    // strings
+    rt(c, "str_len", "r", "-");
+    rt(c, "str_eq", "rr", "-");
+    rt(c, "str_from_literal", "r", "f");
+    rt(c, "str_concat", "rr", "f");
+    rt(c, "str_free", "s", "-");
+    rt(c, "str_find", "rr", "-");
+    rt(c, "str_contains", "rr", "-");
+    rt(c, "str_to_int", "r", "-");
+    rt(c, "str_is_int", "r", "-");
+    rt(c, "int_to_str", "n", "f");
+    rt(c, "str_starts_with", "rr", "-");
+    rt(c, "str_ends_with", "rr", "-");
+    rt(c, "str_substr", "rnn", "f");
+    rt(c, "str_trim", "r", "f");
+    rt(c, "str_char_at", "rn", "-");
+    rt(c, "track_str_bytes", "r", "0");
+    rt(c, "path_basename", "r", "f");
+    rt(c, "path_ext", "r", "f");
+    rt(c, "path_join", "rr", "f");
+    // collections
+    rt(c, "vec_init", "n", "f");
+    rt(c, "vec_push", "ms", "-");
+    rt(c, "vec_get", "rn", "0");
+    rt(c, "vec_set", "mns", "-");
+    rt(c, "vec_pop", "m", "0");
+    rt(c, "vec_len", "r", "-");
+    rt(c, "vec_clear", "m", "-");
+    rt(c, "vec_reserve", "mn", "-");
+    rt(c, "vec_free", "s", "-");
+    rt(c, "ring_init", "n", "f");
+    rt(c, "ring_push", "ms", "-");
+    rt(c, "ring_pop", "m", "0");
+    rt(c, "ring_peek", "r", "0");
+    rt(c, "ring_full", "r", "-");
+    rt(c, "ring_empty", "r", "-");
+    rt(c, "ring_count", "r", "-");
+    rt(c, "track_i64_collection_new", "n", "f");
+    rt(c, "track_i64_collection_len", "r", "-");
+    rt(c, "track_i64_collection_push", "ms", "-");
+    rt(c, "track_i64_collection_get", "rn", "0");
+    rt(c, "track_i64_collection_set", "mns", "-");
+    rt(c, "track_i64_collection_pop", "m", "0");
+    rt(c, "track_i64_collection_truncate", "mn", "-");
+    rt(c, "track_sb_new", "", "f");
+    rt(c, "track_sb_push", "mr", "-");
+    rt(c, "track_sb_push_byte", "mn", "-");
+    rt(c, "track_sb_push_int", "mn", "-");
+    rt(c, "track_sb_len", "r", "-");
+    rt(c, "track_sb_str", "r", "f");
+    rt(c, "track_sb_clear", "m", "-");
+    // files and io
+    rt(c, "read", "", "-");
+    rt(c, "read_line", "", "f");
+    rt(c, "file_open", "rr", "f");
+    rt(c, "file_close", "s", "-");
+    rt(c, "file_read_all", "r", "f");
+    rt(c, "file_write", "mr", "-");
+    rt(c, "file_exists", "r", "-");
+    rt(c, "file_remove", "r", "-");
+    rt(c, "file_size", "r", "-");
+    rt(c, "file_copy", "rr", "-");
+    rt(c, "dir_exists", "r", "-");
+    rt(c, "track_file_read", "r", "f");
+    rt(c, "track_file_write_all", "rr", "-");
+    // system
+    rt(c, "abort", "r", "-");
+    rt(c, "exit", "n", "-");
+    rt(c, "sys_exit", "n", "-");
+    rt(c, "sys_exec", "r", "-");
+    rt(c, "process_spawn", "r", "-");
+    rt(c, "clock_ms", "", "-");
+    rt(c, "env_get", "r", "f");
+    rt(c, "env_exists", "r", "-");
+    rt(c, "os_args_count", "", "-");
+    rt(c, "os_arg", "n", "f");
+    rt(c, "sys_set_memory_limit", "n", "-");
+    rt(c, "sys_get_memory_used", "", "-");
+    rt(c, "net_socket_tcp_listen", "n", "-");
+    rt(c, "net_socket_accept", "n", "-");
+    rt(c, "net_socket_connect", "rn", "-");
+    rt(c, "net_socket_send", "nrn", "-");
+    rt(c, "net_socket_recv", "nmn", "-");
+    rt(c, "net_socket_close", "n", "-");
+    // pure scalars
+    rt(c, "math_abs", "n", "-");
+    rt(c, "math_min", "nn", "-");
+    rt(c, "math_max", "nn", "-");
+    rt(c, "math_clamp", "nnn", "-");
+    rt(c, "math_pow", "nn", "-");
+    rt(c, "math_sqrt", "n", "-");
+    rt(c, "math_floor", "n", "-");
+    rt(c, "math_ceil", "n", "-");
+    rt(c, "math_round", "n", "-");
+    rt(c, "math_random", "", "-");
+    rt(c, "char_is_digit", "n", "-");
+    rt(c, "char_is_alpha", "n", "-");
+    rt(c, "char_is_alphanumeric", "n", "-");
+    rt(c, "char_is_space", "n", "-");
+    rt(c, "char_to_upper", "n", "-");
+    rt(c, "char_to_lower", "n", "-");
     return 0;
 }
 
@@ -799,6 +1402,7 @@ fn origin_text(c: i64, f: i64, o: i64) -> i64 {
 //     param <name> owned|ref|copy [use=<use> end=<ends>]
 //     result void|copy|<origin set>
 //     effects none|calls
+//     scc size=<members> passes=<n>      (recursive functions only)
 fn life_dump(c: i64) -> i64 {
     let recs = life_records(c);
     let b = sb_new();
@@ -844,6 +1448,13 @@ fn life_dump(c: i64) -> i64 {
             sb_add(b, "  effects calls\n");
         } else {
             sb_add(b, "  effects none\n");
+        }
+        if vget(recs, at + LR_SCC) > 0 {
+            sb_add(b, "  scc size=");
+            sb_int(b, vget(recs, at + LR_SCC));
+            sb_add(b, " passes=");
+            sb_int(b, vget(recs, at + LR_PASSES));
+            sb_byte(b, 10);
         }
         at = at + LR_PARAMS + np * 2;
     }

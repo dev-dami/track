@@ -1,0 +1,29 @@
+// L4: mutual recursion. `even` and `odd` form one SCC; `even` reads its
+// point, `odd` only forwards it. Both end die, results copy. `bounce_a`
+// and `bounce_b` return their point through each other: derived(p).
+struct Point { x: i64, y: i64 }
+fn even(p: Point, n: i64) -> i64 {
+    if n == 0 {
+        return p.x;
+    }
+    return odd(p, n - 1);
+}
+fn odd(p: Point, n: i64) -> i64 {
+    if n == 0 {
+        return 0;
+    }
+    return even(p, n - 1);
+}
+fn bounce_a(p: Point, n: i64) -> Point {
+    if n == 0 {
+        return p;
+    }
+    return bounce_b(p, n - 1);
+}
+fn bounce_b(p: Point, n: i64) -> Point {
+    return bounce_a(p, n);
+}
+fn main() -> void {
+    print(even(Point { x: 1, y: 2 }, 4));
+    print(bounce_a(Point { x: 3, y: 4 }, 3).x);
+}

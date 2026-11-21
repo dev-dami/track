@@ -1,0 +1,46 @@
+fn leaf
+  param p owned use=read end=die
+  result copy
+  effects none
+fn mid
+  param p owned use=read end=die
+  result copy
+  effects calls
+fn top
+  param p owned use=read end=die
+  result copy
+  effects calls
+fn pass
+  param p owned use=none end=ret
+  result derived(p)
+  effects none
+fn use_pass
+  param q owned use=none end=ret
+  result derived(q)
+  effects calls
+fn fresh
+  result fresh
+  effects none
+fn use_fresh
+  param q owned use=read end=die
+  result fresh
+  effects calls
+fn bump
+  param p ref use=mutate end=-
+  result copy
+  effects none
+fn look
+  param p ref use=read end=-
+  result copy
+  effects none
+fn lend
+  param p ref use=read end=-
+  result copy
+  effects calls
+fn lend_mut
+  param p ref use=mutate end=-
+  result copy
+  effects calls
+fn main
+  result void
+  effects calls

@@ -1,0 +1,36 @@
+// L4: a call chain. `top` passes its point by value to `mid`, which passes
+// it to `leaf`, which only reads it: every level ends it by die (the
+// caller-ends convention), none by esc, and the read shows at every level.
+// `pass` returns its parameter, so `use_pass`'s result is derived from its
+// own parameter; `use_fresh`'s result is fresh.
+struct Point { x: i64, y: i64 }
+fn leaf(p: Point) -> i64 { return p.x + p.y; }
+fn mid(p: Point) -> i64 { return leaf(p) + 1; }
+fn top(p: Point) -> i64 { return mid(p) * 2; }
+fn pass(p: Point) -> Point { return p; }
+fn use_pass(q: Point) -> Point { return pass(q); }
+fn fresh() -> Point { return Point { x: 0, y: 0 }; }
+fn use_fresh(q: Point) -> Point {
+    print(q.x);
+    return fresh();
+}
+fn bump(p: &Point) -> i64 {
+    with p -> l {
+        l.x = l.x + 1;
+    }
+    return 0;
+}
+fn look(p: &Point) -> i64 { return p.y; }
+fn lend(p: &Point) -> i64 { return look(p); }
+fn lend_mut(p: &Point) -> i64 {
+    bump(p);
+    return p.x;
+}
+fn main() -> void {
+    print(top(Point { x: 1, y: 2 }));
+    print(use_pass(Point { x: 3, y: 4 }).x);
+    print(use_fresh(Point { x: 5, y: 6 }).y);
+    let mut p = Point { x: 7, y: 8 };
+    print(lend(&p));
+    print(lend_mut(&p));
+}

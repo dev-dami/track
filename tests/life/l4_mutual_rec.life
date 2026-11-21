@@ -1,0 +1,27 @@
+fn even
+  param p owned use=read end=die
+  param n copy
+  result copy
+  effects calls
+  scc size=2 passes=2
+fn odd
+  param p owned use=read end=die
+  param n copy
+  result copy
+  effects calls
+  scc size=2 passes=2
+fn bounce_a
+  param p owned use=none end=ret
+  param n copy
+  result derived(p)
+  effects calls
+  scc size=2 passes=2
+fn bounce_b
+  param p owned use=none end=ret
+  param n copy
+  result derived(p)
+  effects calls
+  scc size=2 passes=2
+fn main
+  result void
+  effects calls

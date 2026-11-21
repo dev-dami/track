@@ -1,0 +1,13 @@
+// L4: runtime functions come from the summary table. `array_len` and
+// `str_len` only read their argument; `str_concat` reads both and returns
+// a fresh string. A name in neither the program nor the table stays
+// conservative.
+fn count(xs: &[]i64) -> i64 { return array_len(xs); }
+fn count_own(xs: []i64) -> i64 { return array_len(xs); }
+fn size(s: Str) -> u32 { return str_len(s); }
+fn join(a: Str, b: Str) -> Str { return str_concat(a, b); }
+fn main() -> void {
+    let xs = [1, 2, 3, 4];
+    print(count(&xs));
+    print(count_own(xs[0..4]));
+}
