@@ -1827,6 +1827,27 @@ fn patterns_overlap(c: i64, p: i64, q: i64) -> bool {
     return true;
 }
 
+// True when every value matches `p`: a wildcard, a binding, or a tuple of
+// only those.
+fn pattern_irrefutable(c: i64, p: i64) -> bool {
+    let k = nk(c, p);
+    if k == P_WILD || k == P_IDENT {
+        return true;
+    }
+    if k == P_TUPLE {
+        let ps = na(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, ps) {
+            if !pattern_irrefutable(c, list_at(c, ps, i)) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    return false;
+}
+
 // Check arm `i` entered with `entry` spent (slots an earlier guard spent on
 // this path, or -1) and tally its exit into spent/hits unless the body
 // diverges. Returns what the arm's own guard spent, or -1.
@@ -1885,8 +1906,11 @@ fn check_match(c: i64, n: i64) -> i64 {
     // arms leave the join.
     let spent = vnew();
     let hits = vnew();
-    // [pattern, slots]* of earlier arms whose guard spent something
+    // [pattern, slots]* of earlier refutable arms whose guard spent something
     let guards = vnew();
+    // Spends of guards on irrefutable patterns: every later arm is reached
+    // only after such a guard ran and failed, so they apply on every entry.
+    let forced = vnew();
     let mut exits: i64 = 0;
     let mut i: i64 = 0;
     while i < list_len(c, arms) {
@@ -1899,9 +1923,14 @@ fn check_match(c: i64, n: i64) -> i64 {
             }
             g = g + 2;
         }
+        let mut base: i64 = -1;
+        if vlen(forced) > 0 {
+            base = forced;
+        }
         let mut ways: i64 = 1;
-        let own = check_arm(c, arms, i, tt, -1, spent, hits);
+        let own = check_arm(c, arms, i, tt, base, spent, hits);
         if vlen(entry) > 0 {
+            prov_merge(entry, forced);
             check_arm(c, arms, i, tt, entry, spent, hits);
             ways = 2;
         }
@@ -1909,8 +1938,12 @@ fn check_match(c: i64, n: i64) -> i64 {
             exits = exits + ways;
         }
         if own >= 0 {
-            vpush(guards, pat);
-            vpush(guards, own);
+            if pattern_irrefutable(c, pat) {
+                prov_merge(forced, own);
+            } else {
+                vpush(guards, pat);
+                vpush(guards, own);
+            }
         }
         i = i + 3;
     }

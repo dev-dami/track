@@ -1034,6 +1034,19 @@ const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
         "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } enum C { R, G, B } fn f(k: C) -> i64 { let s = str_concat(\"a\", \"b\"); match k { C::R if eatb(s) => return 1, C::R => return eatr(s), _ => return 0, } } fn main() -> void { print(f(C::R)); }",
         false,
     ),
+    // a guard on an irrefutable pattern runs on every path to later arms,
+    // so s is spent on every way out: consistent.
+    (
+        "guard_spend_irrefutable_always_spent",
+        "fn eatb(s: Str) -> bool { return true; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { x if eatb(s) => return 1, _ => print(0), } return 0; } fn main() -> void { print(f(1)); }",
+        true,
+    ),
+    // ... and s is gone after the match.
+    (
+        "guard_spend_irrefutable_use_after",
+        "fn eatb(s: Str) -> bool { return true; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { x if eatb(s) => return 1, _ => print(0), } print(s); return 0; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
     // a binding pattern overlaps everything.
     (
         "guard_spend_binding_then_use",
