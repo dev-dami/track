@@ -1,0 +1,63 @@
+// Tokenizer-like: build short source lines, then scan each byte by byte with
+// str_char_at, classifying identifiers, numbers, operators and spaces.
+// Lines stay short because str_char_at is O(index) in both runtimes.
+fn is_alpha(c: i64) -> bool {
+    return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95;
+}
+
+fn is_digit(c: i64) -> bool {
+    return c >= 48 && c <= 57;
+}
+
+fn main() -> void {
+    let b: i64 = track_sb_new();
+    let mut idents: i64 = 0;
+    let mut numbers: i64 = 0;
+    let mut ops: i64 = 0;
+    let mut hash: i64 = 0;
+    let mut chars: i64 = 0;
+    let mut line: i64 = 0;
+    while line < 600000 {
+        track_sb_clear(b);
+        track_sb_push(b, "let foo_");
+        track_sb_push_int(b, line);
+        track_sb_push(b, " = bar + ");
+        track_sb_push_int(b, line * 37);
+        track_sb_push(b, " * (baz - 1);");
+        let src: i64 = track_sb_str(b);
+        let n: i64 = str_len(src);
+        chars = chars + n;
+        let mut p: i64 = 0;
+        while p < n {
+            let c: i64 = str_char_at(src, p);
+            if is_alpha(c) {
+                let mut h: i64 = 0;
+                while p < n && (is_alpha(str_char_at(src, p)) || is_digit(str_char_at(src, p))) {
+                    h = (h * 31 + str_char_at(src, p)) % 1000003;
+                    p = p + 1;
+                }
+                hash = (hash + h) % 1000000007;
+                idents = idents + 1;
+            } else if is_digit(c) {
+                let mut v: i64 = 0;
+                while p < n && is_digit(str_char_at(src, p)) {
+                    v = v * 10 + str_char_at(src, p) - 48;
+                    p = p + 1;
+                }
+                hash = (hash + v) % 1000000007;
+                numbers = numbers + 1;
+            } else if c == 32 {
+                p = p + 1;
+            } else {
+                ops = ops + 1;
+                p = p + 1;
+            }
+        }
+        line = line + 1;
+    }
+    print(chars);
+    print(idents);
+    print(numbers);
+    print(ops);
+    print(hash);
+}

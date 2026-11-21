@@ -1,0 +1,40 @@
+// Collection-heavy: sieve of Eratosthenes over a runtime i64 collection
+// (bounds-checked get/set), repeated several times.
+fn sieve(n: i64) -> i64 {
+    let v: i64 = track_i64_collection_new(n + 1);
+    let mut i: i64 = 0;
+    while i <= n {
+        track_i64_collection_push(v, 1);
+        i = i + 1;
+    }
+    track_i64_collection_set(v, 0, 0);
+    track_i64_collection_set(v, 1, 0);
+    let mut p: i64 = 2;
+    while p * p <= n {
+        if track_i64_collection_get(v, p) == 1 {
+            let mut m: i64 = p * p;
+            while m <= n {
+                track_i64_collection_set(v, m, 0);
+                m = m + p;
+            }
+        }
+        p = p + 1;
+    }
+    let mut count: i64 = 0;
+    let mut k: i64 = 0;
+    while k <= n {
+        count = count + track_i64_collection_get(v, k);
+        k = k + 1;
+    }
+    return count;
+}
+
+fn main() -> void {
+    let mut round: i64 = 0;
+    let mut total: i64 = 0;
+    while round < 5 {
+        total = total + sieve(4000000);
+        round = round + 1;
+    }
+    print(total);
+}
