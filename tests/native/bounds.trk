@@ -1,0 +1,10 @@
+// Out-of-range indexing aborts with status 134 under both backends.
+
+fn main() -> i64 {
+    let a = [1, 2, 3];
+    print(a[0]);
+    let i: i64 = 3;
+    print(a[i]);
+    print(999);
+    return 0;
+}

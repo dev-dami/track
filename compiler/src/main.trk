@@ -19,6 +19,7 @@ import "loader";
 import "symbols";
 import "checker";
 import "cgen";
+import "ngen";
 import "runtime_c";
 import "runtime_trk";
 
@@ -28,6 +29,7 @@ fn usage() -> i64 {
     err("trackc 1.0.0 — the self-hosted Track compiler\n\n");
     err("USAGE:\n");
     err("    trackc build <file.trk> [-o <exe>]     Compile to a native executable\n");
+    err("    trackc build --native <file.trk> [-o <exe>]  Static x86-64 ELF, no C compiler\n");
     err("    trackc run <file.trk> [args...]        Compile and run\n");
     err("    trackc check <file.trk>                Parse and ownership-check only\n");
     err("    trackc emit-c <file.trk> [-o <out.c>]  Write the generated C\n");
@@ -42,9 +44,14 @@ fn usage() -> i64 {
 // `--rt=track`: link the Track runtime (compiler/rt/, embedded in
 // runtime_trk.trk) instead of the C runtime.
 fn track_rt() -> bool {
+    return has_flag("--rt=track");
+}
+
+// True when `flag` appears among the arguments after the command.
+fn has_flag(flag: i64) -> bool {
     let mut i: i64 = 2;
     while i < arg_count() {
-        if text_eq(arg_text(i), "--rt=track") {
+        if text_eq(arg_text(i), flag) {
             return true;
         }
         i = i + 1;
@@ -52,20 +59,31 @@ fn track_rt() -> bool {
     return false;
 }
 
-fn front_end(path: i64) -> i64 {
+// Load and check the user program exactly as `trackc check` does, then, when
+// `with_rt`, load the Track runtime (compiler/rt/, embedded in
+// runtime_trk.trk). The runtime is loaded after checking so its plain-i64
+// definitions of str_concat, vec_push... never replace the builtin
+// signatures the ownership checker types the user program with.
+fn load_checked(path: i64, with_rt: bool) -> i64 {
     let c = cx_new();
     lex_init(c);
     load_program(c, path);
-    if track_rt() {
+    collect_symbols(c);
+    check_program(c);
+    if with_rt {
+        let from = vlen(cx(c, CX_ITEMS));
         let mut m: i64 = 0;
         while m < rt_module_count() {
             load_embedded_module(c, rt_module_name(m), rt_module_source(m));
             m = m + 1;
         }
+        collect_symbols_from(c, from);
     }
-    collect_symbols(c);
-    check_program(c);
     return c;
+}
+
+fn front_end(path: i64) -> i64 {
+    return load_checked(path, track_rt());
 }
 
 // Value following `-o`, or 0.
@@ -298,7 +316,7 @@ fn file_arg_index() -> i64 {
         let a = arg_text(i);
         if text_eq(a, "-o") {
             i = i + 2;
-        } else if text_starts(a, "--rt=") {
+        } else if text_starts(a, "--rt=") || text_eq(a, "--native") {
             i = i + 1;
         } else {
             return i;
@@ -322,6 +340,26 @@ fn link_command(dir: i64, cc: i64, opt: i64, base: i64, runtime: i64) -> i64 {
     sb_add(cmd, " ");
     sb_add(cmd, shell_quote(runtime));
     return sb_text(cmd);
+}
+
+// `trackc build --native <file.trk> [-o <exe>]`: the program plus the Track
+// runtime, lowered straight to a static x86-64 ELF executable.
+fn cmd_build_native(path: i64) -> i64 {
+    let c = load_checked(path, true);
+    let mut exe = output_flag();
+    if exe == 0 {
+        exe = file_stem(path);
+    }
+    let image = generate_native(c);
+    if image == 0 {
+        quit(1);
+    }
+    if elf_write_file(exe, image) != 0 {
+        err(text_cat3("trackc: cannot write '", exe, "'\n"));
+        quit(1);
+    }
+    out(text_cat3("✓ Built: ", exe, "\n"));
+    return 0;
 }
 
 fn require_file() -> i64 {
@@ -432,6 +470,10 @@ fn main() -> i64 {
         return 0;
     }
     if text_eq(command, "build") {
+        if has_flag("--native") {
+            cmd_build_native(require_file());
+            return 0;
+        }
         cmd_build(require_file());
         return 0;
     }

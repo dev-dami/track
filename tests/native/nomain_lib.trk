@@ -1,0 +1,2 @@
+const K = 7;
+fn helper(n: i64) -> i64 { return n + K; }

@@ -1,0 +1,6 @@
+struct B { s: Str }
+fn main() -> void {
+    let s = str_concat("a", "b");
+    let b = B { s: s };
+    print(s);
+}

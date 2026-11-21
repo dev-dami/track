@@ -1,0 +1,29 @@
+// libc.trk — the few libc entry points trackc's ELF writer (elf.trk)
+// calls by their libc names, so the Rust bootstrap compiler can link them
+// from libc. With the Track runtime (--rt=track, --native) these
+// definitions stand in for libc.
+
+fn open64(path: i64, flags: i64, mode: i64) -> i64 {
+    return syscall6(2, path, flags, mode, 0, 0, 0);
+}
+
+fn write(fd: i64, buf: i64, n: i64) -> i64 {
+    return syscall6(1, fd, buf, n, 0, 0, 0);
+}
+
+fn fchmod(fd: i64, mode: i64) -> i64 {
+    return syscall6(91, fd, mode, 0, 0, 0, 0);
+}
+
+fn close(fd: i64) -> i64 {
+    return syscall6(3, fd, 0, 0, 0, 0, 0);
+}
+
+fn memset(p: i64, v: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        store8(p + i, v);
+        i = i + 1;
+    }
+    return 0;
+}
