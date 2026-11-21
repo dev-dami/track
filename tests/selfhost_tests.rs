@@ -718,11 +718,65 @@ const RUN_OUTPUTS: &[(&str, &str, &str)] = &[
         "200\n5\n",
     ),
     (
+        "stack_tuple_reassigned_from_itself",
+        "fn main() -> void { let mut p = (1, 2); let mut i = 0; while i < 3 { p = (p.1, p.0 + p.1); i = i + 1; } print(p.0); print(p.1); }",
+        "5\n8\n",
+    ),
+    (
+        "stack_tuple_destructured_and_matched",
+        "fn main() -> void { let mut s = 0; for i in 0..4 { let t = (i, i * 2); let u = (i, 1); let (a, b) = t; match u { (0, _) => s = s + 100, (x, y) => s = s + x + y, } s = s + a + b; } print(s); }",
+        "127\n",
+    ),
+    (
+        "match_in_loop_resets_each_time",
+        "fn main() -> void { for i in 0..3 { match i { 0 => print(10), _ => print(i), } } }",
+        "10\n1\n2\n",
+    ),
+    (
+        "tuple_copied_out_of_loop_escapes",
+        "fn main() -> void { let mut keep = (0, 0); for i in 0..3 { let t = (i, i + 1); if i == 1 { keep = t; } else { let (a, b) = t; } } print(keep.0); print(keep.1); }",
+        "1\n2\n",
+    ),
+    (
         "tuple_literal_in_loop",
         "fn main() -> void { let mut a = [(0, 0), (0, 0), (0, 0)]; for i in 0..3 { a[i] = (i, i * 10); } print(a[0].1); print(a[2].1); }",
         "0\n20\n",
     ),
 ];
+
+/// A tuple literal that never escapes lives in a stack slot: 20M of them in
+/// a loop allocate nothing (heap cells took ~600 MB before), while one that
+/// is returned stays a heap cell.
+#[test]
+fn non_escaping_tuples_use_stack_slots() {
+    let dir = scratch("stack_tuples");
+    let file = dir.join("t3.trk");
+    fs::write(
+        &file,
+        "fn pair(n: i64) -> (i64, i64) { let r = (n, n + 1); return r; } \
+         fn main() -> void { let mut i = 0; let mut acc = 0; while i < 20000000 { let p = (i, 1); acc = acc + p.1; i = i + 1; } print(acc); print(pair(4).1); }",
+    )
+    .unwrap();
+    let exe = dir.join("t3");
+    let out = run_trackc(&["build", file.to_str().unwrap(), "-o", exe.to_str().unwrap()], &dir);
+    assert!(out.status.success(), "build failed: {}", String::from_utf8_lossy(&out.stderr));
+    let c = fs::read_to_string(dir.join("t3.c")).unwrap();
+    let main_body = &c[c.find("tk_w tk_main(void) {").expect("tk_main")..];
+    let main_body = &main_body[..main_body.find("\n}\n").unwrap()];
+    assert!(!main_body.contains("alloc("), "loop tuple must not allocate:\n{}", main_body);
+    let pair_body = &c[c.find("tk_w tk_pair(tk_w a0) {").expect("tk_pair")..];
+    let pair_body = &pair_body[..pair_body.find("\n}\n").unwrap()];
+    assert!(pair_body.contains("alloc("), "returned tuple must be a heap cell:\n{}", pair_body);
+    // 64 MB of address space is far below what 20M heap cells need.
+    let run = Command::new("sh")
+        .arg("-c")
+        .arg(format!("ulimit -v 65536; exec {}", exe.display()))
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "t3 failed under a 64 MB limit");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "20000000\n5\n");
+    let _ = fs::remove_dir_all(&dir);
+}
 
 #[test]
 fn trackc_programs_print_the_expected_output() {
