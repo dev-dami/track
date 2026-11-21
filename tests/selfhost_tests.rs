@@ -713,14 +713,26 @@ const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
         "fn eat(s: Str) -> void { } fn g(s: Str) -> i64 { return 1; } fn f(s: Str, k: i64) -> i64 { match k { 1 => return g(s), _ => print(0), } eat(s); return 0; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), 1)); }",
         true,
     ),
-    ("const_div_by_zero", "const D = 7 / 0; fn main() -> void { print(D); }", false),
-    ("const_mod_by_zero", "const D = 7 % 0; fn main() -> void { print(D); }", false),
+    (
+        "const_div_by_zero",
+        "const D = 7 / 0; fn main() -> void { print(D); }",
+        false,
+    ),
+    (
+        "const_mod_by_zero",
+        "const D = 7 % 0; fn main() -> void { print(D); }",
+        false,
+    ),
     (
         "const_not_constant",
         "fn f() -> i64 { return 1; } const D = f(); fn main() -> void { print(D); }",
         false,
     ),
-    ("const_cycle", "const A = B; const B = A; fn main() -> void { print(A); }", false),
+    (
+        "const_cycle",
+        "const A = B; const B = A; fn main() -> void { print(A); }",
+        false,
+    ),
     (
         "arity_too_few",
         "fn f(a: i64, b: i64) -> i64 { return a + b; } fn main() -> void { print(f(1)); }",
@@ -731,10 +743,26 @@ const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
         "fn f(a: i64) -> i64 { return a; } fn main() -> void { print(f(1, 2)); }",
         false,
     ),
-    ("arity_builtin", "fn main() -> void { print(str_concat(\"a\")); }", false),
-    ("destructure_int", "fn main() -> void { let (a, b) = 1; print(a); }", false),
-    ("tuple_index_on_int", "fn main() -> void { let x = 1; print(x.0); }", false),
-    ("index_on_int", "fn main() -> void { let x = 1; print(x[0]); }", false),
+    (
+        "arity_builtin",
+        "fn main() -> void { print(str_concat(\"a\")); }",
+        false,
+    ),
+    (
+        "destructure_int",
+        "fn main() -> void { let (a, b) = 1; print(a); }",
+        false,
+    ),
+    (
+        "tuple_index_on_int",
+        "fn main() -> void { let x = 1; print(x.0); }",
+        false,
+    ),
+    (
+        "index_on_int",
+        "fn main() -> void { let x = 1; print(x[0]); }",
+        false,
+    ),
     (
         "destructure_too_many",
         "fn main() -> void { let t = (1, 2); let (a, b, c) = t; print(c); }",
@@ -853,15 +881,30 @@ fn non_escaping_tuples_use_stack_slots() {
     )
     .unwrap();
     let exe = dir.join("t3");
-    let out = run_trackc(&["build", file.to_str().unwrap(), "-o", exe.to_str().unwrap()], &dir);
-    assert!(out.status.success(), "build failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = run_trackc(
+        &["build", file.to_str().unwrap(), "-o", exe.to_str().unwrap()],
+        &dir,
+    );
+    assert!(
+        out.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let c = fs::read_to_string(dir.join("t3.c")).unwrap();
     let main_body = &c[c.find("tk_w tk_main(void) {").expect("tk_main")..];
     let main_body = &main_body[..main_body.find("\n}\n").unwrap()];
-    assert!(!main_body.contains("alloc("), "loop tuple must not allocate:\n{}", main_body);
+    assert!(
+        !main_body.contains("alloc("),
+        "loop tuple must not allocate:\n{}",
+        main_body
+    );
     let pair_body = &c[c.find("tk_w tk_pair(tk_w a0) {").expect("tk_pair")..];
     let pair_body = &pair_body[..pair_body.find("\n}\n").unwrap()];
-    assert!(pair_body.contains("alloc("), "returned tuple must be a heap cell:\n{}", pair_body);
+    assert!(
+        pair_body.contains("alloc("),
+        "returned tuple must be a heap cell:\n{}",
+        pair_body
+    );
     // 64 MB of address space is far below what 20M heap cells need.
     let run = Command::new("sh")
         .arg("-c")
