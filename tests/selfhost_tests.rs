@@ -888,6 +888,60 @@ const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
         "fn eatb(s: Str) -> bool { return true; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => return 1, _ => print(0), } print(s); return 0; } fn main() -> void { print(f(1)); }",
         false,
     ),
+    // L5b: a guard's spends happen only where its pattern matched; arm `2` cannot overlap `1`.
+    (
+        "guard_spend_skips_disjoint_literal_arm",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => return 1, 2 => return eatr(s), _ => return 0, } } fn main() -> void { print(f(2)); }",
+        true,
+    ),
+    // s is spent on k==1 paths and live on the others.
+    (
+        "guard_spend_inconsistent_after_match",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => print(1), _ => print(0), } return 0; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // the guard-failed path reaches `_` with s already spent.
+    (
+        "guard_spend_wild_arm_use_after_free",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => return 1, _ => return eatr(s), } } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // distinct enum variants cannot overlap.
+    (
+        "guard_spend_disjoint_enum_variant",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } enum C { R, G, B } fn f(k: C) -> i64 { let s = str_concat(\"a\", \"b\"); match k { C::R if eatb(s) => return 1, C::G => return eatr(s), _ => return 0, } } fn main() -> void { print(f(C::G)); }",
+        true,
+    ),
+    // the same variant overlaps: guard-failed path has s spent.
+    (
+        "guard_spend_same_enum_variant",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } enum C { R, G, B } fn f(k: C) -> i64 { let s = str_concat(\"a\", \"b\"); match k { C::R if eatb(s) => return 1, C::R => return eatr(s), _ => return 0, } } fn main() -> void { print(f(C::R)); }",
+        false,
+    ),
+    // a binding pattern overlaps everything.
+    (
+        "guard_spend_binding_then_use",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { x if eatb(s) => return x, y => return eatr(s), } } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // a guard that only reads spends nothing.
+    (
+        "guard_read_only_then_use",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if readb(&s) => return 1, _ => return eatr(s), } } fn main() -> void { print(f(1)); }",
+        true,
+    ),
+    // two guards spending different values: arm `3` is disjoint from both.
+    (
+        "guard_two_spends_disjoint_arms",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat2(a: Str, b: Str) -> i64 { return 1; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); let u = str_concat(\"c\", \"d\"); match k { 1 if eatb(s) => return eatr(u), 2 if eatb(u) => return eatr(s), 3 => return eat2(s, u), _ => return 0, } } fn main() -> void { print(f(3)); }",
+        true,
+    ),
+    // ... but `_` overlaps the guard on `1`, which spent s.
+    (
+        "guard_two_spends_wild_uses_one",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat2(a: Str, b: Str) -> i64 { return 1; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); let u = str_concat(\"c\", \"d\"); match k { 1 if eatb(s) => return eatr(u), 2 if eatb(u) => return eatr(s), _ => return eatr(s), } } fn main() -> void { print(f(5)); }",
+        false,
+    ),
     (
         "shadow_in_else_hides_consume",
         "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { eat(s); } else { let s = 1; } }",
@@ -940,6 +994,11 @@ const LIFE_ERRORS: &[(&str, &str)] = &[
     (
         "fn eatb(s: Str) -> bool { return true; }\nfn f(k: i64) -> i64 {\n    let s = str_concat(\"a\", \"b\");\n    match k { 1 if eatb(s) => return 1, _ => print(0), }\n    print(s);\n    return 0;\n}\nfn main() -> void { print(f(1)); }\n",
         "error[E0200]: Use-after-free! Resource 's' is already spent.",
+    ),
+    // I2: through a local alias, E0211 names the lent parameter.
+    (
+        "struct Point { x: i64, y: i64 }\nfn take(p: Point) -> i64 { return p.x; }\nfn peek(r: &Point) -> i64 {\n    let q = r;\n    return take(q);\n}\nfn main() -> void { let p = Point { x: 1, y: 2 }; print(peek(&p)); }\n",
+        "error[E0211]: 'take' consumes its parameter 'p', but 'r' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.",
     ),
 ];
 
