@@ -1,0 +1,1033 @@
+// ngen.trk — native x86-64 backend: lowers the checked AST straight to
+// machine code (x64.trk) and a static ELF executable (elf.trk).
+//
+// It mirrors cgen.trk construct for construct under the same word ABI.
+// The design is deliberately simple: every expression leaves its value in
+// rax, operands wait on the machine stack, rcx is the second scratch
+// register, and every Track local or temporary is an rbp-relative frame
+// slot (slot k lives at [rbp - 8(k+1)]).
+//
+// Calling convention (internal; every callee is Track code): the caller
+// pushes the arguments left to right, `call`s, and pops them; the callee
+// finds argument i of n at [rbp + 16 + 8(n-1-i)] and returns in rax.
+// No register is preserved across calls.
+//
+// Runtime functions are ordinary Track functions (compiler/rt). `_start`
+// calls rt_start(argc, argv), then main(), then sys_exit(result).
+
+import "base";
+import "ast";
+import "symbols";
+import "x64";
+import "elf";
+
+const NG_CODE = 0;     // code bytes
+const NG_DATA = 1;     // data bytes (string literals)
+const NG_NSLOT = 2;    // frame slots used by the current function
+const NG_BOUND = 3;    // scope stack: (name, previous binding) pairs
+const NG_TUPLES = 4;   // slot -> tuple arity of a stack tuple (or -1)
+const NG_RETVAL = 5;   // current function returns a value
+const NG_CALLS = 6;    // call fixups: (rel32 position, function name id)
+const NG_STRS = 7;     // data fixups: (rel32 position, data offset)
+const NG_MISSING = 8;  // undefined functions that were called
+const NG_SLOTS = 9;
+
+fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
+fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
+fn ncode(c: i64) -> i64 { return ng(c, NG_CODE); }
+
+// ------------------------------------------------------------ frame
+
+fn ng_slot(c: i64) -> i64 {
+    let k = ng(c, NG_NSLOT);
+    ng_set(c, NG_NSLOT, k + 1);
+    vpush(ng(c, NG_TUPLES), -1);
+    return k;
+}
+
+fn ng_disp(k: i64) -> i64 { return 0 - 8 * (k + 1); }
+
+fn ng_load(c: i64, k: i64) -> i64 { return x_load_local(ncode(c), ng_disp(k)); }
+fn ng_store(c: i64, k: i64) -> i64 { return x_store_local(ncode(c), ng_disp(k)); }
+
+// Store rax in a fresh temporary slot.
+fn ng_temp(c: i64) -> i64 {
+    let k = ng_slot(c);
+    ng_store(c, k);
+    return k;
+}
+
+fn ng_bind(c: i64, name: i64, k: i64) -> i64 {
+    let bound = ng(c, NG_BOUND);
+    vpush(bound, name);
+    vpush(bound, ni(c, name, NI_CVAR));
+    return ni_set(c, name, NI_CVAR, k);
+}
+
+fn ng_new_local(c: i64, name: i64) -> i64 {
+    let k = ng_slot(c);
+    ng_bind(c, name, k);
+    return k;
+}
+
+fn ng_scope_begin(c: i64) -> i64 { return vlen(ng(c, NG_BOUND)); }
+
+fn ng_scope_end(c: i64, mark: i64) -> i64 {
+    let bound = ng(c, NG_BOUND);
+    while vlen(bound) > mark {
+        let prev = vpop(bound);
+        let name = vpop(bound);
+        ni_set(c, name, NI_CVAR, prev);
+    }
+    return 0;
+}
+
+fn ng_set_arity(c: i64, k: i64, arity: i64) -> i64 {
+    return vset(ng(c, NG_TUPLES), k, arity);
+}
+
+// ------------------------------------------------------------ calls
+
+// Call function `name` (id) with `nargs` words already pushed.
+fn ng_call_id(c: i64, name: i64, nargs: i64) -> i64 {
+    let pos = x_call(ncode(c));
+    let fix = ng(c, NG_CALLS);
+    vpush(fix, pos);
+    vpush(fix, name);
+    return x_add_rsp(ncode(c), nargs * 8);
+}
+
+// Call a runtime function by name text with `nargs` words pushed.
+fn ng_call_rt(c: i64, text: i64, nargs: i64) -> i64 {
+    return ng_call_id(c, intern(c, text), nargs);
+}
+
+fn ng_push_imm(c: i64, v: i64) -> i64 {
+    x_mov_rax_imm(ncode(c), v);
+    return x_push_rax(ncode(c));
+}
+
+// Heap cell from `count` words pushed in order; leaves the cell in rax.
+fn ng_cell(c: i64, count: i64) -> i64 {
+    let b = ncode(c);
+    let mut size = count;
+    if size < 1 {
+        size = 1;
+    }
+    ng_push_imm(c, size * 8);
+    ng_call_rt(c, "alloc", 1);
+    x_mov_rcx_rax(b);
+    let mut i: i64 = count - 1;
+    while i >= 0 {
+        x_pop_rax(b);
+        x_store_at_rcx(b, i * 8);
+        i = i - 1;
+    }
+    return x_bytes3(b, 72, 137, 200); // mov rax, rcx
+}
+
+fn ng_string(c: i64, s: i64) -> i64 {
+    let data = ng(c, NG_DATA);
+    let off = vlen(data);
+    let bytes = text_bytes(s);
+    let mut i: i64 = 0;
+    while i < vlen(bytes) {
+        vpush(data, vget(bytes, i));
+        i = i + 1;
+    }
+    vpush(data, 0);
+    let pos = x_lea_rip(ncode(c));
+    let fix = ng(c, NG_STRS);
+    vpush(fix, pos);
+    vpush(fix, off);
+    return 0;
+}
+
+// ------------------------------------------------------------ expressions
+
+fn ng_logic(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    ng_gen(c, nb(c, n));
+    x_bool_rax(b);
+    let mut skip: i64 = 0;
+    if na(c, n) == OP_AND {
+        skip = x_jz(b);
+    } else {
+        skip = x_jnz(b);
+    }
+    ng_gen(c, nc(c, n));
+    x_bool_rax(b);
+    return x_patch_here(b, skip);
+}
+
+fn ng_struct_init(c: i64, n: i64) -> i64 {
+    let fields = nb(c, n);
+    let names = vnew();
+    let slots = vnew();
+    let mut i: i64 = 0;
+    while i < list_len(c, fields) {
+        vpush(names, list_at(c, fields, i));
+        ng_gen(c, list_at(c, fields, i + 1));
+        vpush(slots, ng_temp(c));
+        i = i + 2;
+    }
+    let b = ncode(c);
+    ng_push_imm(c, struct_tag(c, na(c, n)));
+    let decl = struct_def(c, na(c, n));
+    if decl < 0 {
+        let mut j: i64 = 0;
+        while j < vlen(slots) {
+            ng_load(c, vget(slots, j));
+            x_push_rax(b);
+            j = j + 1;
+        }
+        return ng_cell(c, vlen(slots) + 1);
+    }
+    let order = nb(c, decl);
+    let mut f: i64 = 0;
+    while f < list_len(c, order) {
+        let mut v: i64 = -1;
+        let mut k: i64 = 0;
+        while k < vlen(names) {
+            if vget(names, k) == list_at(c, order, f) {
+                v = vget(slots, k);
+            }
+            k = k + 1;
+        }
+        if v < 0 {
+            x_push_zero(b);
+        } else {
+            ng_load(c, v);
+            x_push_rax(b);
+        }
+        f = f + 2;
+    }
+    return ng_cell(c, list_len(c, order) / 2 + 1);
+}
+
+// Read (store < 0) or write (value in slot `store`) a struct field of the
+// cell in slot `base`. A field shared by several structs dispatches on the
+// tag. Leaves the read or stored value in rax.
+fn ng_field_access(c: i64, base: i64, field: i64, store: i64) -> i64 {
+    let b = ncode(c);
+    let cands = field_candidates(c, field);
+    if vlen(cands) == 2 {
+        return ng_field_slot(c, base, vget(cands, 1) + 1, store);
+    }
+    ng_load(c, base);
+    x_load_at(b, 0);
+    let tag = ng_temp(c);
+    let ends = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(cands) {
+        x_mov_rax_imm(b, vget(cands, i));
+        x_mov_rcx_rax(b);
+        ng_load(c, tag);
+        x_binop(b, OP_EQ);
+        x_test_rax(b);
+        let next = x_jz(b);
+        ng_field_slot(c, base, vget(cands, i + 1) + 1, store);
+        vpush(ends, x_jmp(b));
+        x_patch_here(b, next);
+        i = i + 2;
+    }
+    ng_call_rt(c, "track_bad_field", 0);
+    let mut j: i64 = 0;
+    while j < vlen(ends) {
+        x_patch_here(b, vget(ends, j));
+        j = j + 1;
+    }
+    return 0;
+}
+
+fn ng_field_slot(c: i64, base: i64, idx: i64, store: i64) -> i64 {
+    let b = ncode(c);
+    ng_load(c, base);
+    if store < 0 {
+        return x_load_at(b, idx * 8);
+    }
+    x_mov_rcx_rax(b);
+    ng_load(c, store);
+    return x_store_at_rcx(b, idx * 8);
+}
+
+// Assign the value in slot `v` to a field / tuple element / array element.
+fn ng_assign_place(c: i64, target: i64, v: i64) -> i64 {
+    let b = ncode(c);
+    let k = nk(c, target);
+    if k == K_FIELD {
+        ng_gen(c, na(c, target));
+        let base = ng_temp(c);
+        ng_field_access(c, base, nb(c, target), v);
+    } else if k == K_TINDEX {
+        ng_gen(c, na(c, target));
+        x_mov_rcx_rax(b);
+        ng_load(c, v);
+        x_store_at_rcx(b, nb(c, target) * 8);
+    } else if k == K_INDEX {
+        ng_gen(c, na(c, target));
+        x_push_rax(b);
+        ng_gen(c, nb(c, target));
+        x_push_rax(b);
+        ng_load(c, v);
+        x_push_rax(b);
+        ng_call_rt(c, "track_array_set", 3);
+    }
+    return ng_load(c, v);
+}
+
+fn ng_var(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    let name = na(c, n);
+    let local = ni(c, name, NI_CVAR);
+    if local >= 0 {
+        return ng_load(c, local);
+    }
+    let disc = variant_disc(c, name);
+    if is_qualified(c, name) {
+        if disc < 0 {
+            return x_mov_rax_imm(b, 0);
+        }
+        if is_payload_variant(c, name) {
+            ng_push_imm(c, disc);
+            x_push_zero(b);
+            return ng_cell(c, 2);
+        }
+        return x_mov_rax_imm(b, disc);
+    }
+    if ni(c, name, NI_CONSTOK) == 1 {
+        return x_mov_rax_imm(b, ni(c, name, NI_CONSTVAL));
+    }
+    return x_mov_rax_imm(b, 0);
+}
+
+fn ng_builtin(c: i64, text: i64) -> i64 {
+    if text_eq(text, "syscall6") { return 7; }
+    if text_eq(text, "syscall") { return 7; }   // libc spelling, used by the C path
+    if text_eq(text, "memset") { return 3; }
+    if text_eq(text, "load64") { return 1; }
+    if text_eq(text, "load8") { return 1; }
+    if text_eq(text, "store64") { return 2; }
+    if text_eq(text, "store8") { return 2; }
+    return -1;
+}
+
+fn ng_call(c: i64, n: i64, args: i64) -> i64 {
+    let b = ncode(c);
+    let name = na(c, n);
+    let count = list_len(c, args);
+    if is_qualified(c, name) {
+        let disc = variant_disc(c, name);
+        if disc >= 0 {
+            if is_payload_variant(c, name) {
+                ng_push_imm(c, disc);
+                let mut i: i64 = 0;
+                while i < count {
+                    ng_gen(c, list_at(c, args, i));
+                    x_push_rax(b);
+                    i = i + 1;
+                }
+                return ng_cell(c, count + 1);
+            }
+            let mut j: i64 = 0;
+            while j < count {
+                ng_gen(c, list_at(c, args, j));
+                j = j + 1;
+            }
+            return x_mov_rax_imm(b, disc);
+        }
+    }
+    let mut target = name;
+    if ni(c, name, NI_FN) < 0 {
+        target = last_segment(c, name);
+    }
+    let f = ni(c, target, NI_FN);
+    let mut arity: i64 = count;
+    let mut callee = target;
+    let mut builtin: i64 = -1;
+    if f >= 0 {
+        arity = list_len(c, nc(c, f)) / 2;
+        callee = na(c, f);
+    } else {
+        let text = name_text(c, target);
+        builtin = ng_builtin(c, text);
+        if text_eq(text, "abort") {
+            callee = intern(c, "track_abort");
+            arity = 1;
+            if ni(c, callee, NI_FN) < 0 {
+                vpush(ng(c, NG_MISSING), callee);
+            }
+        } else if builtin >= 0 {
+            arity = builtin;
+        } else {
+            vpush(ng(c, NG_MISSING), target);
+        }
+    }
+    let mut i: i64 = 0;
+    while i < count {
+        ng_gen(c, list_at(c, args, i));
+        if i < arity {
+            x_push_rax(b);
+        }
+        i = i + 1;
+    }
+    while i < arity {
+        x_push_zero(b);
+        i = i + 1;
+    }
+    if builtin < 0 {
+        return ng_call_id(c, callee, arity);
+    }
+    let text = name_text(c, target);
+    if text_eq(text, "syscall6") || text_eq(text, "syscall") {
+        return x_sys_insn(b);
+    }
+    if text_eq(text, "memset") {
+        return x_memset(b);
+    }
+    if text_eq(text, "load64") {
+        x_pop_rax(b);
+        return x_mov_load(b);
+    }
+    if text_eq(text, "load8") {
+        x_pop_rax(b);
+        return x_movzx_load(b);
+    }
+    x_pop_rax(b);
+    x_pop_rcx(b);
+    if text_eq(text, "store64") {
+        x_mov_store(b);
+    } else {
+        x_movb_store(b);
+    }
+    return x_mov_rax_imm(b, 0);
+}
+
+fn ng_block(c: i64, body: i64) -> i64 {
+    let mark = ng_scope_begin(c);
+    let n = list_len(c, body);
+    if n == 0 {
+        x_mov_rax_imm(ncode(c), 0);
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        ng_gen(c, list_at(c, body, i));
+        i = i + 1;
+    }
+    return ng_scope_end(c, mark);
+}
+
+fn ng_if(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    ng_gen(c, na(c, n));
+    x_test_rax(b);
+    let to_else = x_jz(b);
+    ng_block(c, nb(c, n));
+    let to_end = x_jmp(b);
+    x_patch_here(b, to_else);
+    ng_block(c, nc(c, n));
+    return x_patch_here(b, to_end);
+}
+
+fn ng_while(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    let top = x_here(b);
+    ng_gen(c, na(c, n));
+    x_test_rax(b);
+    let out = x_jz(b);
+    ng_block(c, nb(c, n));
+    let back = x_jmp(b);
+    x_patch_rel(b, back, top);
+    x_patch_here(b, out);
+    return x_mov_rax_imm(b, 0);
+}
+
+fn ng_for(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    let iter = nb(c, n);
+    let start = ng_slot(c);
+    let end = ng_slot(c);
+    if nk(c, iter) == K_RANGE {
+        ng_gen(c, na(c, iter));
+        ng_store(c, start);
+        ng_gen(c, nb(c, iter));
+        ng_store(c, end);
+    } else {
+        x_mov_rax_imm(b, 0);
+        ng_store(c, start);
+        ng_gen(c, iter);
+        ng_store(c, end);
+    }
+    let top = x_here(b);
+    ng_load(c, end);
+    x_mov_rcx_rax(b);
+    ng_load(c, start);
+    x_binop(b, OP_LT);
+    x_test_rax(b);
+    let out = x_jz(b);
+    let mark = ng_scope_begin(c);
+    let var = ng_new_local(c, na(c, n));
+    ng_load(c, start);
+    ng_store(c, var);
+    ng_block(c, nc(c, n));
+    ng_scope_end(c, mark);
+    x_mov_rax_imm(b, 1);
+    x_mov_rcx_rax(b);
+    ng_load(c, start);
+    x_binop(b, OP_ADD);
+    ng_store(c, start);
+    let back = x_jmp(b);
+    x_patch_rel(b, back, top);
+    x_patch_here(b, out);
+    return x_mov_rax_imm(b, 0);
+}
+
+fn ng_return(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    let value = na(c, n);
+    if value >= 0 {
+        if nk(c, value) == K_TUPLE {
+            let elems = na(c, value);
+            let mut i: i64 = 0;
+            while i < list_len(c, elems) {
+                ng_gen(c, list_at(c, elems, i));
+                x_push_rax(b);
+                i = i + 1;
+            }
+            ng_cell(c, list_len(c, elems));
+        } else if nk(c, value) == K_VAR && ni(c, na(c, value), NI_CVAR) >= 0 && vget(ng(c, NG_TUPLES), ni(c, na(c, value), NI_CVAR)) >= 0 {
+            let local = ni(c, na(c, value), NI_CVAR);
+            ng_load(c, local);
+            x_push_rax(b);
+            ng_push_imm(c, vget(ng(c, NG_TUPLES), local));
+            ng_call_rt(c, "track_words_copy", 2);
+        } else {
+            ng_gen(c, value);
+        }
+    }
+    if ng(c, NG_RETVAL) != 1 || value < 0 {
+        x_mov_rax_imm(b, 0);
+    }
+    return x_leave_ret(b);
+}
+
+// Tuple literal in a block of frame slots; leaves its address in rax.
+fn ng_tuple(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    let elems = na(c, n);
+    let count = list_len(c, elems);
+    let mut i: i64 = 0;
+    while i < count {
+        ng_gen(c, list_at(c, elems, i));
+        x_push_rax(b);
+        i = i + 1;
+    }
+    let mut size = count;
+    if size < 1 {
+        size = 1;
+    }
+    let mut j: i64 = 0;
+    let mut low: i64 = 0;
+    while j < size {
+        low = ng_slot(c);
+        j = j + 1;
+    }
+    // element e lives at ng_disp(low) + 8e
+    let mut e: i64 = count - 1;
+    while e >= 0 {
+        x_pop_rax(b);
+        x_store_local(b, ng_disp(low) + 8 * e);
+        e = e - 1;
+    }
+    return x_lea_local(b, ng_disp(low));
+}
+
+// Slot holding element `i` of the cell in slot `k`.
+fn ng_elem(c: i64, k: i64, i: i64) -> i64 {
+    ng_load(c, k);
+    x_load_at(ncode(c), i * 8);
+    return ng_temp(c);
+}
+
+fn ng_bind_pattern(c: i64, p: i64, k: i64) -> i64 {
+    let pk = nk(c, p);
+    if pk == P_IDENT {
+        let id = ng_new_local(c, na(c, p));
+        ng_load(c, k);
+        return ng_store(c, id);
+    }
+    if pk == P_TUPLE {
+        let pats = na(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, pats) {
+            ng_bind_pattern(c, list_at(c, pats, i), ng_elem(c, k, i));
+            i = i + 1;
+        }
+        return 0;
+    }
+    if pk == P_VARIANT {
+        let bindings = nc(c, p);
+        let payload = is_payload_union(c, na(c, p));
+        let mut i: i64 = 0;
+        while i < list_len(c, bindings) {
+            if payload {
+                ng_bind_pattern(c, list_at(c, bindings, i), ng_elem(c, k, i + 1));
+            } else {
+                ng_bind_pattern(c, list_at(c, bindings, i), k);
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    if pk == P_STRUCT {
+        let decl = struct_def(c, na(c, p));
+        if decl < 0 {
+            return 0;
+        }
+        let fields = nb(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, fields) {
+            let idx = struct_field_index(c, decl, list_at(c, fields, i));
+            if idx >= 0 {
+                ng_bind_pattern(c, list_at(c, fields, i + 1), ng_elem(c, k, idx + 1));
+            }
+            i = i + 2;
+        }
+    }
+    return 0;
+}
+
+fn ng_trivial_pattern(c: i64, p: i64) -> bool {
+    let pk = nk(c, p);
+    return pk == P_IDENT || pk == P_WILD;
+}
+
+// rax == imm, else jump to a failure (rel32 position pushed on `fails`).
+fn ng_expect_imm(c: i64, v: i64, fails: i64) -> i64 {
+    let b = ncode(c);
+    x_push_rax(b);
+    x_mov_rax_imm(b, v);
+    x_mov_rcx_rax(b);
+    x_pop_rax(b);
+    x_binop(b, OP_EQ);
+    x_test_rax(b);
+    return vpush(fails, x_jz(b));
+}
+
+// Emit a test of pattern `p` against the value in slot `k`; every failing
+// path jumps to a position recorded in `fails`.
+fn ng_pattern_test(c: i64, p: i64, k: i64, fails: i64) -> i64 {
+    let b = ncode(c);
+    let pk = nk(c, p);
+    if pk == P_LIT {
+        let lit = na(c, p);
+        if nk(c, lit) == K_STR {
+            ng_load(c, k);
+            x_push_rax(b);
+            ng_string(c, na(c, lit));
+            x_push_rax(b);
+            ng_call_rt(c, "str_eq", 2);
+        } else {
+            ng_gen(c, lit);
+            x_mov_rcx_rax(b);
+            ng_load(c, k);
+            x_binop(b, OP_EQ);
+        }
+        x_test_rax(b);
+        return vpush(fails, x_jz(b));
+    }
+    if pk == P_VARIANT {
+        let vname = variant_name(c, na(c, p), nb(c, p));
+        let mut disc = variant_disc(c, vname);
+        if disc < 0 {
+            disc = 0;
+        }
+        ng_load(c, k);
+        if is_payload_union(c, na(c, p)) {
+            x_load_at(b, 0);
+        }
+        return ng_expect_imm(c, disc, fails);
+    }
+    if pk == P_TUPLE {
+        let pats = na(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, pats) {
+            let sub = list_at(c, pats, i);
+            if !ng_trivial_pattern(c, sub) {
+                ng_pattern_test(c, sub, ng_elem(c, k, i), fails);
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    if pk == P_STRUCT {
+        let decl = struct_def(c, na(c, p));
+        if decl < 0 {
+            return 0;
+        }
+        ng_load(c, k);
+        x_load_at(b, 0);
+        ng_expect_imm(c, struct_tag(c, na(c, p)), fails);
+        let fields = nb(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, fields) {
+            let idx = struct_field_index(c, decl, list_at(c, fields, i));
+            let sub = list_at(c, fields, i + 1);
+            if idx >= 0 && !ng_trivial_pattern(c, sub) {
+                ng_pattern_test(c, sub, ng_elem(c, k, idx + 1), fails);
+            }
+            i = i + 2;
+        }
+    }
+    return 0;
+}
+
+fn ng_patch_all(c: i64, list: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(list) {
+        x_patch_here(ncode(c), vget(list, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn ng_match(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    ng_gen(c, na(c, n));
+    let m = ng_temp(c);
+    let ends = vnew();
+    let arms = nb(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, arms) {
+        let pattern = list_at(c, arms, i);
+        let guard = list_at(c, arms, i + 1);
+        let body = list_at(c, arms, i + 2);
+        let fails = vnew();
+        ng_pattern_test(c, pattern, m, fails);
+        let mark = ng_scope_begin(c);
+        ng_bind_pattern(c, pattern, m);
+        if guard >= 0 {
+            ng_gen(c, guard);
+            x_test_rax(b);
+            vpush(fails, x_jz(b));
+        }
+        ng_gen(c, body);
+        vpush(ends, x_jmp(b));
+        ng_scope_end(c, mark);
+        ng_patch_all(c, fails);
+        i = i + 3;
+    }
+    x_mov_rax_imm(b, 0);
+    return ng_patch_all(c, ends);
+}
+
+fn ng_letd(c: i64, n: i64) -> i64 {
+    let pattern = na(c, n);
+    let value = nc(c, n);
+    if nk(c, value) == K_TUPLE && nk(c, pattern) == P_TUPLE && list_len(c, na(c, value)) == list_len(c, na(c, pattern)) {
+        let elems = na(c, value);
+        let tmps = vnew();
+        let mut i: i64 = 0;
+        while i < list_len(c, elems) {
+            ng_gen(c, list_at(c, elems, i));
+            vpush(tmps, ng_temp(c));
+            i = i + 1;
+        }
+        let pats = na(c, pattern);
+        let mut j: i64 = 0;
+        while j < vlen(tmps) {
+            ng_bind_pattern(c, list_at(c, pats, j), vget(tmps, j));
+            j = j + 1;
+        }
+        return x_mov_rax_imm(ncode(c), 0);
+    }
+    ng_gen(c, value);
+    let t = ng_temp(c);
+    ng_bind_pattern(c, pattern, t);
+    return x_mov_rax_imm(ncode(c), 0);
+}
+
+fn ng_lens(c: i64, n: i64) -> i64 {
+    let mark = ng_scope_begin(c);
+    let target = ni(c, na(c, n), NI_CVAR);
+    if target >= 0 {
+        ng_bind(c, nb(c, n), target);
+    }
+    ng_block(c, nc(c, n));
+    return ng_scope_end(c, mark);
+}
+
+fn ng_gen(c: i64, n: i64) -> i64 {
+    let b = ncode(c);
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL { return x_mov_rax_imm(b, na(c, n)); }
+    if k == K_STR { return ng_string(c, na(c, n)); }
+    if k == K_VAR { return ng_var(c, n); }
+    if k == K_BIN {
+        let op = na(c, n);
+        if op == OP_AND || op == OP_OR {
+            return ng_logic(c, n);
+        }
+        ng_gen(c, nb(c, n));
+        x_push_rax(b);
+        ng_gen(c, nc(c, n));
+        x_mov_rcx_rax(b);
+        x_pop_rax(b);
+        return x_binop(b, op);
+    }
+    if k == K_UN {
+        ng_gen(c, nb(c, n));
+        if na(c, n) == OP_NEG { return x_neg_rax(b); }
+        if na(c, n) == OP_NOT { return x_not_rax(b); }
+        return 0;
+    }
+    if k == K_ADDR { return ng_gen(c, na(c, n)); }
+    if k == K_CALL || k == K_MACROCALL { return ng_call(c, n, nb(c, n)); }
+    if k == K_LET {
+        ng_gen(c, nd(c, n));
+        let id = ng_new_local(c, na(c, n));
+        ng_store(c, id);
+        if nk(c, nd(c, n)) == K_TUPLE {
+            ng_set_arity(c, id, list_len(c, na(c, nd(c, n))));
+        }
+        return 0;
+    }
+    if k == K_ASSIGN {
+        ng_gen(c, nb(c, n));
+        let target = na(c, n);
+        if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
+            let id = ni(c, na(c, target), NI_CVAR);
+            ng_store(c, id);
+            if nk(c, nb(c, n)) == K_TUPLE {
+                ng_set_arity(c, id, list_len(c, na(c, nb(c, n))));
+            } else {
+                ng_set_arity(c, id, -1);
+            }
+            return 0;
+        }
+        let v = ng_temp(c);
+        return ng_assign_place(c, target, v);
+    }
+    if k == K_IF { return ng_if(c, n); }
+    if k == K_WHILE { return ng_while(c, n); }
+    if k == K_FOR { return ng_for(c, n); }
+    if k == K_RETURN { return ng_return(c, n); }
+    if k == K_LENS { return ng_lens(c, n); }
+    if k == K_TUPLE { return ng_tuple(c, n); }
+    if k == K_TINDEX {
+        ng_gen(c, na(c, n));
+        return x_load_at(b, nb(c, n) * 8);
+    }
+    if k == K_LETD { return ng_letd(c, n); }
+    if k == K_MATCH { return ng_match(c, n); }
+    if k == K_SLICE {
+        ng_gen(c, na(c, n));
+        x_push_rax(b);
+        if nb(c, n) >= 0 {
+            ng_gen(c, nb(c, n));
+            x_push_rax(b);
+        } else {
+            x_push_zero(b);
+        }
+        if nc(c, n) >= 0 {
+            ng_gen(c, nc(c, n));
+            x_push_rax(b);
+        } else {
+            ng_push_imm(c, -1);
+        }
+        return ng_call_rt(c, "track_array_slice", 3);
+    }
+    if k == K_ARRAY {
+        let elems = na(c, n);
+        let count = list_len(c, elems);
+        ng_push_imm(c, count);
+        let mut i: i64 = 0;
+        while i < count {
+            ng_gen(c, list_at(c, elems, i));
+            x_push_rax(b);
+            i = i + 1;
+        }
+        return ng_cell(c, count + 1);
+    }
+    if k == K_INDEX {
+        ng_gen(c, na(c, n));
+        x_push_rax(b);
+        ng_gen(c, nb(c, n));
+        x_push_rax(b);
+        return ng_call_rt(c, "track_array_get", 2);
+    }
+    if k == K_FIELD {
+        ng_gen(c, na(c, n));
+        let base = ng_temp(c);
+        return ng_field_access(c, base, nb(c, n), -1);
+    }
+    if k == K_SINIT { return ng_struct_init(c, n); }
+    if k == K_RANGE {
+        ng_gen(c, nb(c, n));
+        x_push_rax(b);
+        ng_gen(c, na(c, n));
+        x_mov_rcx_rax(b);
+        x_pop_rax(b);
+        return x_binop(b, OP_SUB);
+    }
+    // Declarations nested in a body produce no code.
+    return x_mov_rax_imm(b, 0);
+}
+
+// ------------------------------------------------------------ functions
+
+fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
+    let b = ncode(c);
+    ni_set(c, na(c, f), NI_EXTERN, x_here(b));
+    ng_set(c, NG_NSLOT, 0);
+    ng_set(c, NG_TUPLES, vnew());
+    let is_main = text_eq(name_text(c, na(c, f)), "main");
+    let ret = nd(c, f);
+    let mut returns: i64 = 0;
+    if is_main || (ret >= 0 && !is_prim(c, ret, PRIM_VOID)) {
+        returns = 1;
+    }
+    ng_set(c, NG_RETVAL, returns);
+    let frame = x_prologue(b);
+    let mark = ng_scope_begin(c);
+    let params = nc(c, f);
+    let count = list_len(c, params) / 2;
+    let mut i: i64 = 0;
+    while i < count {
+        let id = ng_new_local(c, list_at(c, params, i * 2));
+        x_load_local(b, 16 + 8 * (count - 1 - i));
+        ng_store(c, id);
+        ng_set_arity(c, id, tuple_arity(c, list_at(c, params, i * 2 + 1)));
+        i = i + 1;
+    }
+    if prelude >= 0 {
+        let mut p: i64 = 0;
+        while p < vlen(prelude) {
+            ng_gen(c, vget(prelude, p));
+            p = p + 1;
+        }
+    }
+    ng_block(c, ne(c, f));
+    if is_main || returns != 1 {
+        x_mov_rax_imm(b, 0);
+    }
+    x_leave_ret(b);
+    ng_scope_end(c, mark);
+    let size = (ng(c, NG_NSLOT) * 8 + 15) / 16 * 16;
+    return x_patch32(b, frame, size);
+}
+
+fn ng_is_declaration(c: i64, n: i64) -> bool {
+    let k = nk(c, n);
+    return k == K_FN || k == K_MACRODEF;
+}
+
+// _start: rt_start(argc, argv); sys_exit(main()); then a raw exit.
+fn ng_entry(c: i64) -> i64 {
+    let b = ncode(c);
+    x_bytes2(b, 72, 139);
+    x_bytes2(b, 4, 36);        // mov rax, [rsp]
+    x_bytes3(b, 72, 141, 76);
+    x_bytes2(b, 36, 8);        // lea rcx, [rsp + 8]
+    x_push_rax(b);
+    x_byte(b, 81);             // push rcx
+    ng_call_rt(c, "rt_start", 2);
+    ng_call_rt(c, "main", 0);
+    x_push_rax(b);
+    x_push_rax(b);
+    ng_call_rt(c, "sys_exit", 1);
+    x_byte(b, 95);             // pop rdi
+    x_byte(b, 184);
+    x_u32(b, 60);              // mov eax, 60
+    return x_bytes2(b, 15, 5); // syscall
+}
+
+// Generate the ELF image (byte vector) for the loaded, checked program, or
+// report undefined functions and return 0.
+fn generate_native(c: i64) -> i64 {
+    let state = vfill(vnew_cap(NG_SLOTS), NG_SLOTS, 0);
+    vset(c, CX_GEN, state);
+    ng_set(c, NG_CODE, vnew_cap(1048576));
+    ng_set(c, NG_DATA, vnew_cap(65536));
+    ng_set(c, NG_BOUND, vnew());
+    ng_set(c, NG_CALLS, vnew());
+    ng_set(c, NG_STRS, vnew());
+    ng_set(c, NG_MISSING, vnew());
+    ng_entry(c);
+    let items = cx(c, CX_ITEMS);
+    let files = cx(c, CX_ITEMFILE);
+    let root = cx(c, CX_MAINFILE);
+    let prelude = vnew();
+    let mut main_fn: i64 = -1;
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        if vget(files, i) == root && !ng_is_declaration(c, n) {
+            vpush(prelude, n);
+        }
+        if nk(c, n) == K_FN && text_eq(name_text(c, na(c, n)), "main") {
+            main_fn = n;
+        }
+        i = i + 1;
+    }
+    let mut j: i64 = 0;
+    while j < vlen(items) {
+        let n = vget(items, j);
+        if ng_is_declaration(c, n) {
+            if n == main_fn {
+                ng_function(c, n, prelude);
+            } else {
+                ng_function(c, n, -1);
+            }
+        }
+        j = j + 1;
+    }
+    if main_fn < 0 {
+        let synthetic = node_new(c, K_FN, intern(c, "main"), 0, 0, -1, 0, -1);
+        ng_function(c, synthetic, prelude);
+    }
+    let b = ncode(c);
+    // resolve calls
+    let calls = ng(c, NG_CALLS);
+    let mut k: i64 = 0;
+    while k < vlen(calls) {
+        let target = ni(c, vget(calls, k + 1), NI_EXTERN);
+        if target < 0 {
+            vpush(ng(c, NG_MISSING), vget(calls, k + 1));
+        } else {
+            x_patch_rel(b, vget(calls, k), target);
+        }
+        k = k + 2;
+    }
+    let missing = ng(c, NG_MISSING);
+    if vlen(missing) > 0 {
+        let mut m: i64 = 0;
+        while m < vlen(missing) {
+            let name = vget(missing, m);
+            if ni(c, name, NI_MARK) != 77 {
+                ni_set(c, name, NI_MARK, 77);
+                err(text_cat3("trackc: native: undefined function '", name_text(c, name), "'\n"));
+            }
+            m = m + 1;
+        }
+        return 0;
+    }
+    // data after the code, 8-aligned
+    while vlen(b) % 8 != 0 {
+        x_byte(b, 204);
+    }
+    let base = vlen(b);
+    let strs = ng(c, NG_STRS);
+    let mut s: i64 = 0;
+    while s < vlen(strs) {
+        x_patch_rel(b, vget(strs, s), base + vget(strs, s + 1));
+        s = s + 2;
+    }
+    let data = ng(c, NG_DATA);
+    let mut d: i64 = 0;
+    while d < vlen(data) {
+        vpush(b, vget(data, d));
+        d = d + 1;
+    }
+    return elf_image(b, 0);
+}

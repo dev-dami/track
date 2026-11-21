@@ -1,0 +1,94 @@
+// elf.trk — static ELF64 executable writer for the native backend.
+//
+// The image is one PT_LOAD segment (read/write/execute) mapped at
+// ELF_BASE: the 64-byte ELF header, one 56-byte program header, then the
+// code and data bytes. No sections, no dynamic linker, no libc. Files are
+// written with raw Linux system calls so the bytes may hold NULs. The
+// calls are spelled `syscall` and `memset` (libc names) so the C path and
+// the Rust bootstrap compiler link them from libc; the native backend
+// lowers both to instructions.
+
+import "base";
+import "x64";
+
+const ELF_BASE = 4194304;   // 0x400000
+const ELF_HEADERS = 120;    // ELF header + one program header
+
+fn elf_u16(b: i64, v: i64) -> i64 {
+    x_byte(b, v);
+    return x_byte(b, v >> 8);
+}
+
+// Build the executable image from the code+data `body` (byte vector) with
+// the entry point at body offset `entry`.
+fn elf_image(body: i64, entry: i64) -> i64 {
+    let b = vnew_cap(vlen(body) + ELF_HEADERS + 16);
+    // e_ident
+    x_byte(b, 127);
+    x_byte(b, 69);
+    x_byte(b, 76);
+    x_byte(b, 70);
+    x_byte(b, 2);   // ELFCLASS64
+    x_byte(b, 1);   // little endian
+    x_byte(b, 1);   // EV_CURRENT
+    x_byte(b, 0);   // System V ABI
+    x_u64(b, 0);
+    elf_u16(b, 2);  // ET_EXEC
+    elf_u16(b, 62); // EM_X86_64
+    x_u32(b, 1);
+    x_u64(b, ELF_BASE + ELF_HEADERS + entry);
+    x_u64(b, 64);   // e_phoff
+    x_u64(b, 0);    // e_shoff
+    x_u32(b, 0);    // e_flags
+    elf_u16(b, 64); // e_ehsize
+    elf_u16(b, 56); // e_phentsize
+    elf_u16(b, 1);  // e_phnum
+    elf_u16(b, 0);
+    elf_u16(b, 0);
+    elf_u16(b, 0);
+    // program header: PT_LOAD, RWX, whole file
+    let size = ELF_HEADERS + vlen(body);
+    x_u32(b, 1);
+    x_u32(b, 7);
+    x_u64(b, 0);
+    x_u64(b, ELF_BASE);
+    x_u64(b, ELF_BASE);
+    x_u64(b, size);
+    x_u64(b, size);
+    x_u64(b, 4096);
+    let mut i: i64 = 0;
+    let n = vlen(body);
+    while i < n {
+        vpush(b, vget(body, i));
+        i = i + 1;
+    }
+    return b;
+}
+
+// Write the byte vector to `path` with mode 0755. Returns 0 on success.
+fn elf_write_file(path: i64, bytes: i64) -> i64 {
+    let n = vlen(bytes);
+    let buf: i64 = alloc(n + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        memset(buf + i, vget(bytes, i), 1);
+        i = i + 1;
+    }
+    // open(path, O_WRONLY|O_CREAT|O_TRUNC, 0755)
+    let fd: i64 = syscall(2, path, 577, 493, 0, 0, 0);
+    if fd < 0 {
+        return 1;
+    }
+    syscall(91, fd, 493, 0, 0, 0, 0); // fchmod
+    let mut done: i64 = 0;
+    while done < n {
+        let w: i64 = syscall(1, fd, buf + done, n - done, 0, 0, 0);
+        if w <= 0 {
+            syscall(3, fd, 0, 0, 0, 0, 0);
+            return 1;
+        }
+        done = done + w;
+    }
+    syscall(3, fd, 0, 0, 0, 0, 0);
+    return 0;
+}

@@ -1,0 +1,11 @@
+// rt_stub/mod.trk — minimal Track runtime for testing the native backend
+// until compiler/rt (card N1) lands. Same names as runtime/track_runtime.c.
+
+fn rt_start(argc: i64, argv: i64) -> i64 {
+    return 0;
+}
+
+fn sys_exit(code: i64) -> i64 {
+    syscall6(60, code, 0, 0, 0, 0, 0);
+    return 0;
+}
