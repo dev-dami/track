@@ -2173,7 +2173,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
         if !tail && ng_inline_full(c, f, args) {
             return 0;
         }
-        if !tail && (ng(c, NG_INLDEPTH) > 0 || f == ng(c, NG_CURFN)) && ng_call_guarded(c, f, args) {
+        if !tail && ng(c, NG_INLDEPTH) > 0 && f == ng(c, NG_CURFN) && ng_call_guarded(c, f, args) {
             return 0;
         }
     }
