@@ -57,7 +57,9 @@ const NG_STACKARGS = 32; // the current function takes its arguments on the stac
 const NG_FRAMELESS = 33; // the current function has no rbp frame
 const NG_ACCLVL = 34;  // inlining depth (NG_EXITS length) the accumulator loop belongs to
 const NG_CURFN = 35;   // the function being generated
-const NG_SLOTS = 36;
+const NG_TAIL = 36;    // the call being generated is in tail position
+const NG_TAILDONE = 37; // ... and was emitted as a jump
+const NG_SLOTS = 38;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -1030,8 +1032,114 @@ fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
 }
 
 // Runtime collection / string primitives expanded at the call site.
+// mov [rax + d], rcx in `size` bytes (8, 4, 2 or 1)
+fn ng_store_rcx(c: i64, size: i64, d: i64) -> i64 {
+    let b = ncode(c);
+    if size == 8 {
+        return x_rm(b, 137, 1, 0, d);
+    }
+    if size == 2 {
+        x_byte(b, 102);
+    }
+    if size == 1 {
+        x_byte(b, 136);
+    } else {
+        x_byte(b, 137);
+    }
+    return x_modrm_mem(b, 1, 0, d);
+}
+
+// String-builder appends with the capacity check inline; the runtime
+// function runs only when the buffer must grow (or the builder is null).
+fn ng_sb_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
+    let b = ncode(c);
+    if count == 2 && text_eq(text, "track_sb_push_byte") {
+        ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
+        let slow = vnew();
+        x_test_rax(b);
+        vpush(slow, x_jcc(b, 4));
+        x_rm(b, 139, 2, 0, 8);           // rdx = len
+        x_ri(b, 0, 2, 2);
+        x_rm(b, 59, 2, 0, 16);           // len + 2 > cap: grow
+        vpush(slow, x_jcc(b, 15));
+        x_ri(b, 5, 2, 1);
+        x_rm(b, 137, 2, 0, 8);           // len += 1
+        x_rm(b, 139, 0, 0, 0);
+        x_rr(b, 1, 0, 2);                // rax = data + new len
+        ng_store_rcx(c, 1, -1);
+        x_mov_ri(b, 1, 0);
+        ng_store_rcx(c, 1, 0);
+        x_mov_ri(b, 0, 0);
+        let done = x_jmp(b);
+        ng_patch_all(c, slow);
+        x_push_r(b, 0);
+        x_push_r(b, 1);
+        ng_call_rt(c, "track_sb_push_byte", 2);
+        x_patch_here(b, done);
+        return true;
+    }
+    if count == 2 && text_eq(text, "track_sb_push") && nk(c, list_at(c, args, 1)) == K_STR {
+        let lit = na(c, list_at(c, args, 1));
+        let bytes = text_bytes(lit);
+        let n = vlen(bytes);
+        if n > 24 {
+            return false;
+        }
+        let mut z: i64 = 0;
+        while z < n {
+            if vget(bytes, z) == 0 {
+                return false;
+            }
+            z = z + 1;
+        }
+        vpush(bytes, 0);
+        ng_gen(c, list_at(c, args, 0));
+        let slow = vnew();
+        x_test_rax(b);
+        let null = x_jcc(b, 4);
+        x_rm(b, 139, 2, 0, 8);           // rdx = len
+        x_rm(b, 141, 1, 2, n + 1);       // rcx = len + n + 1
+        x_rm(b, 59, 1, 0, 16);
+        vpush(slow, x_jcc(b, 15));       // > cap: grow
+        x_ri(b, 5, 1, 1);
+        x_rm(b, 137, 1, 0, 8);           // len += n
+        x_rm(b, 139, 0, 0, 0);
+        x_rr(b, 1, 0, 2);                // rax = data + len
+        let mut off: i64 = 0;
+        while off < n + 1 {
+            let mut size: i64 = 8;
+            while off + size > n + 1 {
+                size = size / 2;
+            }
+            let mut v: i64 = 0;
+            let mut q: i64 = size - 1;
+            while q >= 0 {
+                v = (v << 8) | vget(bytes, off + q);
+                q = q - 1;
+            }
+            x_mov_ri(b, 1, v);
+            ng_store_rcx(c, size, off);
+            off = off + size;
+        }
+        x_patch_here(b, null);
+        x_mov_ri(b, 0, 0);
+        let done = x_jmp(b);
+        ng_patch_all(c, slow);
+        x_push_r(b, 0);
+        ng_string(c, lit);
+        x_push_r(b, 0);
+        ng_call_rt(c, "track_sb_push", 2);
+        x_patch_here(b, done);
+        return true;
+    }
+    return false;
+}
+
 fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
     let b = ncode(c);
+    if ng_sb_prim(c, text, args, count) {
+        return true;
+    }
     if count == 2 && text_eq(text, "track_i64_collection_get") {
         ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
         let z = vnew();
@@ -1775,6 +1883,8 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     let b = ncode(c);
     let name = na(c, n);
     let count = list_len(c, args);
+    let tail = ng(c, NG_TAIL) == 1;
+    ng_set(c, NG_TAIL, 0);
     if is_qualified(c, name) {
         let disc = variant_disc(c, name);
         if disc >= 0 {
@@ -1831,10 +1941,10 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
         if ng_prim(c, name_text(c, callee), args, count) {
             return 0;
         }
-        if ng_inline_full(c, f, args) {
+        if !tail && ng_inline_full(c, f, args) {
             return 0;
         }
-        if (ng(c, NG_INLDEPTH) > 0 || f == ng(c, NG_CURFN)) && ng_call_guarded(c, f, args) {
+        if !tail && (ng(c, NG_INLDEPTH) > 0 || f == ng(c, NG_CURFN)) && ng_call_guarded(c, f, args) {
             return 0;
         }
     }
@@ -1852,6 +1962,29 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     while i < arity {
         x_push_zero(b);
         i = i + 1;
+    }
+    if builtin < 0 && tail && arity <= 6 {
+        // tail call: arguments in registers, frame gone, jump
+        let mut r: i64 = arity - 1;
+        while r >= 0 {
+            x_pop_r(b, ng_arg_reg(r));
+            r = r - 1;
+        }
+        if ng(c, NG_FRAMELESS) == 0 {
+            let saved = ng(c, NG_SAVED);
+            let mut q: i64 = 0;
+            while q < vlen(saved) {
+                x_rm(b, 139, vget(saved, q), 5, 0 - 8 * (q + 1));
+                q = q + 1;
+            }
+            x_byte(b, 201); // leave
+        }
+        let pos = x_jmp(b);
+        let fix = ng(c, NG_CALLS);
+        vpush(fix, pos);
+        vpush(fix, callee);
+        ng_set(c, NG_TAILDONE, 1);
+        return 0;
     }
     if builtin < 0 {
         return ng_call_id(c, callee, arity);
@@ -2185,6 +2318,17 @@ fn ng_return(c: i64, n: i64) -> i64 {
             j = j + 1;
         }
         return x_patch_rel(b, x_jmp(b), ng(c, NG_ACCTOP));
+    }
+    if value >= 0 && nk(c, value) == K_CALL && ng(c, NG_RETVAL) == 1 && ng(c, NG_ACC) < 0 && vlen(ng(c, NG_EXITS)) == 0 && ng(c, NG_STACKARGS) == 0 {
+        ng_set(c, NG_TAIL, 1);
+        ng_set(c, NG_TAILDONE, 0);
+        ng_gen(c, value);
+        ng_set(c, NG_TAIL, 0);
+        if ng(c, NG_TAILDONE) == 1 {
+            ng_set(c, NG_TAILDONE, 0);
+            return 0;
+        }
+        return ng_epilogue(c);
     }
     if value >= 0 {
         ng_gen(c, value);
