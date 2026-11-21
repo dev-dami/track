@@ -220,8 +220,8 @@ fn ng_call_id(c: i64, name: i64, nargs: i64) -> i64 {
         }
         return ng_call_regs(c, name, nargs);
     }
-    ng_call_regs(c, name, nargs);
-    return x_add_rsp(ncode(c), nargs * 8);
+    // more than six: the callee pops its pushed arguments (ret imm16)
+    return ng_call_regs(c, name, nargs);
 }
 
 // The call itself: arguments already in registers (or pushed, > 6).
@@ -2259,8 +2259,16 @@ fn ng_branch(c: i64, n: i64, sense: bool, list: i64) -> i64 {
 // rax = rax / d or rax % d (truncating, d >= 2 a 32-bit constant) without
 // idiv: shifts for powers of two, else a Granlund-Montgomery multiply.
 fn ng_divmod_const(c: i64, op: i64, d: i64) -> i64 {
+    return ng_divmod_const_at(c, op, d, false);
+}
+
+// ... with the dividend in rcx instead of rax when `in_rcx`.
+fn ng_divmod_const_at(c: i64, op: i64, d: i64, in_rcx: bool) -> i64 {
     let b = ncode(c);
     let k = ng_log2(d);
+    if in_rcx && k > 0 {
+        x_mov_rr(b, 0, 1);
+    }
     if k > 0 {
         x_mov_rr(b, 1, 0);
         x_shift_ri(b, 7, 1, 63);        // sar rcx, 63
@@ -2293,7 +2301,9 @@ fn ng_divmod_const(c: i64, op: i64, d: i64) -> i64 {
         }
         i = i - 1;
     }
-    x_mov_rr(b, 1, 0);                  // rcx = n
+    if !in_rcx {
+        x_mov_rr(b, 1, 0);              // rcx = n
+    }
     x_mov_ri(b, 0, q + 1);
     x_bytes3(b, 72, 247, 233);          // imul rcx: rdx = high(m * n)
     x_rr(b, 1, 2, 1);                   // add rdx, rcx
@@ -2339,6 +2349,12 @@ fn ng_binop(c: i64, n: i64) -> i64 {
     }
     let l = nb(c, n);
     let r = nc(c, n);
+    if (op == OP_ADD || op == OP_SUB) && ng_mulc_add(c, l, r, op == OP_ADD, false) {
+        return 0;
+    }
+    if op == OP_ADD && ng_mulc_add(c, r, l, true, false) {
+        return 0;
+    }
     let rk = ng_opnd(c, r);
     let rv = ng(c, NG_OPV);
     if rk > 0 && ng_op_direct(op, rk, rv) {
@@ -2346,6 +2362,9 @@ fn ng_binop(c: i64, n: i64) -> i64 {
         return ng_op_apply(c, op, 0, rk, rv);
     }
     if (op == OP_DIV || op == OP_MOD) && rk == 1 && rv >= 2 {
+        if nk(c, l) == K_BIN && na(c, l) == OP_ADD && (ng_mulc_add(c, nb(c, l), nc(c, l), true, true) || ng_mulc_add(c, nc(c, l), nb(c, l), true, true)) {
+            return ng_divmod_const_at(c, op, rv, true);
+        }
         ng_gen(c, l);
         return ng_divmod_const(c, op, rv);
     }
@@ -2357,6 +2376,62 @@ fn ng_binop(c: i64, n: i64) -> i64 {
     }
     ng_gen2(c, l, r);
     return ng_op_rcx(c, op);
+}
+
+// rax (rcx when `in_rcx`, adds only) = x * (2^k -+ 1) +- y for operands x (a slot) and y: (x << k) and
+// (y -+ x) are independent, so the chain through x is two operations
+// instead of three. False (nothing emitted) when the shape does not fit.
+fn ng_mulc_add(c: i64, m: i64, y: i64, add: bool, in_rcx: bool) -> bool {
+    if nk(c, m) != K_BIN || na(c, m) != OP_MUL {
+        return false;
+    }
+    let mut xn = nb(c, m);
+    let mut kn = nc(c, m);
+    if ng_opnd(c, kn) != 1 {
+        xn = nc(c, m);
+        kn = nb(c, m);
+        if ng_opnd(c, kn) != 1 {
+            return false;
+        }
+    }
+    let v = ng(c, NG_OPV);
+    let mut sh = ng_log2(v + 1);
+    let mut minus = true;
+    if sh < 2 {
+        sh = ng_log2(v - 1);
+        minus = false;
+        if sh < 1 {
+            return false;
+        }
+    }
+    if ng_opnd(c, xn) != 2 {
+        return false;
+    }
+    let xv = ng(c, NG_OPV);
+    let yk = ng_opnd(c, y);
+    let yv = ng(c, NG_OPV);
+    if yk == 0 {
+        return false;
+    }
+    let b = ncode(c);
+    // x*(2^k-1) + y = (x<<k) + (y-x)   x*(2^k-1) - y = (x<<k) - (y+x)
+    // x*(2^k+1) + y = (x<<k) + (y+x)   x*(2^k+1) - y = (x<<k) - (y-x)
+    ng_opnd_to(c, yk, yv, 1);
+    if minus == add {
+        ng_op_apply(c, OP_SUB, 1, 2, xv);
+    } else {
+        ng_op_apply(c, OP_ADD, 1, 2, xv);
+    }
+    ng_opnd_to(c, 2, xv, 0);
+    x_shift_ri(b, 4, 0, sh);
+    if add && in_rcx {
+        x_rr(b, 1, 1, 0);       // add rcx, rax: result in rcx
+    } else if add {
+        x_rr(b, 1, 0, 1);       // add rax, rcx
+    } else {
+        x_rr(b, 41, 0, 1);      // sub rax, rcx
+    }
+    return true;
 }
 
 fn ng_struct_init(c: i64, n: i64) -> i64 {
@@ -2652,15 +2727,22 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
         x_push_zero(b);
         i = i + 1;
     }
-    if builtin < 0 && tail && arity <= 6 {
-        // tail call: arguments in registers, frame gone, jump
-        let mut r: i64 = arity - 1;
-        while r >= 0 {
-            x_pop_r(b, ng_arg_reg(r));
-            r = r - 1;
-        }
-        if ng(c, NG_FRAMELESS) == 0 {
-            ng_unframe(c);
+    if builtin < 0 && tail {
+        // tail call: frame gone, arguments where the callee expects them, jump
+        if arity <= 6 {
+            let mut r: i64 = arity - 1;
+            while r >= 0 {
+                x_pop_r(b, ng_arg_reg(r));
+                r = r - 1;
+            }
+            if ng(c, NG_STACKARGS) == 1 {
+                ng_tail_frame(c, 0);
+            } else if ng(c, NG_FRAMELESS) == 0 {
+                ng_unframe(c);
+            }
+        } else {
+            ng_set(c, NG_VOLX, 1); // needs the rbp frame
+            ng_tail_frame(c, arity);
         }
         let pos = x_jmp(b);
         let fix = ng(c, NG_CALLS);
@@ -3059,7 +3141,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
         }
         return ng_acc_back(c);
     }
-    if value >= 0 && nk(c, value) == K_CALL && ng(c, NG_RETVAL) == 1 && ng(c, NG_ACC) < 0 && vlen(ng(c, NG_EXITS)) == 0 && ng(c, NG_STACKARGS) == 0 {
+    if value >= 0 && nk(c, value) == K_CALL && ng(c, NG_RETVAL) == 1 && ng(c, NG_ACC) < 0 && vlen(ng(c, NG_EXITS)) == 0 {
         ng_set(c, NG_TAIL, 1);
         ng_set(c, NG_TAILDONE, 0);
         ng_gen(c, value);
@@ -3426,6 +3508,11 @@ fn ng_epilogue(c: i64) -> i64 {
         return x_ret(b);
     }
     ng_unframe(c);
+    if ng(c, NG_STACKARGS) == 1 {
+        x_byte(b, 194);
+        x_byte(b, 8 * ng(c, NG_NPARAM));
+        return x_byte(b, (8 * ng(c, NG_NPARAM)) >> 8); // ret imm16: pop the arguments
+    }
     return x_ret(b);
 }
 
@@ -3446,6 +3533,46 @@ fn ng_unframe(c: i64) -> i64 {
         i = i - 1;
     }
     return x_pop_r(b, 5);
+}
+
+// Tear down the frame for a tail call whose `nargs` (> 6, else 0) stack
+// arguments are pushed at rsp: they move up to replace this function's own
+// stack arguments (if any), under the return address, so the callee's
+// `ret imm16` leaves rsp where this function's own return would have. The
+// destination lies above the source, so the copy runs from the top down;
+// the saved registers, the return address and the caller's rbp are read
+// first, since the copy may overwrite them. Uses rax, rcx, rdx.
+fn ng_tail_frame(c: i64, nargs: i64) -> i64 {
+    let b = ncode(c);
+    let saved = ng(c, NG_SAVED);
+    let mut q: i64 = 0;
+    while q < vlen(saved) {
+        x_rm(b, 139, vget(saved, q), 5, 0 - 8 * (q + 1));
+        q = q + 1;
+    }
+    let mut own: i64 = 0;
+    if ng(c, NG_STACKARGS) == 1 {
+        own = ng(c, NG_NPARAM);
+    }
+    let d = 16 + 8 * own - 8 * nargs;   // new home of the lowest argument
+    if nargs == 0 {
+        // register arguments live in rdi..rcx: only rax is free
+        x_rm(b, 139, 0, 5, 8);
+        x_rm(b, 137, 0, 5, d - 8);      // return address above our arguments
+        x_rm(b, 141, 4, 5, d - 8);
+        return x_rm(b, 139, 5, 5, 0);   // mov rbp, [rbp]
+    }
+    x_rm(b, 139, 1, 5, 8);              // rcx = return address
+    x_rm(b, 139, 2, 5, 0);              // rdx = caller's rbp
+    let mut j = nargs - 1;
+    while j >= 0 {
+        x_rm(b, 139, 0, 4, 8 * j);      // mov rax, [rsp + 8j]
+        x_rm(b, 137, 0, 5, d + 8 * j);  // mov [rbp + d + 8j], rax
+        j = j - 1;
+    }
+    x_rm(b, 137, 1, 5, d - 8);          // return address below them
+    x_rm(b, 141, 4, 5, d - 8);          // lea rsp, [rbp + d - 8]
+    return x_mov_rr(b, 5, 2);           // rbp = caller's rbp
 }
 
 // Out-of-line stub: the jumps in `jumps` land on a call of runtime

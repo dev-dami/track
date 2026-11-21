@@ -1,0 +1,39 @@
+// Multiplication by constants lowered to shifts, lea and add/sub
+// (x * (2^k -+ 1) +- y with the shift and the y -+ x side independent),
+// including negative operands, wrapping overflow and constant modulo of
+// the result.
+fn mix(x: i64, y: i64) -> i64 {
+    let a = x * 31 + y;
+    let b = y + x * 7;
+    let c = x * 63 - y;
+    let d = x * 33 + y;
+    let e = x * 17 - y;
+    let f = 31 * x + 5;
+    let g = x * 3 + y;
+    let h = x * 9 - 100;
+    let k = (x * 31 + y) % 1000000007;
+    let m = (y + x * 15) / 7;
+    let n = (x * 65 + y) % 8;
+    return a + b * 3 + c * 5 + d * 7 + e * 11 + f * 13 + g * 17 + h * 19 + k * 23 + m * 29 + n * 31;
+}
+
+fn main() -> void {
+    let vals = [0, 1, 0 - 1, 7, 0 - 7, 123456789, 0 - 987654321, 4611686018427387903, 0 - 4611686018427387904, 9223372036854775807, 0 - 9223372036854775807 - 1];
+    let mut i: i64 = 0;
+    while i < 11 {
+        let mut j: i64 = 0;
+        while j < 11 {
+            print(mix(vals[i], vals[j]));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    let mut acc: i64 = 1;
+    let mut s: i64 = 0 - 50;
+    while s < 50 {
+        acc = (acc * 31 + s) % 1000000007;
+        acc = acc * 127 - s * 3;
+        s = s + 1;
+    }
+    print(acc);
+}

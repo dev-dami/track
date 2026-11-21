@@ -1,0 +1,62 @@
+// Tail calls through functions with more than six parameters (stack
+// arguments, popped by the callee) are jumps: a million-deep tail
+// recursion does not grow the stack. Covers 7 -> 7, mutual 7 <-> 8,
+// stack -> register (8 -> 3) and register -> stack (3 -> 8) tail calls,
+// tail calls with locals in callee-saved registers, and ordinary calls
+// of many-parameter functions in loops (stack balance).
+fn down7(n: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
+    if n == 0 {
+        return a + b * 3 + c * 5 + d * 7 + e * 11 + f * 13;
+    }
+    return down7(n - 1, b, c, d, e, f, (a + n) % 1000003);
+}
+
+fn ping7(n: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
+    if n == 0 {
+        return a - b + c - d + e - f;
+    }
+    return pong8(n - 1, f, e, d, c, b, a, n % 17);
+}
+
+fn pong8(n: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 {
+    if n == 0 {
+        return a + b + c + d + e + f + g;
+    }
+    return ping7(n - 1, a + g, b, c, d, e, (f * 3 + 1) % 65521);
+}
+
+fn small3(n: i64, x: i64, y: i64) -> i64 {
+    if n <= 0 {
+        return x * 1000 + y;
+    }
+    return wide8(n - 1, x, y, 1, 2, 3, 4, 5);
+}
+
+fn wide8(n: i64, x: i64, y: i64, p: i64, q: i64, r: i64, s: i64, t: i64) -> i64 {
+    let mut acc: i64 = x;
+    let mut i: i64 = 0;
+    while i < 3 {
+        acc = acc + p * i + q - r + s * t;
+        i = i + 1;
+    }
+    return small3(n - 1, acc % 9973, y + 1);
+}
+
+fn sum9(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64) -> i64 {
+    return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9;
+}
+
+fn main() -> void {
+    print(down7(1000000, 1, 2, 3, 4, 5, 6));
+    print(ping7(1000000, 1, 2, 3, 4, 5, 6));
+    print(ping7(999999, 6, 5, 4, 3, 2, 1));
+    print(small3(1000000, 7, 0));
+    print(small3(3, 7, 0));
+    let mut t: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 100000 {
+        t = (t + sum9(k, 1, 2, 3, 4, 5, 6, 7, sum9(1, 1, 1, 1, 1, 1, 1, 1, k))) % 1000000007;
+        k = k + 1;
+    }
+    print(t);
+}
