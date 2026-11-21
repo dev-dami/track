@@ -166,8 +166,7 @@ fn ng_cell(c: i64, count: i64) -> i64 {
     if size < 1 {
         size = 1;
     }
-    ng_push_imm(c, size * 8);
-    ng_call_rt(c, "alloc", 1);
+    ng_alloc_const(c, size * 8);
     x_mov_rcx_rax(b);
     let mut i: i64 = count - 1;
     while i >= 0 {
@@ -176,6 +175,60 @@ fn ng_cell(c: i64, count: i64) -> i64 {
         i = i - 1;
     }
     return x_bytes3(b, 72, 137, 200); // mov rax, rcx
+}
+
+// Value of runtime constant `text`, or -1 when it is not a known constant.
+fn ng_rt_const(c: i64, text: i64) -> i64 {
+    let id = intern(c, text);
+    if ni(c, id, NI_CONSTOK) == 1 {
+        return ni(c, id, NI_CONSTVAL);
+    }
+    return -1;
+}
+
+// rax = alloc(size) for a constant size: the bump-allocator fast path of
+// compiler/rt/mem.trk inline (fresh arena memory is already zero), the
+// runtime call when the limit, the arena end or a free block intervene.
+fn ng_alloc_const(c: i64, size: i64) -> i64 {
+    let b = ncode(c);
+    let base = ng_rt_const(c, "RT_BASE");
+    let used = ng_rt_const(c, "RS_USED");
+    let limit = ng_rt_const(c, "RS_LIMIT");
+    let heap = ng_rt_const(c, "RS_HEAP");
+    let hend = ng_rt_const(c, "RS_HEAP_END");
+    let free = ng_rt_const(c, "RS_FREE");
+    if base < 0 || used < 0 || limit < 0 || heap < 0 || hend < 0 || free < 0 || size > 65536 {
+        ng_push_imm(c, size);
+        return ng_call_rt(c, "alloc", 1);
+    }
+    let mut k: i64 = 5;
+    while (1 << k) < size + 8 {
+        k = k + 1;
+    }
+    let slow = vnew();
+    x_mov_ri(b, 6, base);
+    x_rm(b, 139, 0, 6, used);
+    x_ri(b, 0, 0, size);
+    x_rm(b, 59, 0, 6, limit);
+    vpush(slow, x_jcc(b, 15));          // jg: over the limit
+    x_rm(b, 139, 2, 6, free + 8 * k);
+    x_rr(b, 133, 2, 2);
+    vpush(slow, x_jcc(b, 5));           // a free block: let rt reuse it
+    x_rm(b, 139, 0, 6, heap);
+    x_test_rax(b);
+    vpush(slow, x_jcc(b, 4));
+    x_rm(b, 141, 1, 0, 1 << k);         // lea rcx, [rax + block]
+    x_rm(b, 59, 1, 6, hend);
+    vpush(slow, x_jcc(b, 15));          // jg: arena exhausted
+    x_rm(b, 137, 1, 6, heap);
+    x_mov_mi(b, 0, 0, (size << 8) | k); // header
+    x_ri(b, 0, 0, 8);
+    x_mi(b, 0, 6, used, size);
+    let done = x_jmp(b);
+    ng_patch_all(c, slow);
+    ng_push_imm(c, size);
+    ng_call_rt(c, "alloc", 1);
+    return x_patch_here(b, done);
 }
 
 // String literal: identical literals share one copy in the data, so
@@ -699,6 +752,21 @@ fn ng_op_apply(c: i64, op: i64, dst: i64, kind: i64, v: i64) -> i64 {
             let sh = ng_log2(v);
             if sh == 0 { return 0; }
             if sh > 0 { return x_shift_ri(b, 4, dst, sh); }
+            if v == 3 || v == 5 || v == 9 {
+                // lea dst, [dst + dst * (v - 1)]
+                return x_rmx(b, 0, 141, dst, dst, dst, ng_log2(v - 1), 0);
+            }
+            let up = ng_log2(v + 1);
+            let down = ng_log2(v - 1);
+            if up > 0 || down > 0 {
+                x_mov_rr(b, 1, dst);
+                if up > 0 {
+                    x_shift_ri(b, 4, dst, up);
+                    return x_rr(b, 41, dst, 1);   // (x << k) - x
+                }
+                x_shift_ri(b, 4, dst, down);
+                return x_rr(b, 1, dst, 1);        // (x << k) + x
+            }
             return x_imul_ri(b, dst, v);
         }
         if op == OP_SHL { return x_shift_ri(b, 4, dst, v); }
@@ -867,6 +935,61 @@ fn ng_branch(c: i64, n: i64, sense: bool, list: i64) -> i64 {
     return vpush(list, x_jz(b));
 }
 
+// rax = rax / d or rax % d (truncating, d >= 2 a 32-bit constant) without
+// idiv: shifts for powers of two, else a Granlund-Montgomery multiply.
+fn ng_divmod_const(c: i64, op: i64, d: i64) -> i64 {
+    let b = ncode(c);
+    let k = ng_log2(d);
+    if k > 0 {
+        x_mov_rr(b, 1, 0);
+        x_shift_ri(b, 7, 1, 63);        // sar rcx, 63
+        x_shift_ri(b, 5, 1, 64 - k);    // shr rcx, 64 - k
+        x_rr(b, 1, 1, 0);               // add rcx, rax
+        if op == OP_DIV {
+            x_shift_ri(b, 7, 1, k);
+            return x_mov_rr(b, 0, 1);
+        }
+        x_ri(b, 4, 1, 0 - d);           // and rcx, -d
+        return x_rr(b, 41, 0, 1);       // sub rax, rcx
+    }
+    let mut l: i64 = 0;
+    while (1 << l) < d {
+        l = l + 1;
+    }
+    // q = floor(2^(63+l) / d), kept modulo 2^64; the magic is q + 1 - 2^64
+    let mut r: i64 = 0;
+    let mut q: i64 = 0;
+    let mut i: i64 = 63 + l;
+    while i >= 0 {
+        r = r * 2;
+        if i == 63 + l {
+            r = r + 1;
+        }
+        q = q << 1;
+        if r >= d {
+            r = r - d;
+            q = q | 1;
+        }
+        i = i - 1;
+    }
+    x_mov_rr(b, 1, 0);                  // rcx = n
+    x_mov_ri(b, 0, q + 1);
+    x_bytes3(b, 72, 247, 233);          // imul rcx: rdx = high(m * n)
+    x_rr(b, 1, 2, 1);                   // add rdx, rcx
+    if l > 1 {
+        x_shift_ri(b, 7, 2, l - 1);     // sar rdx, l - 1
+    }
+    x_mov_rr(b, 0, 1);
+    x_shift_ri(b, 7, 0, 63);            // rax = n >> 63 (arithmetic)
+    x_rr(b, 41, 2, 0);                  // sub rdx, rax: q
+    if op == OP_DIV {
+        return x_mov_rr(b, 0, 2);
+    }
+    x_imul_ri(b, 2, d);
+    x_mov_rr(b, 0, 1);
+    return x_rr(b, 41, 0, 2);           // rax = n - q * d
+}
+
 fn x_inv_cc(cc: i64) -> i64 {
     if (cc & 1) == 1 {
         return cc - 1;
@@ -901,6 +1024,10 @@ fn ng_binop(c: i64, n: i64) -> i64 {
         ng_gen(c, l);
         return ng_op_apply(c, op, 0, rk, rv);
     }
+    if (op == OP_DIV || op == OP_MOD) && rk == 1 && rv >= 2 {
+        ng_gen(c, l);
+        return ng_divmod_const(c, op, rv);
+    }
     let lk = ng_opnd(c, l);
     let lv = ng(c, NG_OPV);
     if lk > 0 && (op == OP_ADD || op == OP_MUL || op == OP_BAND || op == OP_BOR) {
@@ -923,9 +1050,9 @@ fn ng_struct_init(c: i64, n: i64) -> i64 {
         i = i + 2;
     }
     let b = ncode(c);
-    ng_push_imm(c, struct_tag(c, na(c, n)));
     let decl = struct_def(c, na(c, n));
     if decl < 0 {
+        ng_push_imm(c, struct_tag(c, na(c, n)));
         let mut j: i64 = 0;
         while j < vlen(slots) {
             ng_load(c, vget(slots, j));
@@ -935,25 +1062,36 @@ fn ng_struct_init(c: i64, n: i64) -> i64 {
         return ng_cell(c, vlen(slots) + 1);
     }
     let order = nb(c, decl);
+    let nf = list_len(c, order) / 2;
+    ng_alloc_const(c, (nf + 1) * 8);
+    let tag = struct_tag(c, na(c, n));
+    if x_fits32(tag) {
+        x_mov_mi(b, 0, 0, tag);
+    } else {
+        x_mov_ri(b, 1, tag);
+        x_rm(b, 137, 1, 0, 0);
+    }
     let mut f: i64 = 0;
-    while f < list_len(c, order) {
+    while f < nf {
         let mut v: i64 = -1;
         let mut k: i64 = 0;
         while k < vlen(names) {
-            if vget(names, k) == list_at(c, order, f) {
+            if vget(names, k) == list_at(c, order, f * 2) {
                 v = vget(slots, k);
             }
             k = k + 1;
         }
-        if v < 0 {
-            x_push_zero(b);
-        } else {
-            ng_load(c, v);
-            x_push_rax(b);
+        if v >= 0 {
+            let mut r = ng_reg(c, v);
+            if r < 0 {
+                ng_load_to(c, v, 1);
+                r = 1;
+            }
+            x_rm(b, 137, r, 0, 8 * (f + 1));
         }
-        f = f + 2;
+        f = f + 1;
     }
-    return ng_cell(c, list_len(c, order) / 2 + 1);
+    return 0;
 }
 
 // Read (store < 0) or write (value in slot `store`) a struct field of the
@@ -1359,6 +1497,15 @@ fn ng_if(c: i64, n: i64, discard: bool) -> i64 {
     return x_patch_here(b, to_end);
 }
 
+// Pad (never executed: the loop is entered by a jump) to a 16-byte boundary.
+fn ng_align(c: i64) -> i64 {
+    let b = ncode(c);
+    while x_here(b) % 16 != 0 {
+        x_byte(b, 144);
+    }
+    return 0;
+}
+
 fn ng_loop_enter(c: i64) -> i64 { return ng_set(c, NG_DEPTH, ng(c, NG_DEPTH) + 1); }
 fn ng_loop_leave(c: i64) -> i64 { return ng_set(c, NG_DEPTH, ng(c, NG_DEPTH) - 1); }
 
@@ -1367,6 +1514,7 @@ fn ng_while(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     ng_loop_enter(c);
     let enter = x_jmp(b);
+    ng_align(c);
     let top = x_here(b);
     ng_block_v(c, nb(c, n), true);
     x_patch_here(b, enter);
@@ -1398,6 +1546,7 @@ fn ng_for(c: i64, n: i64) -> i64 {
     }
     ng_loop_enter(c);
     let enter = x_jmp(b);
+    ng_align(c);
     let top = x_here(b);
     let mark = ng_scope_begin(c);
     let var = ng_new_local(c, na(c, n));
@@ -1739,6 +1888,11 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         return ng_array_get(c);
     }
     if k == K_FIELD {
+        let cands = field_candidates(c, nb(c, n));
+        if vlen(cands) == 2 {
+            ng_gen(c, na(c, n));
+            return x_rm(b, 139, 0, 0, 8 * (vget(cands, 1) + 1));
+        }
         ng_gen(c, na(c, n));
         let base = ng_temp(c);
         return ng_field_access(c, base, nb(c, n), -1);
