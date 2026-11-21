@@ -60,10 +60,20 @@ fn native_build_needs_no_c_toolchain() {
     let exe = dir.join("hello");
     let out = run(
         trackc(),
-        &["build", "--native", "tests/native_raw/hello_syscall.trk", "-o", exe.to_str().unwrap()],
+        &[
+            "build",
+            "--native",
+            "tests/native_raw/hello_syscall.trk",
+            "-o",
+            exe.to_str().unwrap(),
+        ],
         Some("/nonexistent"),
     );
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let image = fs::read(&exe).unwrap();
     assert_eq!(&image[..4], b"\x7fELF");
     let (stdout, _, code) = observe(&exe);
@@ -92,13 +102,31 @@ fn native_programs_match_the_c_backend() {
         let c_exe = dir.join(format!("{}_c", stem));
         let n_exe = dir.join(format!("{}_n", stem));
         let src = p.to_str().unwrap();
-        let c = run(trackc(), &["build", src, "-o", c_exe.to_str().unwrap()], None);
+        let c = run(
+            trackc(),
+            &["build", src, "-o", c_exe.to_str().unwrap()],
+            None,
+        );
         assert!(c.status.success(), "{}: C build failed", stem);
-        let n = run(trackc(), &["build", "--native", src, "-o", n_exe.to_str().unwrap()], None);
-        assert!(n.status.success(), "{}: native build failed: {}", stem, String::from_utf8_lossy(&n.stderr));
+        let n = run(
+            trackc(),
+            &["build", "--native", src, "-o", n_exe.to_str().unwrap()],
+            None,
+        );
+        assert!(
+            n.status.success(),
+            "{}: native build failed: {}",
+            stem,
+            String::from_utf8_lossy(&n.stderr)
+        );
         let (c_out, _, c_code) = observe(&c_exe);
         let (n_out, _, n_code) = observe(&n_exe);
-        assert_eq!((c_out, c_code), (n_out, n_code), "{}: behaviour differs", stem);
+        assert_eq!(
+            (c_out, c_code),
+            (n_out, n_code),
+            "{}: behaviour differs",
+            stem
+        );
     }
     let _ = fs::remove_dir_all(&dir);
 }
@@ -108,11 +136,42 @@ fn native_compiler_reaches_a_fixed_point() {
     let dir = scratch("fixpoint");
     let n2 = dir.join("trackc2");
     let n3 = dir.join("trackc3");
-    let out = run(trackc(), &["build", "--native", "compiler/src/main.trk", "-o", n2.to_str().unwrap()], None);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let out = run(&n2, &["build", "--native", "compiler/src/main.trk", "-o", n3.to_str().unwrap()], Some("/nonexistent"));
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(fs::read(&n2).unwrap() == fs::read(&n3).unwrap(), "native stage2 and stage3 differ");
+    let out = run(
+        trackc(),
+        &[
+            "build",
+            "--native",
+            "compiler/src/main.trk",
+            "-o",
+            n2.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run(
+        &n2,
+        &[
+            "build",
+            "--native",
+            "compiler/src/main.trk",
+            "-o",
+            n3.to_str().unwrap(),
+        ],
+        Some("/nonexistent"),
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        fs::read(&n2).unwrap() == fs::read(&n3).unwrap(),
+        "native stage2 and stage3 differ"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -136,13 +195,33 @@ fn native_and_track_rt_reject_what_check_rejects() {
     let exe = dir.join("x");
     let exe = exe.to_str().unwrap();
     let mut inputs = trk_files("tests/native_reject");
-    inputs.extend(trk_files("examples").into_iter().filter(|p| p.to_string_lossy().ends_with("_err.trk")));
+    inputs.extend(
+        trk_files("examples")
+            .into_iter()
+            .filter(|p| p.to_string_lossy().ends_with("_err.trk")),
+    );
     assert!(inputs.len() >= 12);
     for p in inputs {
         let src = p.to_str().unwrap();
-        assert!(!run(trackc(), &["check", src], None).status.success(), "{}: check accepted it", src);
-        assert!(!run(trackc(), &["build", "--native", src, "-o", exe], None).status.success(), "{}: --native accepted it", src);
-        assert!(!run(trackc(), &["build", "--rt=track", src, "-o", exe], None).status.success(), "{}: --rt=track accepted it", src);
+        assert!(
+            !run(trackc(), &["check", src], None).status.success(),
+            "{}: check accepted it",
+            src
+        );
+        assert!(
+            !run(trackc(), &["build", "--native", src, "-o", exe], None)
+                .status
+                .success(),
+            "{}: --native accepted it",
+            src
+        );
+        assert!(
+            !run(trackc(), &["build", "--rt=track", src, "-o", exe], None)
+                .status
+                .success(),
+            "{}: --rt=track accepted it",
+            src
+        );
     }
     let _ = fs::remove_dir_all(&dir);
 }
@@ -163,8 +242,17 @@ fn native_tuples_outlive_their_frame() {
     for (name, want) in expect {
         let exe = dir.join(name);
         let src = format!("tests/native_tuples/{}.trk", name);
-        let out = run(trackc(), &["build", "--native", &src, "-o", exe.to_str().unwrap()], None);
-        assert!(out.status.success(), "{}: {}", name, String::from_utf8_lossy(&out.stderr));
+        let out = run(
+            trackc(),
+            &["build", "--native", &src, "-o", exe.to_str().unwrap()],
+            None,
+        );
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            name,
+            String::from_utf8_lossy(&out.stderr)
+        );
         let (stdout, _, code) = observe(&exe);
         assert_eq!((stdout.as_str(), code), (want, Some(0)), "{}", name);
     }
@@ -176,8 +264,22 @@ fn native_tuples_outlive_their_frame() {
 fn native_identical_string_literals_compare_equal() {
     let dir = scratch("strlit");
     let exe = dir.join("s");
-    let out = run(trackc(), &["build", "--native", "tests/native/strlit_eq.trk", "-o", exe.to_str().unwrap()], None);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = run(
+        trackc(),
+        &[
+            "build",
+            "--native",
+            "tests/native/strlit_eq.trk",
+            "-o",
+            exe.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let (stdout, _, _) = observe(&exe);
     assert!(stdout.starts_with("1\n"), "{:?}", stdout);
     let _ = fs::remove_dir_all(&dir);
@@ -190,9 +292,23 @@ fn native_program_without_main_builds() {
     for name in ["nomain", "nomain_lib"] {
         let exe = dir.join(name);
         let src = format!("tests/native/{}.trk", name);
-        let out = run(trackc(), &["build", "--native", &src, "-o", exe.to_str().unwrap()], None);
-        assert!(out.status.success(), "{}: {}", name, String::from_utf8_lossy(&out.stderr));
-        assert_eq!(observe(&exe), (String::new(), String::new(), Some(0)), "{}", name);
+        let out = run(
+            trackc(),
+            &["build", "--native", &src, "-o", exe.to_str().unwrap()],
+            None,
+        );
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            name,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            observe(&exe),
+            (String::new(), String::new(), Some(0)),
+            "{}",
+            name
+        );
     }
     let _ = fs::remove_dir_all(&dir);
 }
@@ -205,14 +321,37 @@ fn native_flag_is_honoured_in_any_position() {
     let exe = dir.join("h");
     let exe = exe.to_str().unwrap();
     let orders: [&[&str]; 3] = [
-        &["build", "tests/native_raw/hello_syscall.trk", "--native", "-o", exe],
-        &["build", "tests/native_raw/hello_syscall.trk", "-o", exe, "--native"],
-        &["build", "-o", exe, "--native", "tests/native_raw/hello_syscall.trk"],
+        &[
+            "build",
+            "tests/native_raw/hello_syscall.trk",
+            "--native",
+            "-o",
+            exe,
+        ],
+        &[
+            "build",
+            "tests/native_raw/hello_syscall.trk",
+            "-o",
+            exe,
+            "--native",
+        ],
+        &[
+            "build",
+            "-o",
+            exe,
+            "--native",
+            "tests/native_raw/hello_syscall.trk",
+        ],
     ];
     for args in orders {
         let _ = fs::remove_file(exe);
         let out = run(trackc(), args, Some("/nonexistent"));
-        assert!(out.status.success(), "{:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
         assert_eq!(observe(Path::new(exe)).2, Some(42), "{:?}", args);
     }
     let _ = fs::remove_dir_all(&dir);
@@ -223,7 +362,17 @@ fn native_flag_is_honoured_in_any_position() {
 fn native_executables_have_a_non_executable_stack() {
     let dir = scratch("gnustack");
     let exe = dir.join("h");
-    let out = run(trackc(), &["build", "--native", "tests/native_raw/hello_syscall.trk", "-o", exe.to_str().unwrap()], None);
+    let out = run(
+        trackc(),
+        &[
+            "build",
+            "--native",
+            "tests/native_raw/hello_syscall.trk",
+            "-o",
+            exe.to_str().unwrap(),
+        ],
+        None,
+    );
     assert!(out.status.success());
     let img = fs::read(&exe).unwrap();
     let u16_at = |o: usize| u16::from_le_bytes([img[o], img[o + 1]]) as usize;
