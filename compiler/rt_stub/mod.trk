@@ -75,9 +75,18 @@ fn rt_newline(fd: i64) -> i64 { return rt_write(fd, "\n"); }
 
 // The C runtime prints a word as a string when it points at printable text.
 fn rt_looks_like_text(v: i64) -> bool {
-    let in_image = v >= 4194304 && v < 268435456;
-    let in_heap = v >= RT_HEAP && v < load64(RT_BASE);
-    if !in_image && !in_heap {
+    if v < 65536 {
+        return false;
+    }
+    // Readable? Write one byte to a pipe (EFAULT otherwise), as C does.
+    let fds: i64 = alloc(16);
+    syscall6(22, fds, 0, 0, 0, 0, 0);
+    let rfd: i64 = load64(fds) & 4294967295;
+    let wfd: i64 = (load64(fds) >> 32) & 4294967295;
+    let ok: i64 = syscall6(1, wfd, v, 1, 0, 0, 0);
+    syscall6(3, rfd, 0, 0, 0, 0, 0);
+    syscall6(3, wfd, 0, 0, 0, 0, 0);
+    if ok != 1 {
         return false;
     }
     let mut n: i64 = 0;

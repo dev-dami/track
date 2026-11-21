@@ -1,0 +1,36 @@
+// Struct-heavy: build, pass by reference, return and update small records.
+struct Vec2 { x: i64, y: i64 }
+struct Body { pos: i64, vel: i64, mass: i64 }
+
+fn vadd(a: &Vec2, b: &Vec2) -> Vec2 {
+    return Vec2 { x: a.x + b.x, y: a.y + b.y };
+}
+
+fn dot(a: &Vec2, b: &Vec2) -> i64 {
+    return a.x * b.x + a.y * b.y;
+}
+
+fn step(b: &Body) -> Body {
+    let v: i64 = (b.vel * 3 + b.mass) % 10007;
+    return Body { pos: (b.pos + v) % 1000003, vel: v, mass: b.mass };
+}
+
+fn main() -> void {
+    let mut acc = Vec2 { x: 0, y: 0 };
+    let mut body = Body { pos: 1, vel: 2, mass: 5 };
+    let mut energy: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 4000000 {
+        let d = Vec2 { x: i & 7, y: (i >> 3) & 7 };
+        acc = vadd(&acc, &d);
+        acc.x = acc.x % 65536;
+        acc.y = acc.y % 65536;
+        body = step(&body);
+        energy = (energy + dot(&acc, &d) + body.pos) % 1000000007;
+        i = i + 1;
+    }
+    print(acc.x);
+    print(acc.y);
+    print(body.pos);
+    print(energy);
+}

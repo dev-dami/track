@@ -52,6 +52,57 @@ fn run_trackc(args: &[&str], cwd: &Path) -> Output {
         .expect("failed to run trackc")
 }
 
+#[test]
+fn build_creates_missing_output_directories() {
+    let dir = scratch("newdir");
+    let src = dir.join("x.trk");
+    fs::write(&src, "fn main() -> void { print(7); }").unwrap();
+    let exe = dir.join("some/new/dir/x");
+    let out = run_trackc(
+        &["build", src.to_str().unwrap(), "-o", exe.to_str().unwrap()],
+        &dir,
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(run_exe(&exe).0.trim(), "7");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn runtime_object_is_cached_and_builds_stay_identical() {
+    let dir = scratch("rtcache");
+    let cache = dir.join("cache");
+    let a = dir.join("a.trk");
+    let b = dir.join("b.trk");
+    fs::write(&a, "fn main() -> void { print(1); }").unwrap();
+    fs::write(&b, "fn main() -> void { print(1); }").unwrap();
+    let build = |src: &Path, exe: &Path| {
+        let out = Command::new(trackc())
+            .args(["build", src.to_str().unwrap(), "-o", exe.to_str().unwrap()])
+            .env("TRACKC_CACHE", &cache)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    let objects = || {
+        fs::read_dir(&cache)
+            .map(|d| {
+                d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "o"))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    build(&a, &dir.join("out1/a"));
+    assert_eq!(objects(), 1, "first build should store one runtime object");
+    build(&a, &dir.join("out2/a"));
+    assert_eq!(objects(), 1, "second build should reuse it");
+    assert!(fs::read(dir.join("out1/a")).unwrap() == fs::read(dir.join("out2/a")).unwrap());
+    build(&b, &dir.join("out3/b"));
+    assert_eq!(objects(), 1);
+    assert_eq!(run_exe(&dir.join("out3/b")).0.trim(), "1");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 fn run_exe(exe: &Path) -> (String, Option<i32>) {
     let out = Command::new(exe).output().unwrap();
     (
@@ -301,6 +352,32 @@ const VERDICTS: &[(&str, &str, bool)] = &[
     (
         "array_index_update",
         "fn main() -> void { let mut a = [1, 2]; a[1] = 7; print(a[1]); }",
+        true,
+    ),
+    // Branch merges only revisit slots a branch wrote (undo-log checker).
+    (
+        "shadow_in_then_keeps_outer",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { let s = 1; } else { eat(s); } }",
+        false,
+    ),
+    (
+        "if_inside_loop_consumes",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); let mut i: i64 = 0; while i < 3 { if i == 1 { eat(s); } else { eat(s); } i = i + 1; } }",
+        false,
+    ),
+    (
+        "nested_if_second_resource",
+        "fn eat(s: Str) -> void { } fn main() -> void { let a = str_concat(\"a\", \"b\"); let b = str_concat(\"a\", \"b\"); if true { eat(b); eat(a); } else { if false { eat(a); } else { eat(a); } } }",
+        false,
+    ),
+    (
+        "global_const_spent_in_branch",
+        "const K = \"hi\"; fn main() -> void { if true { let a = K; } else { } }",
+        false,
+    ),
+    (
+        "reassign_after_move_in_loop",
+        "fn eat(s: Str) -> void { } fn main() -> void { let mut s = str_concat(\"a\", \"b\"); let mut i: i64 = 0; while i < 2 { eat(s); s = str_concat(\"x\", \"y\"); i = i + 1; } }",
         true,
     ),
 ];
