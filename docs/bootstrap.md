@@ -91,17 +91,29 @@ takes and returns words:
 
 ## C backend contract
 
-`trackc build app.trk -o out/app` writes `out/app.c` (the program) and
-`out/app.rt.c` (the runtime), then runs, from inside `out/`:
+`trackc build app.trk -o out/app` creates `out/` if missing, writes
+`out/app.c` (the program) and `out/app.rt.c` (the runtime), then runs, from
+inside `out/`:
 
 ```sh
 $CC -std=gnu99 -O2 -fwrapv -fno-strict-aliasing -fno-builtin -w \
-    -o app app.c app.rt.c
+    -o app app.c <cache>/rt-<key>.o
 ```
 
-`$CC` defaults to `cc`. Compiling inside the output directory means object
-files record only base names, so identical inputs give identical
-executables wherever they are built. The generated C needs nothing but
+`trackc run` is the same with `-O1` for the program (faster turnaround;
+`build` stays at `-O2`). `$CC` defaults to `cc`.
+
+The runtime is compiled once to `<cache>/rt-<key>.o` (same flags, always
+`-O2`, compiled from `rt-<key>.c` in the cache directory) and linked by every
+later build. `<key>` is a hash of `$CC`, the flags and the runtime source
+text, so changing any of them makes a new object. The cache directory is
+`$TRACKC_CACHE`, else `$XDG_CACHE_HOME/trackc`, else `~/.cache/trackc`; if it
+cannot be used, `app.rt.c` is compiled with the program as before. The
+program stays one translation unit. Compiling inside the output directory
+means object files record only base names, and the cached runtime object is
+named by its key, so identical inputs give identical executables wherever
+they are built.
+The generated C needs nothing but
 `<stdint.h>`: all values are `tk_w` (`int64_t`), Track function `f` becomes
 `tk_f`, locals are `lN`, temporaries `tN`, tuple slots `sN`, and every
 counter restarts per function. Calls to functions that are neither Track
@@ -115,6 +127,9 @@ embeds it with `include_str!`; `scripts/embed_runtime.sh` regenerates
 `compiler/src/runtime_c.trk`, which holds the source as Track string
 literals plus each function's prototype and arity. CI runs
 `scripts/embed_runtime.sh --check` so the two copies cannot drift.
+
+`trackc build --rt=track` links the same runtime written in Track
+(`compiler/rt/*.trk`) instead, with no libc; see [native.md](native.md).
 
 ## Ownership checker
 

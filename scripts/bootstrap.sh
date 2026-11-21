@@ -25,6 +25,7 @@ case "$yard" in
 esac
 
 "$root/scripts/embed_runtime.sh" --check
+"$root/scripts/embed_rt.sh" --check
 
 rm -rf "$out"
 mkdir -p "$out/stage1" "$out/stage2" "$out/stage3"

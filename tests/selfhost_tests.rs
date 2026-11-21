@@ -52,6 +52,71 @@ fn run_trackc(args: &[&str], cwd: &Path) -> Output {
         .expect("failed to run trackc")
 }
 
+#[test]
+fn build_creates_missing_output_directories() {
+    let dir = scratch("newdir");
+    let src = dir.join("x.trk");
+    fs::write(&src, "fn main() -> void { print(7); }").unwrap();
+    let exe = dir.join("some/new/dir/x");
+    let out = run_trackc(
+        &["build", src.to_str().unwrap(), "-o", exe.to_str().unwrap()],
+        &dir,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(run_exe(&exe).0.trim(), "7");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn runtime_object_is_cached_and_builds_stay_identical() {
+    let dir = scratch("rtcache");
+    let cache = dir.join("cache");
+    let a = dir.join("a.trk");
+    let b = dir.join("b.trk");
+    fs::write(&a, "fn main() -> void { print(1); }").unwrap();
+    fs::write(&b, "fn main() -> void { print(1); }").unwrap();
+    let build = |src: &Path, exe: &Path| {
+        let out = Command::new(trackc())
+            .args(["build", src.to_str().unwrap(), "-o", exe.to_str().unwrap()])
+            .env("TRACKC_CACHE", &cache)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let objects = || {
+        fs::read_dir(&cache)
+            .map(|d| {
+                d.filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_some_and(|x| x == "o")
+                })
+                .count()
+            })
+            .unwrap_or(0)
+    };
+    build(&a, &dir.join("out1/a"));
+    assert_eq!(objects(), 1, "first build should store one runtime object");
+    build(&a, &dir.join("out2/a"));
+    assert_eq!(objects(), 1, "second build should reuse it");
+    assert!(fs::read(dir.join("out1/a")).unwrap() == fs::read(dir.join("out2/a")).unwrap());
+    build(&b, &dir.join("out3/b"));
+    assert_eq!(objects(), 1);
+    assert_eq!(run_exe(&dir.join("out3/b")).0.trim(), "1");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 fn run_exe(exe: &Path) -> (String, Option<i32>) {
     let out = Command::new(exe).output().unwrap();
     (
@@ -303,6 +368,32 @@ const VERDICTS: &[(&str, &str, bool)] = &[
         "fn main() -> void { let mut a = [1, 2]; a[1] = 7; print(a[1]); }",
         true,
     ),
+    // Branch merges only revisit slots a branch wrote (undo-log checker).
+    (
+        "shadow_in_then_keeps_outer",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { let s = 1; } else { eat(s); } }",
+        false,
+    ),
+    (
+        "if_inside_loop_consumes",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); let mut i: i64 = 0; while i < 3 { if i == 1 { eat(s); } else { eat(s); } i = i + 1; } }",
+        false,
+    ),
+    (
+        "nested_if_second_resource",
+        "fn eat(s: Str) -> void { } fn main() -> void { let a = str_concat(\"a\", \"b\"); let b = str_concat(\"a\", \"b\"); if true { eat(b); eat(a); } else { if false { eat(a); } else { eat(a); } } }",
+        false,
+    ),
+    (
+        "global_const_spent_in_branch",
+        "const K = \"hi\"; fn main() -> void { if true { let a = K; } else { } }",
+        false,
+    ),
+    (
+        "reassign_after_move_in_loop",
+        "fn eat(s: Str) -> void { } fn main() -> void { let mut s = str_concat(\"a\", \"b\"); let mut i: i64 = 0; while i < 2 { eat(s); s = str_concat(\"x\", \"y\"); i = i + 1; } }",
+        true,
+    ),
 ];
 
 #[test]
@@ -383,4 +474,133 @@ fn native_test_suite_passes_under_trackc() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+}
+
+/// Build `src` with trackc once per runtime and return both runs.
+fn run_under_both_runtimes(
+    dir: &Path,
+    stem: &str,
+    src: &Path,
+) -> ((String, Option<i32>), (String, Option<i32>)) {
+    let c_exe = dir.join(format!("{}_crt", stem));
+    let t_exe = dir.join(format!("{}_trt", stem));
+    let out = run_trackc(
+        &[
+            "build",
+            src.to_str().unwrap(),
+            "-o",
+            c_exe.to_str().unwrap(),
+        ],
+        dir,
+    );
+    assert!(
+        out.status.success(),
+        "{}: build failed: {}",
+        stem,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run_trackc(
+        &[
+            "build",
+            "--rt=track",
+            src.to_str().unwrap(),
+            "-o",
+            t_exe.to_str().unwrap(),
+        ],
+        dir,
+    );
+    assert!(
+        out.status.success(),
+        "{}: --rt=track build failed: {}{}",
+        stem,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (run_exe(&c_exe), run_exe(&t_exe))
+}
+
+/// The Track runtime (compiler/rt/*.trk) links without libc and behaves
+/// like runtime/track_runtime.c on the examples and the runtime smoke test.
+#[test]
+fn track_runtime_matches_the_c_runtime() {
+    let dir = scratch("trackrt");
+    let mut programs: Vec<PathBuf> = fs::read_dir(repo().join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "trk"))
+        .filter(|p| {
+            let s = p.file_stem().unwrap().to_string_lossy().to_string();
+            !s.ends_with("_err") && s != "net_demo"
+        })
+        .collect();
+    programs.push(repo().join("compiler/rt/tests/rt_smoke.trk"));
+    programs.sort();
+    for program in programs {
+        let stem = program.file_stem().unwrap().to_string_lossy().to_string();
+        let (c, t) = run_under_both_runtimes(&dir, &stem, &program);
+        assert_eq!(c, t, "{}: behaviour differs between runtimes", stem);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// trackc linked against the Track runtime (no libc) compiles the compiler
+/// to the same C as trackc on the C runtime.
+#[test]
+fn trackc_on_the_track_runtime_self_compiles() {
+    let dir = scratch("trackrt_self");
+    for stage in ["rt", "a", "b"] {
+        fs::create_dir_all(dir.join(stage)).unwrap();
+    }
+    let rt_trackc = dir.join("rt/trackc");
+    let out = run_trackc(
+        &[
+            "build",
+            "--rt=track",
+            "compiler/src/main.trk",
+            "-o",
+            rt_trackc.to_str().unwrap(),
+        ],
+        &repo(),
+    );
+    assert!(
+        out.status.success(),
+        "--rt=track build of trackc failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let elf = fs::read(&rt_trackc).unwrap();
+    assert!(
+        !elf.windows(7).any(|w| w == b"libc.so"),
+        "trackc on the Track runtime must not link libc"
+    );
+    let a_exe = dir.join("a/trackc");
+    let out = run_trackc(
+        &[
+            "build",
+            "compiler/src/main.trk",
+            "-o",
+            a_exe.to_str().unwrap(),
+        ],
+        &repo(),
+    );
+    assert!(out.status.success());
+    let b_exe = dir.join("b/trackc");
+    let out = Command::new(&rt_trackc)
+        .args([
+            "build",
+            "compiler/src/main.trk",
+            "-o",
+            b_exe.to_str().unwrap(),
+        ])
+        .current_dir(repo())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "trackc on the Track runtime failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let a = fs::read(dir.join("a/trackc.c")).unwrap();
+    let b = fs::read(dir.join("b/trackc.c")).unwrap();
+    assert!(a == b, "trackc on the Track runtime emitted different C");
+    let _ = fs::remove_dir_all(&dir);
 }

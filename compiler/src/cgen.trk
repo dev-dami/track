@@ -365,6 +365,51 @@ fn call_text(sym: i64, args: i64, arity: i64) -> i64 {
     return sb_text(b);
 }
 
+// Machine builtins of the Track runtime (docs/native.md): raw memory words
+// and bytes, and the Linux x86-64 `syscall` instruction. Lowered inline;
+// returns false for any other name.
+fn gen_raw_builtin(c: i64, name: i64, args: i64, t: i64) -> bool {
+    if text_eq(name, "load64") {
+        emit(c, text_cat3(t, " = TK_AT(", text_cat(arg_at(args, 0), ", 0);")));
+        return true;
+    }
+    if text_eq(name, "store64") {
+        emit(c, text_cat3("TK_AT(", arg_at(args, 0), text_cat3(", 0) = ", arg_at(args, 1), ";")));
+        return true;
+    }
+    if text_eq(name, "load8") {
+        emit(c, text_cat3(t, " = (tk_w)*(unsigned char *)(uintptr_t)(", text_cat(arg_at(args, 0), ");")));
+        return true;
+    }
+    if text_eq(name, "store8") {
+        emit(c, text_cat3("*(unsigned char *)(uintptr_t)(", arg_at(args, 0), text_cat3(") = (unsigned char)(", arg_at(args, 1), ");")));
+        return true;
+    }
+    if text_eq(name, "syscall6") {
+        let b = sb_new();
+        sb_add(b, "{ register tk_w r10 __asm__(\"r10\") = ");
+        sb_add(b, arg_at(args, 4));
+        sb_add(b, "; register tk_w r8 __asm__(\"r8\") = ");
+        sb_add(b, arg_at(args, 5));
+        sb_add(b, "; register tk_w r9 __asm__(\"r9\") = ");
+        sb_add(b, arg_at(args, 6));
+        sb_add(b, "; __asm__ volatile (\"syscall\" : \"=a\"(");
+        sb_add(b, t);
+        sb_add(b, ") : \"a\"(");
+        sb_add(b, arg_at(args, 0));
+        sb_add(b, "), \"D\"(");
+        sb_add(b, arg_at(args, 1));
+        sb_add(b, "), \"S\"(");
+        sb_add(b, arg_at(args, 2));
+        sb_add(b, "), \"d\"(");
+        sb_add(b, arg_at(args, 3));
+        sb_add(b, "), \"r\"(r10), \"r\"(r8), \"r\"(r9) : \"rcx\", \"r11\", \"memory\"); }");
+        emit(c, sb_text(b));
+        return true;
+    }
+    return false;
+}
+
 fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
     let name = na(c, n);
     let args = gen_list_values(c, args_list);
@@ -393,6 +438,9 @@ fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
     if f >= 0 {
         let arity = list_len(c, nc(c, f)) / 2;
         emit(c, text_cat3(t, " = ", text_cat(call_text(text_cat("tk_", name_text(c, target)), args, arity), ";")));
+        return t;
+    }
+    if gen_raw_builtin(c, name_text(c, target), args, t) {
         return t;
     }
     let mut sym = target;
@@ -894,6 +942,85 @@ fn c_prelude(b: i64) -> i64 {
     sb_line(b, "/* runtime (runtime/track_runtime.c) */");
     runtime_prototypes(b);
     sb_line(b, "");
+    // Hot collection ops inline into the program; the layout mirrors
+    // TrackI64Collection in runtime/track_runtime.c. Growth still calls
+    // the runtime, so push only inlines its fast path.
+    sb_line(b, "typedef struct { tk_w *data; tk_w len; tk_w cap; } tk_coll;");
+    sb_line(b, "static inline tk_w tk_coll_len(tk_w h) { const tk_coll *c = (const tk_coll *)(uintptr_t)h; return c ? c->len : 0; }");
+    sb_line(b, "static inline tk_w tk_coll_get(tk_w h, tk_w i) {");
+    sb_line(b, "    const tk_coll *c = (const tk_coll *)(uintptr_t)h;");
+    sb_line(b, "    return c && i >= 0 && i < c->len ? c->data[i] : 0;");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tk_coll_set(tk_w h, tk_w i, tk_w v) {");
+    sb_line(b, "    tk_coll *c = (tk_coll *)(uintptr_t)h;");
+    sb_line(b, "    if (!c || i < 0 || i >= c->len) return 0;");
+    sb_line(b, "    c->data[i] = v;");
+    sb_line(b, "    return 1;");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tk_coll_push(tk_w h, tk_w v) {");
+    sb_line(b, "    tk_coll *c = (tk_coll *)(uintptr_t)h;");
+    sb_line(b, "    if (c && c->len < c->cap) { c->data[c->len] = v; return c->len++; }");
+    sb_line(b, "    return track_i64_collection_push(h, v);");
+    sb_line(b, "}");
+    sb_line(b, "#define track_i64_collection_len tk_coll_len");
+    sb_line(b, "#define track_i64_collection_get tk_coll_get");
+    sb_line(b, "#define track_i64_collection_set tk_coll_set");
+    sb_line(b, "#define track_i64_collection_push tk_coll_push");
+    // Array cells are [length, elements...] (runtime/track_runtime.c); a
+    // failing bounds check calls the runtime op, which aborts as before.
+    sb_line(b, "static inline tk_w tki_arr_get(tk_w a, tk_w i) {");
+    sb_line(b, "    const tk_w *p = (const tk_w *)(uintptr_t)a;");
+    sb_line(b, "    if (__builtin_expect(p && i >= 0 && i < p[0], 1)) return p[i + 1];");
+    sb_line(b, "    return track_array_get(a, i);");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tki_arr_set(tk_w a, tk_w i, tk_w v) {");
+    sb_line(b, "    tk_w *p = (tk_w *)(uintptr_t)a;");
+    sb_line(b, "    if (__builtin_expect(p && i >= 0 && i < p[0], 1)) { p[i + 1] = v; return v; }");
+    sb_line(b, "    return track_array_set(a, i, v);");
+    sb_line(b, "}");
+    sb_line(b, "#define track_array_get tki_arr_get");
+    sb_line(b, "#define track_array_set tki_arr_set");
+    // Freestanding builds (--rt=track) have no libc memchr/memcpy, so
+    // these string helpers only apply to hosted builds.
+    sb_line(b, "#if __STDC_HOSTED__");
+    // A NUL before idx reads as 0, like the runtime's strnlen check.
+    sb_line(b, "static inline tk_w tki_str_char_at(tk_w s, tk_w idx) {");
+    sb_line(b, "    const unsigned char *p = (const unsigned char *)(uintptr_t)s;");
+    sb_line(b, "    if (!p || idx < 0) return 0;");
+    sb_line(b, "    return __builtin_memchr(p, 0, (unsigned long)idx) ? 0 : p[idx];");
+    sb_line(b, "}");
+    // String builder fast paths; the layout mirrors TrackStrBuf. Growth
+    // and null handles call the runtime.
+    sb_line(b, "typedef struct { char *data; uintptr_t len; uintptr_t cap; } tki_sb;");
+    sb_line(b, "static inline tk_w tki_sb_push_n(tk_w h, const char *s, uintptr_t n) {");
+    sb_line(b, "    tki_sb *b = (tki_sb *)(uintptr_t)h;");
+    sb_line(b, "    if (b && b->len + n + 1 <= b->cap) { __builtin_memcpy(b->data + b->len, s, n + 1); b->len += n; return 0; }");
+    sb_line(b, "    return track_sb_push(h, TK_W(s));");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tki_sb_push(tk_w h, tk_w s) {");
+    sb_line(b, "    if (!s) return track_sb_push(h, s);");
+    sb_line(b, "    const char *p = (const char *)(uintptr_t)s;");
+    sb_line(b, "    return tki_sb_push_n(h, p, __builtin_strlen(p));");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tki_sb_push_byte(tk_w h, tk_w byte) {");
+    sb_line(b, "    tki_sb *b = (tki_sb *)(uintptr_t)h;");
+    sb_line(b, "    if (b && b->len + 2 <= b->cap) { b->data[b->len++] = (char)byte; b->data[b->len] = 0; return 0; }");
+    sb_line(b, "    return track_sb_push_byte(h, byte);");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tki_sb_push_int(tk_w h, tk_w v) {");
+    sb_line(b, "    char buf[24]; char *e = buf + 23; char *p = e;");
+    sb_line(b, "    uint64_t u = v < 0 ? 0 - (uint64_t)v : (uint64_t)v;");
+    sb_line(b, "    *e = 0;");
+    sb_line(b, "    do { *--p = (char)('0' + u % 10); u /= 10; } while (u);");
+    sb_line(b, "    if (v < 0) *--p = '-';");
+    sb_line(b, "    return tki_sb_push_n(h, p, (uintptr_t)(e - p));");
+    sb_line(b, "}");
+    sb_line(b, "#define str_char_at tki_str_char_at");
+    sb_line(b, "#define track_sb_push tki_sb_push");
+    sb_line(b, "#define track_sb_push_byte tki_sb_push_byte");
+    sb_line(b, "#define track_sb_push_int tki_sb_push_int");
+    sb_line(b, "#endif");
+    sb_line(b, "");
     sb_line(b, "static tk_w tk_div(tk_w a, tk_w b) {");
     sb_line(b, "    if (b == 0 || (b == -1 && a == INT64_MIN)) return track_trap_div();");
     sb_line(b, "    return a / b;");
@@ -904,6 +1031,47 @@ fn c_prelude(b: i64) -> i64 {
     sb_line(b, "}");
     sb_line(b, "static tk_w tk_shl(tk_w a, tk_w b) { return (tk_w)((uint64_t)a << (b & 63)); }");
     sb_line(b, "static tk_w tk_shr(tk_w a, tk_w b) { return (tk_w)((uint64_t)a >> (b & 63)); }");
+    return 0;
+}
+
+// A program linked with the Track runtime (`--rt=track`, compiler/rt/)
+// defines `rt_start` and every runtime function itself. Runtime names the
+// emitter calls directly (`alloc`, `track_array_get`, ...) become aliases
+// of the Track definitions, and `_start` replaces the C `main`
+// (docs/native.md has the stack contract).
+fn track_runtime_entry(c: i64, out: i64) -> i64 {
+    sb_line(out, "/* Track runtime aliases */");
+    let mut id: i64 = 0;
+    while id < name_count(c) {
+        let f = ni(c, id, NI_FN);
+        if f >= 0 && ni(c, id, NI_EXTERN) >= 0 && !is_qualified(c, id) {
+            // The prelude may map a runtime name to an inline helper.
+            sb_line(out, text_cat("#undef ", name_text(c, id)));
+            let b = sb_new();
+            sb_add(b, "tk_w ");
+            sb_add(b, name_text(c, id));
+            sb_add(b, "(");
+            let arity = list_len(c, nc(c, f)) / 2;
+            if arity == 0 {
+                sb_add(b, "void");
+            }
+            let mut a: i64 = 0;
+            while a < arity {
+                if a > 0 {
+                    sb_add(b, ", ");
+                }
+                sb_add(b, "tk_w");
+                a = a + 1;
+            }
+            sb_add(b, ") __attribute__((alias(\"tk_");
+            sb_add(b, name_text(c, id));
+            sb_add(b, "\")));");
+            sb_line(out, sb_text(b));
+        }
+        id = id + 1;
+    }
+    sb_line(out, "");
+    sb_line(out, "__asm__(\".text\\n.globl _start\\n_start:\\n\\txor %ebp, %ebp\\n\\tmov (%rsp), %rdi\\n\\tlea 8(%rsp), %rsi\\n\\tand $-16, %rsp\\n\\tcall tk_rt_start\\n\\thlt\\n\");");
     return 0;
 }
 
@@ -984,6 +1152,10 @@ fn generate_c(c: i64) -> i64 {
     sb_add(out, sb_text(g(c, G_PROTOS)));
     sb_add(out, sb_text(g(c, G_FUNCS)));
     sb_line(out, "");
+    if ni(c, intern(c, "rt_start"), NI_FN) >= 0 {
+        track_runtime_entry(c, out);
+        return sb_text(out);
+    }
     sb_line(out, "int main(int argc, char **argv) {");
     sb_line(out, "    track_runtime_init((tk_w)argc, TK_W(argv));");
     sb_line(out, "    return (int)tk_main();");
