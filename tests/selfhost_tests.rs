@@ -993,7 +993,7 @@ const LIFE_ERRORS: &[(&str, &str)] = &[
     ),
     (
         "fn eatb(s: Str) -> bool { return true; }\nfn f(k: i64) -> i64 {\n    let s = str_concat(\"a\", \"b\");\n    match k { 1 if eatb(s) => return 1, _ => print(0), }\n    print(s);\n    return 0;\n}\nfn main() -> void { print(f(1)); }\n",
-        "error[E0200]: Use-after-free! Resource 's' is already spent.",
+        "error[E0200]: Resource 's' is spent in some match arms but not in others.",
     ),
     // I2: through a local alias, E0211 names the lent parameter.
     (

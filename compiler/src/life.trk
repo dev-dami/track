@@ -1305,12 +1305,22 @@ fn check_lent_consumed(c: i64, s: i64, name: i64, f: i64, i: i64, a: i64) -> i64
     let callee = quoted(c, na(c, f));
     let p = quoted(c, list_at(c, params, i * 2));
     let me = quoted(c, cur_fn_name(c));
+    // Name the `&` parameter the value was lent through, not a local alias.
+    let mut lent = na(c, a);
+    let refs = slot_origin(c, slot) & lsg(s, LS_REFS);
+    if refs != 0 {
+        let mut k: i64 = 0;
+        while (refs & param_bit(k)) == 0 {
+            k = k + 1;
+        }
+        lent = vf(c, lsg(s, LS_BASE) + k, V_NAME);
+    }
     let b = sb_new();
     sb_add(b, callee);
     sb_add(b, " consumes its parameter ");
     sb_add(b, p);
     sb_add(b, ", but ");
-    sb_add(b, quoted(c, na(c, a)));
+    sb_add(b, quoted(c, lent));
     sb_add(b, " is only lent to ");
     sb_add(b, me);
     sb_add(b, ". Pass '&' and make '");
