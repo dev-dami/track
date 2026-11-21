@@ -3285,11 +3285,16 @@ fn pl_function(c: i64, p: i64, f: i64, prelude: i64) -> i64 {
     return pl_scope_end(p, mark);
 }
 
-// Build the plan for every function in the program. Run after
-// `life_program`, and again once more items are loaded (the Track
-// runtime). Items, top-level statements and `main` are found as
+// Build the plan for every function in the program. Runs after
+// `life_program` (and runs it if nobody did), and again once more items
+// are loaded (the Track runtime). Items, top-level statements and `main` are found as
 // `generate_c` finds them.
 fn life_place_program(c: i64) -> i64 {
+    if ck(c, CK_LIFE) == 0 {
+        // A caller that checked but skipped `life_program` (the in-memory
+        // backend tests): the plan needs the summaries.
+        life_program(c);
+    }
     let table = ck(c, CK_LIFE);
     while vlen(table) <= LT_SITES {
         vpush(table, 0);

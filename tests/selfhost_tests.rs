@@ -1377,12 +1377,33 @@ fn life_place_dumps_match_goldens() {
     )
     .into_owned();
     for (line, why) in [
-        ("L20 tuple stack ends L21", "a tuple only destructured lives on the stack"),
-        ("L8 tuple ret-slot ends L8", "a returned tuple goes to the caller's slot"),
-        ("L24 struct heap ends -", "a value stored into a collection is heap"),
-        ("L26 call heap ends -", "a value passed to an esc param is heap"),
-        ("L28 call heap-autofree ends L29", "a fresh Str dying locally is auto-freed"),
+        (
+            "L20 tuple stack ends L21",
+            "a tuple only destructured lives on the stack",
+        ),
+        (
+            "L8 tuple ret-slot ends L8",
+            "a returned tuple goes to the caller's slot",
+        ),
+        (
+            "L24 struct heap ends -",
+            "a value stored into a collection is heap",
+        ),
+        (
+            "L26 call heap ends -",
+            "a value passed to an esc param is heap",
+        ),
+        (
+            "L28 call heap-autofree ends L29",
+            "a fresh Str dying locally is auto-freed",
+        ),
     ] {
-        assert!(got.contains(line), "{}: missing `{}` in\n{}", why, line, got);
+        assert!(
+            got.contains(line),
+            "{}: missing `{}` in\n{}",
+            why,
+            line,
+            got
+        );
     }
 }
