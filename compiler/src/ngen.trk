@@ -48,7 +48,10 @@ const NG_NONE = 23;    // an empty vector
 const NG_AB = 24;      // scratch: address base slot
 const NG_AI = 25;      // scratch: address index slot (-1)
 const NG_AD = 26;      // scratch: address displacement
-const NG_SLOTS = 27;
+const NG_ACC = 27;     // accumulator slot of an accumulator-recursive function (-1)
+const NG_ACCFN = 28;   // that function
+const NG_ACCTOP = 29;  // its loop head
+const NG_SLOTS = 30;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -1912,9 +1915,72 @@ fn ng_for(c: i64, n: i64) -> i64 {
     return x_mov_rax_imm(b, 0);
 }
 
+// `return x + f(args)` in f itself: an accumulator-recursion return.
+fn ng_is_acc_return(c: i64, f: i64, value: i64) -> bool {
+    if value < 0 || nk(c, value) != K_BIN || na(c, value) != OP_ADD {
+        return false;
+    }
+    let call = nc(c, value);
+    if nk(c, call) != K_CALL || ng_call_target(c, call) != f {
+        return false;
+    }
+    return list_len(c, nb(c, call)) * 2 == list_len(c, nc(c, f));
+}
+
+fn ng_find_acc(c: i64, f: i64, l: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        let n = list_at(c, l, i);
+        let k = nk(c, n);
+        if k == K_RETURN && ng_is_acc_return(c, f, na(c, n)) {
+            return true;
+        }
+        if k == K_IF && (ng_find_acc(c, f, nb(c, n)) || ng_find_acc(c, f, nc(c, n))) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// rax += the accumulator of an accumulator-recursive function.
+fn ng_add_acc(c: i64) -> i64 {
+    let acc = ng(c, NG_ACC);
+    if acc < 0 {
+        return 0;
+    }
+    return ng_op_apply(c, OP_ADD, 0, 2, acc);
+}
+
 fn ng_return(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     let value = na(c, n);
+    if ng(c, NG_ACC) >= 0 && vlen(ng(c, NG_EXITS)) == 0 && ng_is_acc_return(c, ng(c, NG_ACCFN), value) {
+        // acc += x; params = args; loop: f(a) + x == x + f(a), wrapping
+        ng_gen(c, nb(c, value));
+        let acc = ng(c, NG_ACC);
+        let ar = ng_reg(c, acc);
+        if ar >= 0 {
+            x_rr(b, 1, ar, 0);
+        } else {
+            x_rm(b, 1, 0, 5, ng_disp(c, acc));
+        }
+        let args = nb(c, nc(c, value));
+        let tmps = vnew();
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            ng_gen(c, list_at(c, args, i));
+            vpush(tmps, ng_temp(c));
+            i = i + 1;
+        }
+        let mut j: i64 = 0;
+        while j < vlen(tmps) {
+            ng_load(c, vget(tmps, j));
+            ng_store(c, j);
+            j = j + 1;
+        }
+        return x_patch_rel(b, x_jmp(b), ng(c, NG_ACCTOP));
+    }
     if value >= 0 {
         ng_gen(c, value);
     }
@@ -1925,6 +1991,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
     if vlen(exits) > 0 {
         return vpush(vget(exits, vlen(exits) - 1), x_jmp(b));
     }
+    ng_add_acc(c);
     return ng_epilogue(c);
 }
 
@@ -2331,6 +2398,14 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         }
         i = i + 1;
     }
+    ng_set(c, NG_ACC, -1);
+    if returns == 1 && !is_main && ng_find_acc(c, f, ne(c, f)) {
+        let acc = ng_slot(c);
+        ng_set_imm(c, acc, 0);
+        ng_set(c, NG_ACC, acc);
+        ng_set(c, NG_ACCFN, f);
+        ng_set(c, NG_ACCTOP, x_here(b));
+    }
     if prelude >= 0 {
         let mut p: i64 = 0;
         while p < vlen(prelude) {
@@ -2342,6 +2417,8 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     if is_main || returns != 1 {
         x_mov_rax_imm(b, 0);
     }
+    ng_add_acc(c);
+    ng_set(c, NG_ACC, -1);
     ng_epilogue(c);
     ng_scope_end(c, mark);
     ng_emit_cold(c);
@@ -2459,6 +2536,7 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_BODYOK, vnew());
     ng_set(c, NG_EXITS, vnew());
     ng_set(c, NG_NONE, vnew());
+    ng_set(c, NG_ACC, -1);
     ng_set(c, NG_PASS, 2);
     ng_entry(c);
     let items = cx(c, CX_ITEMS);
