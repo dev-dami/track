@@ -207,6 +207,26 @@ fn compile_c(c_source: i64, exe: i64, opt: i64) -> i64 {
     let cc = c_compiler();
     let obj = runtime_object(runtime_text, cc);
     let base = file_stem(exe);
+    let mut status: i64 = 1;
+    if text_len(obj) > 0 {
+        status = shell(text_cat(link_command(dir, cc, opt, base, obj), " 2>/dev/null"));
+        if status != 0 {
+            // A damaged cached object must not poison every later build:
+            // drop it and fall back to compiling the runtime source.
+            shell(text_cat("rm -f ", shell_quote(obj)));
+        }
+    }
+    if status != 0 {
+        status = shell(link_command(dir, cc, opt, base, text_cat(base, ".rt.c")));
+    }
+    if status != 0 {
+        err(text_cat3("trackc: C compiler failed (exit ", text_of_int(status), ")\n"));
+        quit(1);
+    }
+    return 0;
+}
+
+fn link_command(dir: i64, cc: i64, opt: i64, base: i64, runtime: i64) -> i64 {
     let cmd = sb_new();
     sb_add(cmd, "cd ");
     sb_add(cmd, shell_quote(dir));
@@ -219,17 +239,8 @@ fn compile_c(c_source: i64, exe: i64, opt: i64) -> i64 {
     sb_add(cmd, " ");
     sb_add(cmd, shell_quote(text_cat(base, ".c")));
     sb_add(cmd, " ");
-    if text_len(obj) > 0 {
-        sb_add(cmd, shell_quote(obj));
-    } else {
-        sb_add(cmd, shell_quote(text_cat(base, ".rt.c")));
-    }
-    let status = shell(sb_text(cmd));
-    if status != 0 {
-        err(text_cat3("trackc: C compiler failed (exit ", text_of_int(status), ")\n"));
-        quit(1);
-    }
-    return 0;
+    sb_add(cmd, shell_quote(runtime));
+    return sb_text(cmd);
 }
 
 fn require_file() -> i64 {
