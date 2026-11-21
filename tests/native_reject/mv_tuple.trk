@@ -1,0 +1,6 @@
+fn eat(s: Str) -> void { }
+fn main() -> void {
+    let s = str_concat("a", "b");
+    let t = (s, 1);
+    print(s);
+}

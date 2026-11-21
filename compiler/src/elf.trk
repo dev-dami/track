@@ -1,7 +1,8 @@
 // elf.trk — static ELF64 executable writer for the native backend.
 //
 // The image is one PT_LOAD segment (read/write/execute) mapped at
-// ELF_BASE: the 64-byte ELF header, one 56-byte program header, then the
+// ELF_BASE: the 64-byte ELF header, two 56-byte program headers (the
+// PT_LOAD and a PT_GNU_STACK asking for a non-executable stack), then the
 // code and data bytes. No sections, no dynamic linker, no libc. Files are
 // written with `open64`/`write`/`fchmod`/`close` and `memset` so the bytes
 // may hold NULs. These libc names link from libc on the C path and under
@@ -13,7 +14,7 @@ import "base";
 import "x64";
 
 const ELF_BASE = 4194304;   // 0x400000
-const ELF_HEADERS = 120;    // ELF header + one program header
+const ELF_HEADERS = 176;    // ELF header + two program headers
 
 fn elf_u16(b: i64, v: i64) -> i64 {
     x_byte(b, v);
@@ -43,7 +44,7 @@ fn elf_image(body: i64, entry: i64) -> i64 {
     x_u32(b, 0);    // e_flags
     elf_u16(b, 64); // e_ehsize
     elf_u16(b, 56); // e_phentsize
-    elf_u16(b, 1);  // e_phnum
+    elf_u16(b, 2);  // e_phnum
     elf_u16(b, 0);
     elf_u16(b, 0);
     elf_u16(b, 0);
@@ -57,6 +58,15 @@ fn elf_image(body: i64, entry: i64) -> i64 {
     x_u64(b, size);
     x_u64(b, size);
     x_u64(b, 4096);
+    // program header: PT_GNU_STACK, RW (the stack is not executable)
+    x_u32(b, 1685382481);
+    x_u32(b, 6);
+    let mut z: i64 = 0;
+    while z < 5 {
+        x_u64(b, 0);
+        z = z + 1;
+    }
+    x_u64(b, 16);
     let mut i: i64 = 0;
     let n = vlen(body);
     while i < n {

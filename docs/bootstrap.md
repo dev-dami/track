@@ -143,9 +143,25 @@ literals follow the code. `_start` calls `rt_start(argc, argv)`, then
 `main()`, then `sys_exit(result)` (the compiler/rt `rt_start` runs main
 and exits itself, so the rest is a fallback; see docs/native.md).
 
+Tuple literals are heap cells (only `let (a, b) = (x, y)` binds the
+elements without one), so a tuple stored in a struct, array, union or
+tuple, returned, or built in a loop outlives its frame. Identical string
+literals share one copy, so `"abc" == "abc"` is `1` as with the C
+compiler's literal merging. A program without `main` gets an empty one
+that runs its top-level statements, as on the C path.
+
 The runtime is Track code loaded with the program: the compiler/rt
-modules embedded in `runtime_trk.trk`, or the file named by `$TRACK_RT`
-(e.g. the minimal test stub `compiler/rt_stub/mod.trk`).
+modules embedded in `runtime_trk.trk`. It is loaded only after the user
+program has been checked (also for `--rt=track`), so its plain-`i64`
+definitions of `str_concat`, `vec_push`... never replace the builtin
+signatures the ownership checker types the program with: `build --native`
+rejects exactly what `trackc check` rejects.
+
+The image carries a `PT_GNU_STACK` header (read/write, no execute) and
+runs on the kernel's default stack (usually 8 MiB). Frames are not
+optimised away, so very deep recursion (about a million calls) overflows
+the stack and dies with SIGSEGV where the C build at `-O2` may survive
+through tail calls.
 The natively built `trackc` compiles itself to a byte-identical fixed
 point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
 compares native and C builds of the examples.

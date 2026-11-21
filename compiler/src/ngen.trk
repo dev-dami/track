@@ -25,7 +25,7 @@ const NG_CODE = 0;     // code bytes
 const NG_DATA = 1;     // data bytes (string literals)
 const NG_NSLOT = 2;    // frame slots used by the current function
 const NG_BOUND = 3;    // scope stack: (name, previous binding) pairs
-const NG_TUPLES = 4;   // slot -> tuple arity of a stack tuple (or -1)
+const NG_STRMAP = 4;   // name id of a literal's text -> data offset (or -1)
 const NG_RETVAL = 5;   // current function returns a value
 const NG_CALLS = 6;    // call fixups: (rel32 position, function name id)
 const NG_STRS = 7;     // data fixups: (rel32 position, data offset)
@@ -41,7 +41,6 @@ fn ncode(c: i64) -> i64 { return ng(c, NG_CODE); }
 fn ng_slot(c: i64) -> i64 {
     let k = ng(c, NG_NSLOT);
     ng_set(c, NG_NSLOT, k + 1);
-    vpush(ng(c, NG_TUPLES), -1);
     return k;
 }
 
@@ -80,10 +79,6 @@ fn ng_scope_end(c: i64, mark: i64) -> i64 {
         ni_set(c, name, NI_CVAR, prev);
     }
     return 0;
-}
-
-fn ng_set_arity(c: i64, k: i64, arity: i64) -> i64 {
-    return vset(ng(c, NG_TUPLES), k, arity);
 }
 
 // ------------------------------------------------------------ calls
@@ -126,16 +121,27 @@ fn ng_cell(c: i64, count: i64) -> i64 {
     return x_bytes3(b, 72, 137, 200); // mov rax, rcx
 }
 
+// String literal: identical literals share one copy in the data, so
+// `"abc" == "abc"` holds as with the C backend's literal merging.
 fn ng_string(c: i64, s: i64) -> i64 {
     let data = ng(c, NG_DATA);
-    let off = vlen(data);
-    let bytes = text_bytes(s);
-    let mut i: i64 = 0;
-    while i < vlen(bytes) {
-        vpush(data, vget(bytes, i));
-        i = i + 1;
+    let id = intern(c, s);
+    let map = ng(c, NG_STRMAP);
+    if vlen(map) <= id {
+        vfill(map, id + 1 - vlen(map), -1);
     }
-    vpush(data, 0);
+    let mut off = vget(map, id);
+    if off < 0 {
+        off = vlen(data);
+        vset(map, id, off);
+        let bytes = text_bytes(s);
+        let mut i: i64 = 0;
+        while i < vlen(bytes) {
+            vpush(data, vget(bytes, i));
+            i = i + 1;
+        }
+        vpush(data, 0);
+    }
     let pos = x_lea_rip(ncode(c));
     let fix = ng(c, NG_STRS);
     vpush(fix, pos);
@@ -521,24 +527,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     let value = na(c, n);
     if value >= 0 {
-        if nk(c, value) == K_TUPLE {
-            let elems = na(c, value);
-            let mut i: i64 = 0;
-            while i < list_len(c, elems) {
-                ng_gen(c, list_at(c, elems, i));
-                x_push_rax(b);
-                i = i + 1;
-            }
-            ng_cell(c, list_len(c, elems));
-        } else if nk(c, value) == K_VAR && ni(c, na(c, value), NI_CVAR) >= 0 && vget(ng(c, NG_TUPLES), ni(c, na(c, value), NI_CVAR)) >= 0 {
-            let local = ni(c, na(c, value), NI_CVAR);
-            ng_load(c, local);
-            x_push_rax(b);
-            ng_push_imm(c, vget(ng(c, NG_TUPLES), local));
-            ng_call_rt(c, "track_words_copy", 2);
-        } else {
-            ng_gen(c, value);
-        }
+        ng_gen(c, value);
     }
     if ng(c, NG_RETVAL) != 1 || value < 0 {
         x_mov_rax_imm(b, 0);
@@ -546,7 +535,9 @@ fn ng_return(c: i64, n: i64) -> i64 {
     return x_leave_ret(b);
 }
 
-// Tuple literal in a block of frame slots; leaves its address in rax.
+// Tuple literal: a heap cell of its elements (docs/bootstrap.md "Value
+// model"); leaves the cell in rax. `let (a, b) = (x, y)` binds the
+// elements directly and makes no cell (ng_letd).
 fn ng_tuple(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     let elems = na(c, n);
@@ -557,24 +548,7 @@ fn ng_tuple(c: i64, n: i64) -> i64 {
         x_push_rax(b);
         i = i + 1;
     }
-    let mut size = count;
-    if size < 1 {
-        size = 1;
-    }
-    let mut j: i64 = 0;
-    let mut low: i64 = 0;
-    while j < size {
-        low = ng_slot(c);
-        j = j + 1;
-    }
-    // element e lives at ng_disp(low) + 8e
-    let mut e: i64 = count - 1;
-    while e >= 0 {
-        x_pop_rax(b);
-        x_store_local(b, ng_disp(low) + 8 * e);
-        e = e - 1;
-    }
-    return x_lea_local(b, ng_disp(low));
+    return ng_cell(c, count);
 }
 
 // Slot holding element `i` of the cell in slot `k`.
@@ -822,9 +796,6 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         ng_gen(c, nd(c, n));
         let id = ng_new_local(c, na(c, n));
         ng_store(c, id);
-        if nk(c, nd(c, n)) == K_TUPLE {
-            ng_set_arity(c, id, list_len(c, na(c, nd(c, n))));
-        }
         return 0;
     }
     if k == K_ASSIGN {
@@ -832,13 +803,7 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         let target = na(c, n);
         if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
             let id = ni(c, na(c, target), NI_CVAR);
-            ng_store(c, id);
-            if nk(c, nb(c, n)) == K_TUPLE {
-                ng_set_arity(c, id, list_len(c, na(c, nb(c, n))));
-            } else {
-                ng_set_arity(c, id, -1);
-            }
-            return 0;
+            return ng_store(c, id);
         }
         let v = ng_temp(c);
         return ng_assign_place(c, target, v);
@@ -915,7 +880,6 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     let b = ncode(c);
     ni_set(c, na(c, f), NI_EXTERN, x_here(b));
     ng_set(c, NG_NSLOT, 0);
-    ng_set(c, NG_TUPLES, vnew());
     let is_main = text_eq(name_text(c, na(c, f)), "main");
     let ret = nd(c, f);
     let mut returns: i64 = 0;
@@ -932,7 +896,6 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
         let id = ng_new_local(c, list_at(c, params, i * 2));
         x_load_local(b, 16 + 8 * (count - 1 - i));
         ng_store(c, id);
-        ng_set_arity(c, id, tuple_arity(c, list_at(c, params, i * 2 + 1)));
         i = i + 1;
     }
     if prelude >= 0 {
@@ -987,6 +950,7 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_BOUND, vnew());
     ng_set(c, NG_CALLS, vnew());
     ng_set(c, NG_STRS, vnew());
+    ng_set(c, NG_STRMAP, vnew());
     ng_set(c, NG_MISSING, vnew());
     ng_entry(c);
     let items = cx(c, CX_ITEMS);
@@ -1005,6 +969,13 @@ fn generate_native(c: i64) -> i64 {
         }
         i = i + 1;
     }
+    // No `main`: an empty one runs the top-level statements, as in the C
+    // backend. Registered first so calls to it (rt_start) resolve.
+    let mut synthetic: i64 = -1;
+    if main_fn < 0 {
+        synthetic = node_new(c, K_FN, intern(c, "main"), 0, 0, -1, 0, -1);
+        ni_set(c, intern(c, "main"), NI_FN, synthetic);
+    }
     let mut j: i64 = 0;
     while j < vlen(items) {
         let n = vget(items, j);
@@ -1017,8 +988,7 @@ fn generate_native(c: i64) -> i64 {
         }
         j = j + 1;
     }
-    if main_fn < 0 {
-        let synthetic = node_new(c, K_FN, intern(c, "main"), 0, 0, -1, 0, -1);
+    if synthetic >= 0 {
         ng_function(c, synthetic, prelude);
     }
     let b = ncode(c);
