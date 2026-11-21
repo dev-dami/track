@@ -303,13 +303,38 @@ fn ng_var(c: i64, n: i64) -> i64 {
 
 fn ng_builtin(c: i64, text: i64) -> i64 {
     if text_eq(text, "syscall6") { return 7; }
-    if text_eq(text, "syscall") { return 7; }   // libc spelling, used by the C path
     if text_eq(text, "memset") { return 3; }
+    // libc system call wrappers (elf.trk), lowered to `syscall`
+    if text_eq(text, "write") { return 3; }
+    if text_eq(text, "open64") { return 3; }
+    if text_eq(text, "fchmod") { return 2; }
+    if text_eq(text, "close") { return 1; }
     if text_eq(text, "load64") { return 1; }
     if text_eq(text, "load8") { return 1; }
     if text_eq(text, "store64") { return 2; }
     if text_eq(text, "store8") { return 2; }
     return -1;
+}
+
+fn ng_libc_syscall(text: i64) -> i64 {
+    if text_eq(text, "write") { return 1; }
+    if text_eq(text, "open64") { return 2; }
+    if text_eq(text, "close") { return 3; }
+    if text_eq(text, "fchmod") { return 91; }
+    return -1;
+}
+
+// Six syscall arguments are on the stack; load them and run syscall `nr`.
+fn ng_libc_call(c: i64, nr: i64) -> i64 {
+    let b = ncode(c);
+    x_bytes2(b, 65, 89);  // pop r9
+    x_bytes2(b, 65, 88);  // pop r8
+    x_bytes2(b, 65, 90);  // pop r10
+    x_byte(b, 90);        // pop rdx
+    x_byte(b, 94);        // pop rsi
+    x_byte(b, 95);        // pop rdi
+    x_mov_rax_imm(b, nr);
+    return x_bytes2(b, 15, 5);
 }
 
 fn ng_call(c: i64, n: i64, args: i64) -> i64 {
@@ -379,8 +404,18 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
         return ng_call_id(c, callee, arity);
     }
     let text = name_text(c, target);
-    if text_eq(text, "syscall6") || text_eq(text, "syscall") {
+    if text_eq(text, "syscall6") {
         return x_sys_insn(b);
+    }
+    let nr = ng_libc_syscall(text);
+    if nr >= 0 {
+        // shift the pushed arguments into syscall6 shape: nr, a..f
+        let mut k: i64 = 0;
+        while k < 6 - arity {
+            x_push_zero(b);
+            k = k + 1;
+        }
+        return ng_libc_call(c, nr);
     }
     if text_eq(text, "memset") {
         return x_memset(b);

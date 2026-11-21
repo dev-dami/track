@@ -136,13 +136,16 @@ Every expression leaves its value in `rax`; operands wait on the machine
 stack; locals and temporaries are `rbp`-relative slots. Calls push the
 arguments left to right and the callee reads argument `i` of `n` at
 `[rbp + 16 + 8(n-1-i)]`. `syscall6`, `load64`, `store64`, `load8`,
-`store8` (and the libc spellings `syscall`, `memset`, which `elf.trk`
-uses so the C path links them from libc) compile to instructions. String
+`store8` compile to instructions, as do the libc names `elf.trk` uses
+(`open64`, `write`, `fchmod`, `close`, `memset`) so that the Rust
+bootstrap compiler, which knows no machine builtins, links them from libc. String
 literals follow the code. `_start` calls `rt_start(argc, argv)`, then
-`main()`, then `sys_exit(result)`.
+`main()`, then `sys_exit(result)` (the compiler/rt `rt_start` runs main
+and exits itself, so the rest is a fallback; see docs/native.md).
 
-The runtime is Track code loaded with the program: `$TRACK_RT`, else
-`compiler/rt/mod.trk`, else the test stub `compiler/rt_stub/mod.trk`.
+The runtime is Track code loaded with the program: the compiler/rt
+modules embedded in `runtime_trk.trk`, or the file named by `$TRACK_RT`
+(e.g. the minimal test stub `compiler/rt_stub/mod.trk`).
 The natively built `trackc` compiles itself to a byte-identical fixed
 point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
 compares native and C builds of the examples.

@@ -76,12 +76,11 @@ fn native_build_needs_no_c_toolchain() {
 fn native_programs_match_the_c_backend() {
     let dir = scratch("parity");
     let mut inputs: Vec<PathBuf> = Vec::new();
-    for sub in ["examples", "tests/native"] {
+    for sub in ["examples", "tests/native", "bench/progs"] {
         for e in fs::read_dir(repo().join(sub)).unwrap() {
             let p = e.unwrap().path();
             let stem = p.file_stem().unwrap().to_string_lossy().to_string();
-            // net_demo needs sockets, which the stub runtime lacks.
-            if p.extension().is_some_and(|x| x == "trk") && !stem.ends_with("_err") && stem != "net_demo" {
+            if p.extension().is_some_and(|x| x == "trk") && !stem.ends_with("_err") {
                 inputs.push(p);
             }
         }

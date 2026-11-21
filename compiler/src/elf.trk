@@ -3,10 +3,11 @@
 // The image is one PT_LOAD segment (read/write/execute) mapped at
 // ELF_BASE: the 64-byte ELF header, one 56-byte program header, then the
 // code and data bytes. No sections, no dynamic linker, no libc. Files are
-// written with raw Linux system calls so the bytes may hold NULs. The
-// calls are spelled `syscall` and `memset` (libc names) so the C path and
-// the Rust bootstrap compiler link them from libc; the native backend
-// lowers both to instructions.
+// written with `open64`/`write`/`fchmod`/`close` and `memset` so the bytes
+// may hold NULs. These libc names link from libc on the C path and under
+// the Rust bootstrap compiler (which knows no machine builtins); the
+// native backend lowers each straight to a Linux system call or
+// `rep stosb`.
 
 import "base";
 import "x64";
@@ -75,20 +76,20 @@ fn elf_write_file(path: i64, bytes: i64) -> i64 {
         i = i + 1;
     }
     // open(path, O_WRONLY|O_CREAT|O_TRUNC, 0755)
-    let fd: i64 = syscall(2, path, 577, 493, 0, 0, 0);
+    let fd: i64 = open64(path, 577, 493);
     if fd < 0 {
         return 1;
     }
-    syscall(91, fd, 493, 0, 0, 0, 0); // fchmod
+    fchmod(fd, 493);
     let mut done: i64 = 0;
     while done < n {
-        let w: i64 = syscall(1, fd, buf + done, n - done, 0, 0, 0);
+        let w: i64 = write(fd, buf + done, n - done);
         if w <= 0 {
-            syscall(3, fd, 0, 0, 0, 0, 0);
+            close(fd);
             return 1;
         }
         done = done + w;
     }
-    syscall(3, fd, 0, 0, 0, 0, 0);
+    close(fd);
     return 0;
 }

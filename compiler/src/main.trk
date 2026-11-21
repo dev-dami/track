@@ -326,19 +326,25 @@ fn link_command(dir: i64, cc: i64, opt: i64, base: i64, runtime: i64) -> i64 {
     return sb_text(cmd);
 }
 
-// Runtime written in Track for native builds: $TRACK_RT, else
-// compiler/rt/mod.trk, else the test stub compiler/rt_stub/mod.trk.
-fn native_runtime_path() -> i64 {
+// Load the runtime written in Track for a native build: the file named by
+// $TRACK_RT (e.g. the test stub compiler/rt_stub/mod.trk), else the
+// compiler/rt modules embedded in runtime_trk.trk.
+fn load_native_runtime(c: i64) -> i64 {
     if env_exists("TRACK_RT") != 0 {
         let p: i64 = env_get("TRACK_RT");
         if text_len(p) > 0 {
-            return p;
+            if !module_loaded(c, module_key(p)) {
+                load_module(c, p);
+            }
+            return 0;
         }
     }
-    if path_exists("compiler/rt/mod.trk") {
-        return "compiler/rt/mod.trk";
+    let mut m: i64 = 0;
+    while m < rt_module_count() {
+        load_embedded_module(c, rt_module_name(m), rt_module_source(m));
+        m = m + 1;
     }
-    return "compiler/rt_stub/mod.trk";
+    return 0;
 }
 
 // `trackc build --native <file.trk> [-o <exe>]`: the program plus the Track
@@ -347,10 +353,7 @@ fn cmd_build_native(path: i64) -> i64 {
     let c = cx_new();
     lex_init(c);
     load_program(c, path);
-    let rt = native_runtime_path();
-    if !module_loaded(c, module_key(rt)) {
-        load_module(c, rt);
-    }
+    load_native_runtime(c);
     collect_symbols(c);
     check_program(c);
     let mut exe = output_flag();
