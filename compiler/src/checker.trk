@@ -12,7 +12,8 @@
 // maps: each slot records its name, ownership state, type, mutability,
 // lens-alias flag, the previous slot with the same name (shadowing chain),
 // its borrow provenance, and a dead flag. Branches snapshot and restore
-// slot states.
+// slot states through an undo log, so a branch costs what it changes, not
+// the size of the slot table (globals are slots too).
 
 import "base";
 import "lexer";
@@ -49,7 +50,12 @@ const CK_TY_VOID = 11;
 const CK_TY_STRLIT = 12;
 const CK_TY_I64 = 13;
 const CK_NBORROW = 14;   // slots that ever stored provenance
-const CK_SLOTS = 15;
+const CK_UNDO = 15;      // undo log: (slot, field, old value) triples
+const CK_NLOCKED = 16;   // slots whose state is ST_LOCKED
+const CK_SEEN = 17;      // scratch: per-slot stamp for touched_slots
+const CK_PRESTATE = 18;  // scratch: per-slot state before the log range
+const CK_SEENSTAMP = 19;
+const CK_SLOTS = 20;
 
 fn ck(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_CHK), slot); }
 fn ck_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_CHK), slot, v); }
@@ -447,10 +453,41 @@ fn truncate_vars(c: i64, count: i64) -> i64 {
         if vf(c, slot, V_DEAD) == 0 {
             kill_slot(c, slot);
         }
+        if vf(c, slot, V_STATE) == ST_LOCKED {
+            ck_set(c, CK_NLOCKED, ck(c, CK_NLOCKED) - 1);
+        }
         slot = slot - 1;
     }
     vtrunc(vars(c), count * VW);
     return 0;
+}
+
+// Write a snapshotted field (state, type or borrows) without logging,
+// keeping the locked-slot count in step.
+fn sraw(c: i64, slot: i64, field: i64, x: i64) -> i64 {
+    if field == V_STATE {
+        let old = vf(c, slot, V_STATE);
+        if old == ST_LOCKED {
+            ck_set(c, CK_NLOCKED, ck(c, CK_NLOCKED) - 1);
+        }
+        if x == ST_LOCKED {
+            ck_set(c, CK_NLOCKED, ck(c, CK_NLOCKED) + 1);
+        }
+    }
+    return vf_set(c, slot, field, x);
+}
+
+// Write a snapshotted field, logging the old value for restore.
+fn sset(c: i64, slot: i64, field: i64, x: i64) -> i64 {
+    let old = vf(c, slot, field);
+    if old == x {
+        return 0;
+    }
+    let log = ck(c, CK_UNDO);
+    vpush(log, slot);
+    vpush(log, field);
+    vpush(log, old);
+    return sraw(c, slot, field, x);
 }
 
 // Live slots that would be present in the bootstrap checker's registry.
@@ -464,36 +501,71 @@ fn slot_visible(c: i64, slot: i64) -> bool {
     return ni(c, vf(c, slot, V_NAME), NI_VARSLOT) == slot;
 }
 
-// Snapshot: [count, (state, type, borrows)*count, lens-lock length, lens count]
+// Snapshot: [slot count, undo-log length, lens-lock length, lens count]
 fn snapshot(c: i64) -> i64 {
-    let n = var_count(c);
-    let s = vnew_cap(n * 3 + 4);
-    vpush(s, n);
-    let mut i: i64 = 0;
-    while i < n {
-        vpush(s, vf(c, i, V_STATE));
-        vpush(s, vf(c, i, V_TYPE));
-        vpush(s, vf(c, i, V_BORROWS));
-        i = i + 1;
-    }
+    let s = vnew_cap(4);
+    vpush(s, var_count(c));
+    vpush(s, vlen(ck(c, CK_UNDO)));
     vpush(s, vlen(ck(c, CK_LENSLOCK)));
     vpush(s, ck(c, CK_LENSCOUNT));
     return s;
 }
 
 fn restore(c: i64, s: i64) -> i64 {
-    let n = vget(s, 0);
-    truncate_vars(c, n);
-    let mut i: i64 = 0;
-    while i < n {
-        vf_set(c, i, V_STATE, vget(s, 1 + i * 3));
-        vf_set(c, i, V_TYPE, vget(s, 2 + i * 3));
-        vf_set(c, i, V_BORROWS, vget(s, 3 + i * 3));
-        i = i + 1;
+    let log = ck(c, CK_UNDO);
+    let mark = vget(s, 1);
+    let mut e = vlen(log) - 3;
+    while e >= mark {
+        let slot = vget(log, e);
+        if slot < var_count(c) {
+            sraw(c, slot, vget(log, e + 1), vget(log, e + 2));
+        }
+        e = e - 3;
     }
-    vtrunc(ck(c, CK_LENSLOCK), vget(s, 1 + n * 3));
-    ck_set(c, CK_LENSCOUNT, vget(s, 2 + n * 3));
+    vtrunc(log, mark);
+    truncate_vars(c, vget(s, 0));
+    vtrunc(ck(c, CK_LENSLOCK), vget(s, 2));
+    ck_set(c, CK_LENSCOUNT, vget(s, 3));
     return 0;
+}
+
+// Slots below `count` written since snapshot `s`, ascending and unique.
+// Also records in CK_PRESTATE each one's state at the snapshot (-1 when
+// the state itself was not written).
+fn touched_slots(c: i64, s: i64, count: i64) -> i64 {
+    let seen = ck(c, CK_SEEN);
+    let pre = ck(c, CK_PRESTATE);
+    while vlen(seen) < count {
+        vpush(seen, 0);
+        vpush(pre, -1);
+    }
+    let stamp = ck(c, CK_SEENSTAMP) + 1;
+    ck_set(c, CK_SEENSTAMP, stamp);
+    let out = vnew();
+    let log = ck(c, CK_UNDO);
+    let mut e = vget(s, 1);
+    while e < vlen(log) {
+        let slot = vget(log, e);
+        if slot < count {
+            if vget(seen, slot) != stamp {
+                vset(seen, slot, stamp);
+                vset(pre, slot, -1);
+                // insertion keeps `out` sorted
+                vpush(out, slot);
+                let mut k = vlen(out) - 1;
+                while k > 0 && vget(out, k - 1) > slot {
+                    vset(out, k, vget(out, k - 1));
+                    k = k - 1;
+                }
+                vset(out, k, slot);
+            }
+            if vget(log, e + 1) == V_STATE && vget(pre, slot) < 0 {
+                vset(pre, slot, vget(log, e + 2));
+            }
+        }
+        e = e + 3;
+    }
+    return out;
 }
 
 fn state_name(st: i64) -> i64 {
@@ -522,7 +594,7 @@ fn read_or_move(c: i64, n: i64, name: i64) -> i64 {
         return cfail(c, n, text_cat3("Resource ", quoted(c, name), " is frozen (either locked in a lens or borrowed)."));
     }
     if !is_copy_name(c, name, slot) && vf(c, slot, V_LENS) == 0 {
-        vf_set(c, slot, V_STATE, ST_SPENT);
+        sset(c, slot, V_STATE, ST_SPENT);
     }
     return 0;
 }
@@ -543,10 +615,13 @@ fn update_borrow_states(c: i64) -> i64 {
     let n = var_count(c);
     let floor = ck(c, CK_FLOOR);
     if ck(c, CK_NBORROW) == 0 && vlen(ck(c, CK_LENSLOCK)) == 0 {
+        if ck(c, CK_NLOCKED) == 0 {
+            return 0;
+        }
         let mut i = floor;
         while i < n {
             if vf(c, i, V_STATE) == ST_LOCKED && slot_visible(c, i) {
-                vf_set(c, i, V_STATE, ST_ACTIVE);
+                sset(c, i, V_STATE, ST_ACTIVE);
             }
             i = i + 1;
         }
@@ -578,9 +653,9 @@ fn update_borrow_states(c: i64) -> i64 {
             let locked = ni(c, vf(c, s, V_NAME), NI_MARK) == stamp;
             let st = vf(c, s, V_STATE);
             if locked && st == ST_ACTIVE {
-                vf_set(c, s, V_STATE, ST_LOCKED);
+                sset(c, s, V_STATE, ST_LOCKED);
             } else if !locked && st == ST_LOCKED {
-                vf_set(c, s, V_STATE, ST_ACTIVE);
+                sset(c, s, V_STATE, ST_ACTIVE);
             }
         }
         s = s + 1;
@@ -589,7 +664,7 @@ fn update_borrow_states(c: i64) -> i64 {
 }
 
 fn set_borrows(c: i64, slot: i64, prov: i64) -> i64 {
-    vf_set(c, slot, V_BORROWS, prov);
+    sset(c, slot, V_BORROWS, prov);
     if prov >= 0 {
         ck_set(c, CK_NBORROW, ck(c, CK_NBORROW) + 1);
     }
@@ -1237,39 +1312,85 @@ fn check_if(c: i64, n: i64) -> i64 {
     let pre = snapshot(c);
     let count = vget(pre, 0);
     check_body(c, nb(c, n));
-    let then_end = snapshot(c);
+    // Only slots written in a branch can differ between the branches.
+    let t1 = touched_slots(c, pre, count);
+    let then_vals = vnew_cap(vlen(t1) * 2);
+    let mut a: i64 = 0;
+    while a < vlen(t1) {
+        vpush(then_vals, vf(c, vget(t1, a), V_STATE));
+        vpush(then_vals, vf(c, vget(t1, a), V_BORROWS));
+        a = a + 1;
+    }
     restore(c, pre);
     check_body(c, nc(c, n));
+    let t2 = touched_slots(c, pre, count);
+    // u: ascending union of t1 and t2, with then values where t1 has them
+    // (-1 = then left the slot at its pre-branch value).
+    let u = vnew();
+    let uthen = vnew();
     let mut i: i64 = 0;
-    while i < count {
-        if slot_visible(c, i) {
-            let then_state = vget(then_end, 1 + i * 3);
-            let else_state = vf(c, i, V_STATE);
-            if then_state != else_state {
-                let name = vf(c, i, V_NAME);
-                cfail(c, n, text_cat3("Resource ", quoted(c, name), text_cat3(" has inconsistent state after if/else. Then branch: ", state_name(then_state), text_cat(", Else branch: ", state_name(else_state)))));
+    let mut j: i64 = 0;
+    while i < vlen(t1) || j < vlen(t2) {
+        if j >= vlen(t2) || (i < vlen(t1) && vget(t1, i) <= vget(t2, j)) {
+            if j < vlen(t2) && vget(t1, i) == vget(t2, j) {
+                j = j + 1;
             }
+            vpush(u, vget(t1, i));
+            vpush(uthen, i);
+            i = i + 1;
+        } else {
+            vpush(u, vget(t2, j));
+            vpush(uthen, -1);
+            j = j + 1;
         }
-        i = i + 1;
+    }
+    // Else-branch values and visibility are read before the restore.
+    let uelse = vnew_cap(vlen(u) * 3);
+    let mut k: i64 = 0;
+    while k < vlen(u) {
+        let slot = vget(u, k);
+        vpush(uelse, vf(c, slot, V_STATE));
+        vpush(uelse, vf(c, slot, V_BORROWS));
+        if slot_visible(c, slot) {
+            vpush(uelse, 1);
+        } else {
+            vpush(uelse, 0);
+        }
+        k = k + 1;
+    }
+    restore(c, pre);
+    let mut m: i64 = 0;
+    while m < vlen(u) {
+        let slot = vget(u, m);
+        let mut then_state = vf(c, slot, V_STATE);
+        let mut then_b = vf(c, slot, V_BORROWS);
+        let ti = vget(uthen, m);
+        if ti >= 0 {
+            then_state = vget(then_vals, ti * 2);
+            then_b = vget(then_vals, ti * 2 + 1);
+        }
+        let else_state = vget(uelse, m * 3);
+        if vget(uelse, m * 3 + 2) == 1 && then_state != else_state {
+            let name = vf(c, slot, V_NAME);
+            cfail(c, n, text_cat3("Resource ", quoted(c, name), text_cat3(" has inconsistent state after if/else. Then branch: ", state_name(then_state), text_cat(", Else branch: ", state_name(else_state)))));
+        }
+        m = m + 1;
     }
     // Merge: state agrees, types revert to the pre-branch types, and
     // provenance comes from the then branch when it has any.
-    let mut merged = vnew_cap(count * 2);
-    let mut j: i64 = 0;
-    while j < count {
-        let mut b = vget(then_end, 3 + j * 3);
-        if b < 0 {
-            b = vf(c, j, V_BORROWS);
-        }
-        vpush(merged, vf(c, j, V_STATE));
-        vpush(merged, b);
-        j = j + 1;
-    }
-    restore(c, pre);
     let mut s: i64 = 0;
-    while s < count {
-        vf_set(c, s, V_STATE, vget(merged, s * 2));
-        vf_set(c, s, V_BORROWS, vget(merged, s * 2 + 1));
+    while s < vlen(u) {
+        let slot = vget(u, s);
+        let mut b = vf(c, slot, V_BORROWS);
+        let ti = vget(uthen, s);
+        if ti >= 0 {
+            b = vget(then_vals, ti * 2 + 1);
+        }
+        if b < 0 {
+            b = vget(uelse, s * 3 + 1);
+        }
+        sset(c, slot, V_STATE, vget(uelse, s * 3));
+        sset(c, slot, V_BORROWS, b);
         s = s + 1;
     }
     update_borrow_states(c);
@@ -1279,17 +1400,24 @@ fn check_if(c: i64, n: i64) -> i64 {
 fn check_loop_body(c: i64, n: i64, body: i64, pre: i64, long_message: bool) -> i64 {
     check_body(c, body);
     let count = vget(pre, 0);
-    let mut i: i64 = 0;
-    while i < count {
+    // Only a slot whose state was written can have gone Active -> Spent.
+    let t = touched_slots(c, pre, count);
+    let prestate = ck(c, CK_PRESTATE);
+    let mut k: i64 = 0;
+    while k < vlen(t) {
+        let i = vget(t, k);
         let name = vf(c, i, V_NAME);
-        let pre_state = vget(pre, 1 + i * 3);
+        let mut pre_state = vget(prestate, i);
+        if pre_state < 0 {
+            pre_state = vf(c, i, V_STATE);
+        }
         if slot_visible(c, i) && pre_state == ST_ACTIVE && !is_copy_name(c, name, i) && vf(c, i, V_STATE) == ST_SPENT {
             if long_message {
                 cfail(c, n, text_cat3("Cannot consume linear resource ", quoted(c, name), " inside a loop. It was declared outside the loop and would be double-freed/moved on subsequent iterations."));
             }
             cfail(c, n, text_cat3("Cannot consume linear resource ", quoted(c, name), " inside a loop."));
         }
-        i = i + 1;
+        k = k + 1;
     }
     restore(c, pre);
     update_borrow_states(c);
@@ -1362,7 +1490,7 @@ fn check_lens(c: i64, n: i64) -> i64 {
         return cfail(c, n, text_cat3("Cannot create lens. ", quoted(c, target), " is not Active."));
     }
     vpush(ck(c, CK_LENSLOCK), target);
-    vf_set(c, slot, V_STATE, ST_LOCKED);
+    sset(c, slot, V_STATE, ST_LOCKED);
     let lens = declare(c, nb(c, n), vf(c, slot, V_TYPE), 0);
     vf_set(c, lens, V_LENS, 1);
     ck_set(c, CK_LENSCOUNT, ck(c, CK_LENSCOUNT) + 1);
@@ -1386,7 +1514,7 @@ fn check_lens(c: i64, n: i64) -> i64 {
     prov_merge(locks, kept);
     let tslot = lookup(c, target);
     if tslot >= 0 && vf(c, tslot, V_STATE) == ST_LOCKED {
-        vf_set(c, tslot, V_STATE, ST_ACTIVE);
+        sset(c, tslot, V_STATE, ST_ACTIVE);
     }
     update_borrow_states(c);
     kill_slot(c, lens);
@@ -1453,14 +1581,14 @@ fn check_assign(c: i64, n: i64) -> i64 {
         if vf(c, slot, V_MUT) == 0 {
             return cfail(c, n, text_cat3("Cannot mutate immutable variable ", quoted(c, name), text_cat3(". Use 'let mut ", name_text(c, name), "' to declare a mutable variable.")));
         }
-        vf_set(c, slot, V_STATE, ST_ACTIVE);
+        sset(c, slot, V_STATE, ST_ACTIVE);
         let ty = infer_type(c, value);
         if ty >= 0 {
-            vf_set(c, slot, V_TYPE, ty);
+            sset(c, slot, V_TYPE, ty);
             if ty_is_ref(c, ty) {
                 set_borrows(c, slot, provenance(c, value));
             } else {
-                vf_set(c, slot, V_BORROWS, -1);
+                sset(c, slot, V_BORROWS, -1);
             }
         }
     } else {
@@ -1694,6 +1822,9 @@ fn checker_init(c: i64) -> i64 {
     ck_set(c, CK_LENSLOCK, vnew());
     ck_set(c, CK_PARAMS, vnew());
     ck_set(c, CK_FNNAMES, vnew_cap(1024));
+    ck_set(c, CK_UNDO, vnew_cap(1024));
+    ck_set(c, CK_SEEN, vnew_cap(1024));
+    ck_set(c, CK_PRESTATE, vnew_cap(1024));
     ck_set(c, CK_RET, -1);
     ck_set(c, CK_GENERICS, 0);
     ck_set(c, CK_TY_I32, prim_type(c, PRIM_I32));
