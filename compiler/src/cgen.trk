@@ -339,6 +339,9 @@ fn gen_var(c: i64, n: i64) -> i64 {
     if ni(c, name, NI_CONSTOK) == 1 {
         return c_int(ni(c, name, NI_CONSTVAL));
     }
+    if ni(c, name, NI_CONSTOK) == 3 {
+        return gen(c, nb(c, ni(c, name, NI_CONST)));
+    }
     return "0";
 }
 

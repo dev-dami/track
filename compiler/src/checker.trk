@@ -19,6 +19,7 @@ import "base";
 import "lexer";
 import "ast";
 import "symbols";
+import "runtime_c";
 
 const ST_ACTIVE = 0;
 const ST_LOCKED = 1;
@@ -41,7 +42,7 @@ const CK_LENSCOUNT = 2;  // live lens aliases
 const CK_FLOOR = 3;      // slots below this index are invisible (macro bodies)
 const CK_RET = 4;        // current return type (-1 = none)
 const CK_PARAMS = 5;     // vector of current parameter names
-const CK_GENERICS = 6;   // list of current generic parameter names
+const CK_GENERICS = 6;   // unused (generic parameters are linear)
 const CK_FNNAMES = 7;    // names present in the function table, in order
 const CK_STAMP = 8;
 const CK_TY_I32 = 9;
@@ -55,7 +56,8 @@ const CK_NLOCKED = 16;   // slots whose state is ST_LOCKED
 const CK_SEEN = 17;      // scratch: per-slot stamp for touched_slots
 const CK_PRESTATE = 18;  // scratch: per-slot state before the log range
 const CK_SEENSTAMP = 19;
-const CK_SLOTS = 20;
+const CK_TY_UNK = 20;    // placeholder type of a value whose type is not known
+const CK_SLOTS = 21;
 
 fn ck(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_CHK), slot); }
 fn ck_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_CHK), slot, v); }
@@ -82,18 +84,6 @@ fn ty_ref(c: i64, inner: i64) -> i64 {
     return node1(c, T_REF, inner, -1);
 }
 
-fn is_generic_param(c: i64, name: i64) -> bool {
-    let g = ck(c, CK_GENERICS);
-    let mut i: i64 = 0;
-    while i < list_len(c, g) {
-        if list_at(c, g, i) == name {
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
 fn ty_is_copy(c: i64, t: i64) -> bool {
     if t < 0 {
         return false;
@@ -105,14 +95,33 @@ fn ty_is_copy(c: i64, t: i64) -> bool {
     if k == T_REF {
         return true;
     }
-    if k == T_CUSTOM {
-        return is_generic_param(c, na(c, t));
-    }
+    // A generic `T` may stand for a linear type, so it is never Copy.
     return false;
 }
 
 fn ty_is_ref(c: i64, t: i64) -> bool {
     return t >= 0 && nk(c, t) == T_REF;
+}
+
+// True when `t` is known to be a scalar (an integer or bool), so it cannot
+// be indexed or destructured. Unknown types (CK_TY_UNK, void) never are.
+fn ty_known_scalar(c: i64, t: i64) -> bool {
+    if t < 0 || t == ck(c, CK_TY_UNK) || nk(c, t) != T_PRIM {
+        return false;
+    }
+    return na(c, t) != PRIM_VOID;
+}
+
+// Struct name of a struct type or a reference to one, or -1.
+fn struct_name_of(c: i64, t: i64) -> i64 {
+    let mut u = t;
+    if u >= 0 && nk(c, u) == T_REF {
+        u = na(c, u);
+    }
+    if u < 0 || nk(c, u) != T_CUSTOM || struct_def(c, na(c, u)) < 0 {
+        return -1;
+    }
+    return na(c, u);
 }
 
 // ----------------------------------------------------- function table
@@ -711,7 +720,7 @@ fn subst_generic(c: i64, ty: i64, f: i64, args: i64) -> i64 {
                     }
                     p = p + 2;
                 }
-                return ck(c, CK_TY_I32);
+                return ck(c, CK_TY_UNK);
             }
             g = g + 1;
         }
@@ -783,7 +792,7 @@ fn infer_type(c: i64, n: i64) -> i64 {
     }
     if k == K_ARRAY {
         let elems = na(c, n);
-        let mut elem = ck(c, CK_TY_I32);
+        let mut elem = ck(c, CK_TY_UNK);
         if list_len(c, elems) > 0 {
             let first = infer_type(c, list_at(c, elems, 0));
             if first >= 0 {
@@ -799,7 +808,7 @@ fn infer_type(c: i64, n: i64) -> i64 {
         while i < list_len(c, elems) {
             let mut t = infer_type(c, list_at(c, elems, i));
             if t < 0 {
-                t = ck(c, CK_TY_I32);
+                t = ck(c, CK_TY_UNK);
             }
             list_item(c, t);
             i = i + 1;
@@ -1254,7 +1263,7 @@ fn variant_binding_type(c: i64, owner: i64, variant: i64) -> i64 {
     if text_eq(o, "Result") && (text_eq(v, "Ok") || text_eq(v, "Err")) {
         return ck(c, CK_TY_I64);
     }
-    return ck(c, CK_TY_I32);
+    return ck(c, CK_TY_UNK);
 }
 
 fn bind_pattern(c: i64, p: i64, ty: i64, mutable: i64) -> i64 {
@@ -1265,13 +1274,20 @@ fn bind_pattern(c: i64, p: i64, ty: i64, mutable: i64) -> i64 {
     }
     if k == P_TUPLE {
         let pats = na(c, p);
+        if ty_known_scalar(c, ty) {
+            return cfail(c, p, "Cannot destructure a non-tuple value with a tuple pattern.");
+        }
+        let arity = tuple_arity(c, ty);
+        if arity >= 0 && arity != list_len(c, pats) {
+            return cfail(c, p, text_cat3("Tuple pattern has ", text_of_int(list_len(c, pats)), text_cat(" elements but the value has ", text_of_int(arity))));
+        }
         let mut elems: i64 = -1;
         if ty >= 0 && nk(c, ty) == T_TUPLE {
             elems = na(c, ty);
         }
         let mut i: i64 = 0;
         while i < list_len(c, pats) {
-            let mut et = ck(c, CK_TY_I32);
+            let mut et = ck(c, CK_TY_UNK);
             if elems >= 0 && i < list_len(c, elems) {
                 et = list_at(c, elems, i);
             }
@@ -1294,7 +1310,7 @@ fn bind_pattern(c: i64, p: i64, ty: i64, mutable: i64) -> i64 {
         let fields = nb(c, p);
         let mut i: i64 = 1;
         while i < list_len(c, fields) {
-            bind_pattern(c, list_at(c, fields, i), ck(c, CK_TY_I32), mutable);
+            bind_pattern(c, list_at(c, fields, i), ck(c, CK_TY_UNK), mutable);
             i = i + 2;
         }
     }
@@ -1338,18 +1354,14 @@ fn check_if(c: i64, n: i64) -> i64 {
             j = j + 1;
         }
     }
-    // Else-branch values and visibility are read before the restore.
-    let uelse = vnew_cap(vlen(u) * 3);
+    // Else-branch values are read before the restore. Visibility is read
+    // after it: names the else branch declared (shadows) leave scope.
+    let uelse = vnew_cap(vlen(u) * 2);
     let mut k: i64 = 0;
     while k < vlen(u) {
         let slot = vget(u, k);
         vpush(uelse, vf(c, slot, V_STATE));
         vpush(uelse, vf(c, slot, V_BORROWS));
-        if slot_visible(c, slot) {
-            vpush(uelse, 1);
-        } else {
-            vpush(uelse, 0);
-        }
         k = k + 1;
     }
     restore(c, pre);
@@ -1363,8 +1375,8 @@ fn check_if(c: i64, n: i64) -> i64 {
             then_state = vget(then_vals, ti * 2);
             then_b = vget(then_vals, ti * 2 + 1);
         }
-        let else_state = vget(uelse, m * 3);
-        if vget(uelse, m * 3 + 2) == 1 && then_state != else_state {
+        let else_state = vget(uelse, m * 2);
+        if slot_visible(c, slot) && then_state != else_state {
             let name = vf(c, slot, V_NAME);
             cfail(c, n, text_cat3("Resource ", quoted(c, name), text_cat3(" has inconsistent state after if/else. Then branch: ", state_name(then_state), text_cat(", Else branch: ", state_name(else_state)))));
         }
@@ -1381,9 +1393,9 @@ fn check_if(c: i64, n: i64) -> i64 {
             b = vget(then_vals, ti * 2 + 1);
         }
         if b < 0 {
-            b = vget(uelse, s * 3 + 1);
+            b = vget(uelse, s * 2 + 1);
         }
-        sset(c, slot, V_STATE, vget(uelse, s * 3));
+        sset(c, slot, V_STATE, vget(uelse, s * 2));
         sset(c, slot, V_BORROWS, b);
         s = s + 1;
     }
@@ -1422,7 +1434,7 @@ fn for_elem_type(c: i64, t: i64) -> i64 {
     if t >= 0 && (nk(c, t) == T_SLICE || nk(c, t) == T_ARRAY) {
         return na(c, t);
     }
-    return ck(c, CK_TY_I32);
+    return ck(c, CK_TY_UNK);
 }
 
 fn check_function(c: i64, n: i64, is_macro: bool) -> i64 {
@@ -1430,7 +1442,6 @@ fn check_function(c: i64, n: i64, is_macro: bool) -> i64 {
     let saved_floor = ck(c, CK_FLOOR);
     let saved_params = ck(c, CK_PARAMS);
     let saved_ret = ck(c, CK_RET);
-    let saved_generics = ck(c, CK_GENERICS);
     let saved_locks = ck(c, CK_LENSLOCK);
     let saved_lens = ck(c, CK_LENSCOUNT);
     if is_macro {
@@ -1439,7 +1450,6 @@ fn check_function(c: i64, n: i64, is_macro: bool) -> i64 {
     }
     ck_set(c, CK_LENSLOCK, vnew());
     ck_set(c, CK_LENSCOUNT, 0);
-    ck_set(c, CK_GENERICS, nb(c, n));
     ck_set(c, CK_RET, nd(c, n));
     let params = nc(c, n);
     let names = vnew();
@@ -1470,7 +1480,6 @@ fn check_function(c: i64, n: i64, is_macro: bool) -> i64 {
     ck_set(c, CK_FLOOR, saved_floor);
     ck_set(c, CK_PARAMS, saved_params);
     ck_set(c, CK_RET, saved_ret);
-    ck_set(c, CK_GENERICS, saved_generics);
     ck_set(c, CK_LENSLOCK, saved_locks);
     restore(c, pre);
     ck_set(c, CK_LENSCOUNT, saved_lens);
@@ -1520,20 +1529,102 @@ fn check_match(c: i64, n: i64) -> i64 {
     check_expr(c, target);
     let mut tt = infer_type(c, target);
     if tt < 0 {
-        tt = ck(c, CK_TY_I32);
+        tt = ck(c, CK_TY_UNK);
     }
     let arms = nb(c, n);
+    // Like if/else: a resource spent in one arm must be spent in all.
+    // spent: slots spent by some arm; hits: how many arms spent each.
+    let spent = vnew();
+    let hits = vnew();
     let mut i: i64 = 0;
     while i < list_len(c, arms) {
         let pre = snapshot(c);
+        let count = vget(pre, 0);
         bind_pattern(c, list_at(c, arms, i), tt, 0);
         let guard = list_at(c, arms, i + 1);
         if guard >= 0 {
             check_expr(c, guard);
         }
         check_expr(c, list_at(c, arms, i + 2));
+        let t = touched_slots(c, pre, count);
+        let mut a: i64 = 0;
+        while a < vlen(t) {
+            let slot = vget(t, a);
+            if vf(c, slot, V_STATE) == ST_SPENT {
+                let mut j: i64 = 0;
+                while j < vlen(spent) && vget(spent, j) != slot {
+                    j = j + 1;
+                }
+                if j == vlen(spent) {
+                    vpush(spent, slot);
+                    vpush(hits, 0);
+                }
+                vset(hits, j, vget(hits, j) + 1);
+            }
+            a = a + 1;
+        }
         restore(c, pre);
         i = i + 3;
+    }
+    let narms = list_len(c, arms) / 3;
+    let mut m: i64 = 0;
+    while m < vlen(spent) {
+        let slot = vget(spent, m);
+        if slot_visible(c, slot) && vf(c, slot, V_STATE) == ST_ACTIVE {
+            if vget(hits, m) != narms {
+                cfail(c, n, text_cat3("Resource ", quoted(c, vf(c, slot, V_NAME)), " is spent in some match arms but not in others."));
+            }
+            sset(c, slot, V_STATE, ST_SPENT);
+        }
+        m = m + 1;
+    }
+    update_borrow_states(c);
+    return 0;
+}
+
+// Argument count of a call to a Track function or a runtime builtin, and
+// a struct argument where a different struct is expected.
+fn check_call_args(c: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    let args = nb(c, n);
+    let got = list_len(c, args);
+    let mut target = name;
+    if ni(c, name, NI_FN) < 0 {
+        target = last_segment(c, name);
+    }
+    let f = ni(c, target, NI_FN);
+    if f >= 0 {
+        if nk(c, f) != K_FN {
+            return 0;
+        }
+        let params = nc(c, f);
+        let want = list_len(c, params) / 2;
+        if want != got {
+            return cfail(c, n, text_cat3("Function ", quoted(c, name), text_cat3(" expects ", text_of_int(want), text_cat3(" argument(s) but got ", text_of_int(got), "."))));
+        }
+        let mut i: i64 = 0;
+        while i < want {
+            let expected = struct_name_of(c, list_at(c, params, i * 2 + 1));
+            if expected >= 0 {
+                let actual = struct_name_of(c, infer_type(c, list_at(c, args, i)));
+                if actual >= 0 && actual != expected {
+                    cfail(c, list_at(c, args, i), text_cat3("Argument ", text_of_int(i + 1), text_cat3(" of ", quoted(c, name), text_cat3(" expects struct ", quoted(c, expected), text_cat3(" but got ", quoted(c, actual), ".")))));
+                }
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    if variant_disc(c, name) >= 0 || !fn_known(c, target) {
+        return 0;
+    }
+    let mut sym = target;
+    if text_eq(name_text(c, target), "abort") {
+        sym = intern(c, "track_abort");
+    }
+    let want = ni(c, sym, NI_EXTERN);
+    if want >= 0 && want != got {
+        return cfail(c, n, text_cat3("Builtin ", quoted(c, name), text_cat3(" expects ", text_of_int(want), text_cat3(" argument(s) but got ", text_of_int(got), "."))));
     }
     return 0;
 }
@@ -1612,6 +1703,9 @@ fn check_expr(c: i64, n: i64) -> i64 {
     }
     if k == K_TINDEX {
         check_borrow(c, na(c, n));
+        if ty_known_scalar(c, infer_type(c, na(c, n))) {
+            return cfail(c, n, "Tuple index on a value that is not a tuple.");
+        }
         let elems = tuple_elems_of(c, infer_type(c, na(c, n)));
         if elems >= 0 && nb(c, n) >= list_len(c, elems) {
             cfail(c, n, text_cat3("Tuple index ", text_of_int(nb(c, n)), text_cat(" out of bounds for tuple of length ", text_of_int(list_len(c, elems)))));
@@ -1620,6 +1714,9 @@ fn check_expr(c: i64, n: i64) -> i64 {
     }
     if k == K_INDEX || k == K_RANGE {
         check_borrow(c, na(c, n));
+        if k == K_INDEX && ty_known_scalar(c, infer_type(c, na(c, n))) {
+            return cfail(c, n, "Cannot index a value that is not an array, slice or pointer.");
+        }
         return check_borrow(c, nb(c, n));
     }
     if k == K_SLICE {
@@ -1664,6 +1761,7 @@ fn check_expr(c: i64, n: i64) -> i64 {
     }
     if k == K_CALL {
         check_call_target(c, n, na(c, n));
+        check_call_args(c, n);
         return check_list(c, nb(c, n));
     }
     if k == K_LET {
@@ -1690,8 +1788,9 @@ fn check_expr(c: i64, n: i64) -> i64 {
         return check_if(c, n);
     }
     if k == K_WHILE {
-        check_expr(c, na(c, n));
+        // The condition runs on every iteration, so it is part of the loop.
         let pre = snapshot(c);
+        check_expr(c, na(c, n));
         return check_loop_body(c, n, nb(c, n), pre, true);
     }
     if k == K_FOR {
@@ -1769,7 +1868,7 @@ fn check_expr(c: i64, n: i64) -> i64 {
         check_expr(c, value);
         let mut ty = infer_type(c, value);
         if ty < 0 {
-            ty = ck(c, CK_TY_I32);
+            ty = ck(c, CK_TY_UNK);
         }
         bind_pattern(c, na(c, n), ty, nb(c, n));
         return update_borrow_states(c);
@@ -1820,13 +1919,14 @@ fn checker_init(c: i64) -> i64 {
     ck_set(c, CK_SEEN, vnew_cap(1024));
     ck_set(c, CK_PRESTATE, vnew_cap(1024));
     ck_set(c, CK_RET, -1);
-    ck_set(c, CK_GENERICS, 0);
     ck_set(c, CK_TY_I32, prim_type(c, PRIM_I32));
+    ck_set(c, CK_TY_UNK, prim_type(c, PRIM_I32));
     ck_set(c, CK_TY_BOOL, prim_type(c, PRIM_BOOL));
     ck_set(c, CK_TY_VOID, prim_type(c, PRIM_VOID));
     ck_set(c, CK_TY_I64, prim_type(c, PRIM_I64));
     ck_set(c, CK_TY_STRLIT, node1(c, T_PTR, prim_type(c, PRIM_I32), -1));
     register_builtins(c);
+    register_runtime(c);
     return 0;
 }
 

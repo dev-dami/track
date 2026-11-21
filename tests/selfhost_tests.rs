@@ -461,3 +461,145 @@ fn native_test_suite_passes_under_trackc() {
         );
     }
 }
+
+/// (name, source, accepted) for trackc alone: holes the review found where
+/// the Rust checker is also wrong (or differs) and trackc must be right.
+const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
+    (
+        "generic_param_is_linear",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { let t = dup(str_concat(\"a\", \"b\")); print(t.0); }",
+        false,
+    ),
+    (
+        "generic_param_used_once",
+        "fn id<T>(x: T) -> T { return x; } fn main() -> void { let s = id(str_concat(\"a\", \"b\")); print(s); print(id(3)); }",
+        true,
+    ),
+    ("const_div_by_zero", "const D = 7 / 0; fn main() -> void { print(D); }", false),
+    ("const_mod_by_zero", "const D = 7 % 0; fn main() -> void { print(D); }", false),
+    (
+        "const_not_constant",
+        "fn f() -> i64 { return 1; } const D = f(); fn main() -> void { print(D); }",
+        false,
+    ),
+    ("const_cycle", "const A = B; const B = A; fn main() -> void { print(A); }", false),
+    (
+        "arity_too_few",
+        "fn f(a: i64, b: i64) -> i64 { return a + b; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    (
+        "arity_too_many",
+        "fn f(a: i64) -> i64 { return a; } fn main() -> void { print(f(1, 2)); }",
+        false,
+    ),
+    ("arity_builtin", "fn main() -> void { print(str_concat(\"a\")); }", false),
+    ("destructure_int", "fn main() -> void { let (a, b) = 1; print(a); }", false),
+    ("tuple_index_on_int", "fn main() -> void { let x = 1; print(x.0); }", false),
+    ("index_on_int", "fn main() -> void { let x = 1; print(x[0]); }", false),
+    (
+        "destructure_too_many",
+        "fn main() -> void { let t = (1, 2); let (a, b, c) = t; print(c); }",
+        false,
+    ),
+    (
+        "consume_in_match_arm",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); let k = 1; match k { 1 => eat(s), _ => print(0), } print(s); }",
+        false,
+    ),
+    (
+        "consume_in_while_cond",
+        "fn eat(s: Str) -> bool { return true; } fn main() -> void { let s = str_concat(\"a\", \"b\"); while eat(s) { print(1); return; } }",
+        false,
+    ),
+    (
+        "wrong_struct_ref",
+        "struct A { x: i64, y: i64 } struct B { y: i64, z: i64, x: i64 } fn gx(p: &A) -> i64 { return p.x; } fn main() -> void { let b = B { y: 20, z: 30, x: 10 }; print(gx(&b)); }",
+        false,
+    ),
+    (
+        "right_struct_ref",
+        "struct A { x: i64, y: i64 } fn gx(p: &A) -> i64 { return p.x; } fn main() -> void { let a = A { x: 1, y: 2 }; print(gx(&a)); }",
+        true,
+    ),
+    (
+        "shadow_in_else_hides_consume",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { eat(s); } else { let s = 1; } }",
+        false,
+    ),
+];
+
+#[test]
+fn trackc_closes_checker_holes() {
+    let dir = scratch("trackc_verdicts");
+    for (name, source, accepted) in TRACKC_VERDICTS {
+        let file = dir.join(format!("{}.trk", name));
+        fs::write(&file, source).unwrap();
+        let native = run_trackc(&["check", file.to_str().unwrap()], &dir);
+        assert_eq!(
+            native.status.success(),
+            *accepted,
+            "{}: trackc verdict: {}",
+            name,
+            String::from_utf8_lossy(&native.stderr)
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// (name, source, expected stdout) of programs built by trackc.
+const RUN_OUTPUTS: &[(&str, &str, &str)] = &[
+    (
+        "const_forward_reference",
+        "const B = A * 2; const A = 3; const C = 5 > 2; const S = \"hi\"; fn main() -> void { print(B); print(C); print(S); }",
+        "6\n1\nhi\n",
+    ),
+    (
+        "tuple_in_returned_tuple",
+        "fn mk(n: i64) -> ((i64, i64), i64) { let inner = (n, n * 2); return (inner, 9); } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let t = mk(3); print(clobber(100)); let i = t.0; print(i.1); }",
+        "200\n6\n",
+    ),
+    (
+        "tuple_in_returned_struct",
+        "struct H { t: (i64, i64) } fn mk(n: i64) -> H { return H { t: (n, n + 1) }; } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let h = mk(7); print(clobber(100)); let t = h.t; print(t.1); }",
+        "200\n8\n",
+    ),
+    (
+        "tuple_in_returned_union",
+        "union U { P((i64, i64)), N } fn mk(n: i64) -> U { return U::P((n, n + 5)); } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let u = mk(1); print(clobber(100)); match u { U::P(t) => print(t.1), U::N => print(0) } }",
+        "200\n6\n",
+    ),
+    (
+        "tuple_in_returned_array",
+        "fn mk(n: i64) -> [](i64, i64) { return [(n, n + 1)]; } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let a = mk(4); print(clobber(100)); let t = a[0]; print(t.1); }",
+        "200\n5\n",
+    ),
+    (
+        "tuple_literal_in_loop",
+        "fn main() -> void { let mut a = [(0, 0), (0, 0), (0, 0)]; for i in 0..3 { a[i] = (i, i * 10); } print(a[0].1); print(a[2].1); }",
+        "0\n20\n",
+    ),
+];
+
+#[test]
+fn trackc_programs_print_the_expected_output() {
+    let dir = scratch("run_outputs");
+    for (name, source, expected) in RUN_OUTPUTS {
+        let file = dir.join(format!("{}.trk", name));
+        fs::write(&file, source).unwrap();
+        let out = run_trackc(&["run", file.to_str().unwrap()], &dir);
+        assert!(
+            out.status.success(),
+            "{}: trackc run failed: {}",
+            name,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            *expected,
+            "{}: wrong output",
+            name
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
