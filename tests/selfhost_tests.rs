@@ -981,5 +981,9 @@ fn life_dumps_match_goldens() {
             checked += 1;
         }
     }
-    assert!(checked >= 17, "expected at least 17 programs, saw {}", checked);
+    assert!(
+        checked >= 17,
+        "expected at least 17 programs, saw {}",
+        checked
+    );
 }
