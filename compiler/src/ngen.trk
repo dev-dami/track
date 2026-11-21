@@ -2634,6 +2634,25 @@ fn ng_binop(c: i64, n: i64) -> i64 {
         ng_gen(c, r);
         return ng_op_apply(c, op, 0, lk, lv);
     }
+    if (op == OP_ADD || op == OP_SUB || op == OP_BAND || op == OP_BOR) && nk(c, r) == K_INDEX
+        && ng_safe_index(c, na(c, r), nb(c, r)) >= 0 && ng_opnd(c, na(c, r)) == 2 {
+        let av = ng(c, NG_OPV);
+        if ng_opnd(c, nb(c, r)) == 2 {
+            // rax op= a[i] from memory, array and index in registers
+            let iv = ng(c, NG_OPV);
+            ng_gen(c, l);
+            let ra = ng_reg(c, av);
+            let ri = ng_reg(c, iv);
+            if ra >= 0 && ri >= 0 {
+                return x_rmx(b, 0, ng_op_rm(op), 0, ra, ri, 3, 8);
+            }
+            x_push_rax(b);
+            ng_index_direct(c, na(c, r), nb(c, r), false);
+            x_mov_rcx_rax(b);
+            x_pop_rax(b);
+            return ng_op_rcx(c, op);
+        }
+    }
     ng_gen2(c, l, r);
     return ng_op_rcx(c, op);
 }
