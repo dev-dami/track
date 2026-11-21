@@ -108,6 +108,33 @@ counter restarts per function. Calls to functions that are neither Track
 functions nor runtime functions are declared as externs from their first
 call site.
 
+## Native backend (no C toolchain)
+
+`trackc build --native app.trk -o app` lowers the checked AST straight to
+x86-64 machine code and writes a static Linux ELF executable: no C
+compiler, assembler or linker runs.
+
+| Module | Role |
+| :--- | :--- |
+| `x64.trk` | instruction encoder (one byte per vector word, rel32 patching) |
+| `ngen.trk` | lowering from the AST, construct for construct like `cgen.trk` |
+| `elf.trk` | one RWX `PT_LOAD` segment at `0x400000`; written with raw syscalls |
+
+Every expression leaves its value in `rax`; operands wait on the machine
+stack; locals and temporaries are `rbp`-relative slots. Calls push the
+arguments left to right and the callee reads argument `i` of `n` at
+`[rbp + 16 + 8(n-1-i)]`. `syscall6`, `load64`, `store64`, `load8`,
+`store8` (and the libc spellings `syscall`, `memset`, which `elf.trk`
+uses so the C path links them from libc) compile to instructions. String
+literals follow the code. `_start` calls `rt_start(argc, argv)`, then
+`main()`, then `sys_exit(result)`.
+
+The runtime is Track code loaded with the program: `$TRACK_RT`, else
+`compiler/rt/mod.trk`, else the test stub `compiler/rt_stub/mod.trk`.
+The natively built `trackc` compiles itself to a byte-identical fixed
+point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
+compares native and C builds of the examples.
+
 ## The runtime
 
 `runtime/track_runtime.c` is the single source of truth. The Rust compiler
