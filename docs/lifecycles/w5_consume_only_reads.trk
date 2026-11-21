@@ -1,0 +1,7 @@
+// W-LC05: a parameter is taken by value (consumed) but the callee only reads it.
+struct Point { x: i64, y: i64 }
+fn norm1(p: Point) -> i64 { return p.x + p.y; }
+fn main() -> void {
+    let p = Point { x: 1, y: 2 };
+    print(norm1(p));
+}

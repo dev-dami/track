@@ -1,0 +1,9 @@
+// W-LC04: the result of a function whose only effect is producing it is dropped.
+struct Vec2 { x: i64, y: i64 }
+fn vadd(a: &Vec2, b: &Vec2) -> Vec2 { return Vec2 { x: a.x + b.x, y: a.y + b.y }; }
+fn main() -> void {
+    let a = Vec2 { x: 1, y: 2 };
+    let b = Vec2 { x: 3, y: 4 };
+    vadd(&a, &b);
+    print(a.x);
+}
