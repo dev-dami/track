@@ -21,10 +21,10 @@ const G_DECLS = 0;    // current function: local declarations
 const G_BODY = 1;     // current function: statements
 const G_NLOCAL = 2;
 const G_NTEMP = 3;
-const G_NSLOT = 4;
+const G_NSLOT = 4;     // unused
 const G_INDENT = 5;
 const G_BOUND = 6;    // scope stack: (name, previous binding) pairs
-const G_TUPLES = 7;   // local id -> tuple arity of a stack tuple (or -1)
+const G_TUPLES = 7;   // unused (tuples are heap cells)
 const G_RETVAL = 8;   // current function returns a value
 const G_EXTERNS = 9;  // extern (non-runtime) functions in first-use order
 const G_FUNCS = 10;   // emitted function definitions
@@ -70,7 +70,6 @@ fn new_local(c: i64, name: i64) -> i64 {
     let id = g_counter(c, G_NLOCAL);
     let text = local_name(c, id);
     sb_line(g(c, G_DECLS), text_cat3("    tk_w ", text, text_cat3(" = 0; /* ", name_text(c, name), " */")));
-    vpush(g(c, G_TUPLES), -1);
     bind(c, name, id);
     return id;
 }
@@ -94,9 +93,6 @@ fn scope_end(c: i64, mark: i64) -> i64 {
     return 0;
 }
 
-fn set_tuple_arity(c: i64, id: i64, arity: i64) -> i64 {
-    return vset(g(c, G_TUPLES), id, arity);
-}
 
 // ------------------------------------------------------------ literals
 
@@ -481,17 +477,7 @@ fn gen_return(c: i64, n: i64) -> i64 {
     let value = na(c, n);
     let mut v: i64 = "0";
     if value >= 0 {
-        if nk(c, value) == K_TUPLE {
-            v = gen_cell(c, gen_list_values(c, na(c, value)));
-        } else if nk(c, value) == K_VAR && ni(c, na(c, value), NI_CVAR) >= 0 && vget(g(c, G_TUPLES), ni(c, na(c, value), NI_CVAR)) >= 0 {
-            // A tuple living in a stack slot must outlive the frame.
-            let local = ni(c, na(c, value), NI_CVAR);
-            let t = temp(c);
-            emit(c, text_cat3(t, " = track_words_copy(", text_cat3(local_name(c, local), ", ", text_cat(text_of_int(vget(g(c, G_TUPLES), local)), ");"))));
-            v = t;
-        } else {
-            v = gen(c, value);
-        }
+        v = gen(c, value);
     }
     if g(c, G_RETVAL) == 1 {
         emit(c, text_cat3("return ", v, ";"));
@@ -501,20 +487,10 @@ fn gen_return(c: i64, n: i64) -> i64 {
     return "0";
 }
 
+// A tuple is a heap cell: it may be stored in a struct, union, array or
+// another tuple, returned, or built once per loop iteration.
 fn gen_tuple(c: i64, n: i64) -> i64 {
-    let values = gen_list_values(c, na(c, n));
-    let slot = text_cat("s", text_of_int(g_counter(c, G_NSLOT)));
-    let mut size = vlen(values);
-    if size < 1 {
-        size = 1;
-    }
-    sb_line(g(c, G_DECLS), text_cat3("    tk_w ", slot, text_cat3("[", text_of_int(size), "];")));
-    let mut i: i64 = 0;
-    while i < vlen(values) {
-        emit(c, text_cat3(slot, text_cat3("[", text_of_int(i), "] = "), text_cat(vget(values, i), ";")));
-        i = i + 1;
-    }
-    return text_cat3("TK_W(", slot, ")");
+    return gen_cell(c, gen_list_values(c, na(c, n)));
 }
 
 fn load_text(base: i64, i: i64) -> i64 {
@@ -728,9 +704,6 @@ fn gen(c: i64, n: i64) -> i64 {
         let v = gen(c, nd(c, n));
         let id = new_local(c, na(c, n));
         emit(c, text_cat3(local_name(c, id), " = ", text_cat(v, ";")));
-        if nk(c, nd(c, n)) == K_TUPLE {
-            set_tuple_arity(c, id, list_len(c, na(c, nd(c, n))));
-        }
         return local_name(c, id);
     }
     if k == K_ASSIGN {
@@ -739,11 +712,6 @@ fn gen(c: i64, n: i64) -> i64 {
         if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
             let id = ni(c, na(c, target), NI_CVAR);
             emit(c, text_cat3(local_name(c, id), " = ", text_cat(v, ";")));
-            if nk(c, nb(c, n)) == K_TUPLE {
-                set_tuple_arity(c, id, list_len(c, na(c, nb(c, n))));
-            } else {
-                set_tuple_arity(c, id, -1);
-            }
             return local_name(c, id);
         }
         return gen_assign_place(c, target, gen_into_temp(c, v));
@@ -835,9 +803,7 @@ fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
     g_set(c, G_BODY, sb_new());
     g_set(c, G_NLOCAL, 0);
     g_set(c, G_NTEMP, 0);
-    g_set(c, G_NSLOT, 0);
     g_set(c, G_INDENT, 1);
-    g_set(c, G_TUPLES, vnew());
     let is_main = text_eq(name_text(c, na(c, f)), "main");
     let ret = nd(c, f);
     let mut returns: i64 = 0;
@@ -851,7 +817,6 @@ fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
     while i < list_len(c, params) {
         let id = new_local(c, list_at(c, params, i));
         emit(c, text_cat3(local_name(c, id), " = a", text_cat(text_of_int(i / 2), ";")));
-        set_tuple_arity(c, id, tuple_arity(c, list_at(c, params, i + 1)));
         i = i + 2;
     }
     if prelude >= 0 {
