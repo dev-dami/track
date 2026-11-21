@@ -45,7 +45,10 @@ const NG_CBIND = 20;   // constants bound to inlined parameters (NI_CVAR -2 - i)
 const NG_BODYOK = 21;  // name id -> 0 unknown, -1 no, else names declared
 const NG_EXITS = 22;   // stack of return-jump lists of inlined bodies
 const NG_NONE = 23;    // an empty vector
-const NG_SLOTS = 24;
+const NG_AB = 24;      // scratch: address base slot
+const NG_AI = 25;      // scratch: address index slot (-1)
+const NG_AD = 26;      // scratch: address displacement
+const NG_SLOTS = 27;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -710,9 +713,99 @@ fn ng_addr(c: i64, n: i64) -> i64 {
     return 0;
 }
 
+// Is address `n` slot [+ slot] [+ constant]? Sets NG_AB (base slot),
+// NG_AI (index slot, -1) and NG_AD (displacement).
+fn ng_pure_addr(c: i64, n: i64) -> bool {
+    if nk(c, n) == K_BIN && na(c, n) == OP_ADD {
+        if ng_fold(c, nc(c, n)) {
+            let d = ng(c, NG_OPV);
+            if !x_fits32(d) || !ng_pure_addr(c, nb(c, n)) {
+                return false;
+            }
+            let t = ng(c, NG_AD) + d;
+            ng_set(c, NG_AD, t);
+            return x_fits32(t);
+        }
+        if ng_opnd(c, nb(c, n)) == 2 {
+            let base = ng(c, NG_OPV);
+            if ng_opnd(c, nc(c, n)) == 2 {
+                ng_set(c, NG_AB, base);
+                ng_set(c, NG_AI, ng(c, NG_OPV));
+                ng_set(c, NG_AD, 0);
+                return true;
+            }
+        }
+        return false;
+    }
+    if ng_opnd(c, n) == 2 {
+        ng_set(c, NG_AB, ng(c, NG_OPV));
+        ng_set(c, NG_AI, -1);
+        ng_set(c, NG_AD, 0);
+        return true;
+    }
+    return false;
+}
+
+// Memory operation on the address ng_pure_addr found: base in its register
+// or rax, index in its register or rdx.
+fn ng_amode_op(c: i64, pre: i64, opc: i64, reg: i64) -> i64 {
+    let b = ncode(c);
+    let base = ng(c, NG_AB);
+    let idx = ng(c, NG_AI);
+    let d = ng(c, NG_AD);
+    let mut br = ng_reg(c, base);
+    if br < 0 {
+        ng_load_to(c, base, 0);
+        br = 0;
+    }
+    if idx < 0 {
+        if pre != 0 {
+            return x_rm2(b, opc, reg, br, d);
+        }
+        return x_rm(b, opc, reg, br, d);
+    }
+    let mut ir = ng_reg(c, idx);
+    if ir < 0 {
+        ng_load_to(c, idx, 2);
+        ir = 2;
+    }
+    return x_rmx(b, pre, opc, reg, br, ir, 0, d);
+}
+
 // load64/load8/store64/store8 with folded displacements.
 fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
     let b = ncode(c);
+    let nargs = list_len(c, args);
+    if nargs >= 1 && ng_pure_addr(c, list_at(c, args, 0)) {
+        if nargs == 1 && text_eq(text, "load64") {
+            ng_amode_op(c, 0, 139, 0);
+            return true;
+        }
+        if nargs == 1 && text_eq(text, "load8") {
+            ng_amode_op(c, 15, 182, 0);
+            return true;
+        }
+        if nargs == 2 && (text_eq(text, "store64") || text_eq(text, "store8")) {
+            let v = list_at(c, args, 1);
+            let vk = ng_opnd(c, v);
+            let vv = ng(c, NG_OPV);
+            if vk > 0 {
+                ng_opnd_to(c, vk, vv, 1);
+            } else {
+                ng_gen(c, v);
+                x_mov_rcx_rax(b);
+            }
+            // the value may have clobbered the scratch; re-derive the address
+            ng_pure_addr(c, list_at(c, args, 0));
+            if text_eq(text, "store64") {
+                ng_amode_op(c, 0, 137, 1);
+            } else {
+                ng_amode_op(c, 0, 136, 1);
+            }
+            x_mov_ri(b, 0, 0);
+            return true;
+        }
+    }
     if text_eq(text, "load64") || text_eq(text, "load8") {
         if list_len(c, args) != 1 {
             return false;
