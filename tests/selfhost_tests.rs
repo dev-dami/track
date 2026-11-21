@@ -462,6 +462,120 @@ fn native_test_suite_passes_under_trackc() {
     }
 }
 
+/// Build `src` with trackc once per runtime and return both runs.
+fn run_under_both_runtimes(
+    dir: &Path,
+    stem: &str,
+    src: &Path,
+) -> ((String, Option<i32>), (String, Option<i32>)) {
+    let c_exe = dir.join(format!("{}_crt", stem));
+    let t_exe = dir.join(format!("{}_trt", stem));
+    let out = run_trackc(
+        &["build", src.to_str().unwrap(), "-o", c_exe.to_str().unwrap()],
+        dir,
+    );
+    assert!(
+        out.status.success(),
+        "{}: build failed: {}",
+        stem,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run_trackc(
+        &[
+            "build",
+            "--rt=track",
+            src.to_str().unwrap(),
+            "-o",
+            t_exe.to_str().unwrap(),
+        ],
+        dir,
+    );
+    assert!(
+        out.status.success(),
+        "{}: --rt=track build failed: {}{}",
+        stem,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (run_exe(&c_exe), run_exe(&t_exe))
+}
+
+/// The Track runtime (compiler/rt/*.trk) links without libc and behaves
+/// like runtime/track_runtime.c on the examples and the runtime smoke test.
+#[test]
+fn track_runtime_matches_the_c_runtime() {
+    let dir = scratch("trackrt");
+    let mut programs: Vec<PathBuf> = fs::read_dir(repo().join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "trk"))
+        .filter(|p| {
+            let s = p.file_stem().unwrap().to_string_lossy().to_string();
+            !s.ends_with("_err") && s != "net_demo"
+        })
+        .collect();
+    programs.push(repo().join("compiler/rt/tests/rt_smoke.trk"));
+    programs.sort();
+    for program in programs {
+        let stem = program.file_stem().unwrap().to_string_lossy().to_string();
+        let (c, t) = run_under_both_runtimes(&dir, &stem, &program);
+        assert_eq!(c, t, "{}: behaviour differs between runtimes", stem);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// trackc linked against the Track runtime (no libc) compiles the compiler
+/// to the same C as trackc on the C runtime.
+#[test]
+fn trackc_on_the_track_runtime_self_compiles() {
+    let dir = scratch("trackrt_self");
+    for stage in ["rt", "a", "b"] {
+        fs::create_dir_all(dir.join(stage)).unwrap();
+    }
+    let rt_trackc = dir.join("rt/trackc");
+    let out = run_trackc(
+        &[
+            "build",
+            "--rt=track",
+            "compiler/src/main.trk",
+            "-o",
+            rt_trackc.to_str().unwrap(),
+        ],
+        &repo(),
+    );
+    assert!(
+        out.status.success(),
+        "--rt=track build of trackc failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let elf = fs::read(&rt_trackc).unwrap();
+    assert!(
+        !elf.windows(7).any(|w| w == b"libc.so"),
+        "trackc on the Track runtime must not link libc"
+    );
+    let a_exe = dir.join("a/trackc");
+    let out = run_trackc(
+        &["build", "compiler/src/main.trk", "-o", a_exe.to_str().unwrap()],
+        &repo(),
+    );
+    assert!(out.status.success());
+    let b_exe = dir.join("b/trackc");
+    let out = Command::new(&rt_trackc)
+        .args(["build", "compiler/src/main.trk", "-o", b_exe.to_str().unwrap()])
+        .current_dir(repo())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "trackc on the Track runtime failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let a = fs::read(dir.join("a/trackc.c")).unwrap();
+    let b = fs::read(dir.join("b/trackc.c")).unwrap();
+    assert!(a == b, "trackc on the Track runtime emitted different C");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// (name, source, accepted) for trackc alone: holes the review found where
 /// the Rust checker is also wrong (or differs) and trackc must be right.
 const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
