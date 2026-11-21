@@ -543,6 +543,19 @@ fn track_runtime_matches_the_c_runtime() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A program without `main` runs its top-level statements under both
+/// runtimes (the Track runtime's rt_start calls the synthetic main).
+#[test]
+fn program_without_main_runs_on_both_runtimes() {
+    let dir = scratch("trackrt_nomain");
+    let src = dir.join("nomain.trk");
+    fs::write(&src, "let x = 41;\nprint(x + 1);\n").unwrap();
+    let (c, t) = run_under_both_runtimes(&dir, "nomain", &src);
+    assert_eq!(c, ("42\n".to_string(), Some(0)));
+    assert_eq!(c, t, "behaviour differs between runtimes");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// trackc linked against the Track runtime (no libc) compiles the compiler
 /// to the same C as trackc on the C runtime.
 #[test]
@@ -602,5 +615,283 @@ fn trackc_on_the_track_runtime_self_compiles() {
     let a = fs::read(dir.join("a/trackc.c")).unwrap();
     let b = fs::read(dir.join("b/trackc.c")).unwrap();
     assert!(a == b, "trackc on the Track runtime emitted different C");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// (name, source, accepted) for trackc alone: holes the review found where
+/// the Rust checker is also wrong (or differs) and trackc must be right.
+const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
+    (
+        "generic_param_is_linear",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { let t = dup(str_concat(\"a\", \"b\")); print(t.0); }",
+        false,
+    ),
+    (
+        "generic_param_used_once",
+        "fn id<T>(x: T) -> T { return x; } fn main() -> void { let s = id(str_concat(\"a\", \"b\")); print(s); print(id(3)); }",
+        true,
+    ),
+    // Generics are checked per instantiation: T is Copy when bound to i64.
+    (
+        "generic_dup_of_copy_type",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { let t = dup(3); print(t.0); }",
+        true,
+    ),
+    (
+        "generic_twice_of_copy_type",
+        "fn twice<T>(x: T) -> T { let a = x; let b = x; return b; } fn main() -> void { let n: i64 = 4; print(twice(n)); }",
+        true,
+    ),
+    (
+        "generic_twice_of_linear_type",
+        "fn twice<T>(x: T) -> T { let a = x; let b = x; return b; } fn main() -> void { let s = str_concat(\"a\", \"b\"); print(twice(s)); }",
+        false,
+    ),
+    (
+        "generic_both_instantiations_checked",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { let t = dup(3); print(t.0); let u = dup(str_concat(\"a\", \"b\")); print(u.0); }",
+        false,
+    ),
+    (
+        "generic_nested_instantiation_linear",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn wrap<U>(y: U) -> (U, U) { return dup(y); } fn main() -> void { let t = wrap(str_concat(\"a\", \"b\")); print(t.0); }",
+        false,
+    ),
+    (
+        "generic_nested_instantiation_copy",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn wrap<U>(y: U) -> (U, U) { return dup(y); } fn main() -> void { let t = wrap(7); print(t.1); }",
+        true,
+    ),
+    (
+        "generic_pick_with_early_return",
+        "fn pick<T>(c: bool, a: T, b: T) -> T { if c { return a; } return b; } fn main() -> void { let x: i64 = 1; let y: i64 = 2; print(pick(true, x, y)); print(x + y); }",
+        true,
+    ),
+    (
+        "generic_max_of_copy_type",
+        "fn mx<T>(a: T, b: T) -> T { if a > b { return a; } return b; } fn main() -> void { print(mx(3, 9)); }",
+        true,
+    ),
+    (
+        "generic_max_of_linear_type",
+        "fn mx<T>(a: T, b: T) -> T { if a > b { return a; } return b; } fn main() -> void { let s = mx(str_concat(\"a\", \"b\"), str_concat(\"c\", \"d\")); print(s); }",
+        true,
+    ),
+    (
+        "unused_generic_checked_linear",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { print(1); }",
+        false,
+    ),
+    // A branch that returns does not take part in the state merge.
+    (
+        "returning_then_branch_skips_merge",
+        "fn eat(s: Str) -> void { } fn f(s: Str, c: bool) -> i64 { if c { eat(s); return 1; } eat(s); return 0; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), true)); }",
+        true,
+    ),
+    (
+        "returning_else_branch_skips_merge",
+        "fn eat(s: Str) -> void { } fn f(s: Str, c: bool) -> i64 { if c { print(1); } else { eat(s); return 0; } eat(s); return 1; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), true)); }",
+        true,
+    ),
+    (
+        "returning_else_keeps_then_state",
+        "fn eat(s: Str) -> void { } fn f(s: Str, c: bool) -> i64 { if c { eat(s); } else { return 0; } eat(s); return 1; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), true)); }",
+        false,
+    ),
+    (
+        "returning_branch_in_loop",
+        "fn eat(s: Str) -> void { } fn f(s: Str) -> i64 { let mut i = 0; while i < 3 { if i == 2 { eat(s); return i; } i = i + 1; } eat(s); return 0; } fn main() -> void { print(f(str_concat(\"a\", \"b\"))); }",
+        true,
+    ),
+    (
+        "aborting_branch_skips_merge",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); let c = true; if c { eat(s); } else { abort(\"no\"); } print(1); }",
+        true,
+    ),
+    (
+        "returning_match_arm_skips_merge",
+        "fn eat(s: Str) -> void { } fn g(s: Str) -> i64 { return 1; } fn f(s: Str, k: i64) -> i64 { match k { 1 => return g(s), _ => print(0), } eat(s); return 0; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), 1)); }",
+        true,
+    ),
+    ("const_div_by_zero", "const D = 7 / 0; fn main() -> void { print(D); }", false),
+    ("const_mod_by_zero", "const D = 7 % 0; fn main() -> void { print(D); }", false),
+    (
+        "const_not_constant",
+        "fn f() -> i64 { return 1; } const D = f(); fn main() -> void { print(D); }",
+        false,
+    ),
+    ("const_cycle", "const A = B; const B = A; fn main() -> void { print(A); }", false),
+    (
+        "arity_too_few",
+        "fn f(a: i64, b: i64) -> i64 { return a + b; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    (
+        "arity_too_many",
+        "fn f(a: i64) -> i64 { return a; } fn main() -> void { print(f(1, 2)); }",
+        false,
+    ),
+    ("arity_builtin", "fn main() -> void { print(str_concat(\"a\")); }", false),
+    ("destructure_int", "fn main() -> void { let (a, b) = 1; print(a); }", false),
+    ("tuple_index_on_int", "fn main() -> void { let x = 1; print(x.0); }", false),
+    ("index_on_int", "fn main() -> void { let x = 1; print(x[0]); }", false),
+    (
+        "destructure_too_many",
+        "fn main() -> void { let t = (1, 2); let (a, b, c) = t; print(c); }",
+        false,
+    ),
+    (
+        "consume_in_match_arm",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); let k = 1; match k { 1 => eat(s), _ => print(0), } print(s); }",
+        false,
+    ),
+    (
+        "consume_in_while_cond",
+        "fn eat(s: Str) -> bool { return true; } fn main() -> void { let s = str_concat(\"a\", \"b\"); while eat(s) { print(1); return; } }",
+        false,
+    ),
+    (
+        "wrong_struct_ref",
+        "struct A { x: i64, y: i64 } struct B { y: i64, z: i64, x: i64 } fn gx(p: &A) -> i64 { return p.x; } fn main() -> void { let b = B { y: 20, z: 30, x: 10 }; print(gx(&b)); }",
+        false,
+    ),
+    (
+        "right_struct_ref",
+        "struct A { x: i64, y: i64 } fn gx(p: &A) -> i64 { return p.x; } fn main() -> void { let a = A { x: 1, y: 2 }; print(gx(&a)); }",
+        true,
+    ),
+    (
+        "shadow_in_else_hides_consume",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { eat(s); } else { let s = 1; } }",
+        false,
+    ),
+];
+
+#[test]
+fn trackc_closes_checker_holes() {
+    let dir = scratch("trackc_verdicts");
+    for (name, source, accepted) in TRACKC_VERDICTS {
+        let file = dir.join(format!("{}.trk", name));
+        fs::write(&file, source).unwrap();
+        let native = run_trackc(&["check", file.to_str().unwrap()], &dir);
+        assert_eq!(
+            native.status.success(),
+            *accepted,
+            "{}: trackc verdict: {}",
+            name,
+            String::from_utf8_lossy(&native.stderr)
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// (name, source, expected stdout) of programs built by trackc.
+const RUN_OUTPUTS: &[(&str, &str, &str)] = &[
+    (
+        "const_forward_reference",
+        "const B = A * 2; const A = 3; const C = 5 > 2; const S = \"hi\"; fn main() -> void { print(B); print(C); print(S); }",
+        "6\n1\nhi\n",
+    ),
+    (
+        "tuple_in_returned_tuple",
+        "fn mk(n: i64) -> ((i64, i64), i64) { let inner = (n, n * 2); return (inner, 9); } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let t = mk(3); print(clobber(100)); let i = t.0; print(i.1); }",
+        "200\n6\n",
+    ),
+    (
+        "tuple_in_returned_struct",
+        "struct H { t: (i64, i64) } fn mk(n: i64) -> H { return H { t: (n, n + 1) }; } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let h = mk(7); print(clobber(100)); let t = h.t; print(t.1); }",
+        "200\n8\n",
+    ),
+    (
+        "tuple_in_returned_union",
+        "union U { P((i64, i64)), N } fn mk(n: i64) -> U { return U::P((n, n + 5)); } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let u = mk(1); print(clobber(100)); match u { U::P(t) => print(t.1), U::N => print(0) } }",
+        "200\n6\n",
+    ),
+    (
+        "tuple_in_returned_array",
+        "fn mk(n: i64) -> [](i64, i64) { return [(n, n + 1)]; } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let a = mk(4); print(clobber(100)); let t = a[0]; print(t.1); }",
+        "200\n5\n",
+    ),
+    (
+        "stack_tuple_reassigned_from_itself",
+        "fn main() -> void { let mut p = (1, 2); let mut i = 0; while i < 3 { p = (p.1, p.0 + p.1); i = i + 1; } print(p.0); print(p.1); }",
+        "5\n8\n",
+    ),
+    (
+        "stack_tuple_destructured_and_matched",
+        "fn main() -> void { let mut s = 0; for i in 0..4 { let t = (i, i * 2); let u = (i, 1); let (a, b) = t; match u { (0, _) => s = s + 100, (x, y) => s = s + x + y, } s = s + a + b; } print(s); }",
+        "127\n",
+    ),
+    (
+        "match_in_loop_resets_each_time",
+        "fn main() -> void { for i in 0..3 { match i { 0 => print(10), _ => print(i), } } }",
+        "10\n1\n2\n",
+    ),
+    (
+        "tuple_copied_out_of_loop_escapes",
+        "fn main() -> void { let mut keep = (0, 0); for i in 0..3 { let t = (i, i + 1); if i == 1 { keep = t; } else { let (a, b) = t; } } print(keep.0); print(keep.1); }",
+        "1\n2\n",
+    ),
+    (
+        "tuple_literal_in_loop",
+        "fn main() -> void { let mut a = [(0, 0), (0, 0), (0, 0)]; for i in 0..3 { a[i] = (i, i * 10); } print(a[0].1); print(a[2].1); }",
+        "0\n20\n",
+    ),
+];
+
+/// A tuple literal that never escapes lives in a stack slot: 20M of them in
+/// a loop allocate nothing (heap cells took ~600 MB before), while one that
+/// is returned stays a heap cell.
+#[test]
+fn non_escaping_tuples_use_stack_slots() {
+    let dir = scratch("stack_tuples");
+    let file = dir.join("t3.trk");
+    fs::write(
+        &file,
+        "fn pair(n: i64) -> (i64, i64) { let r = (n, n + 1); return r; } \
+         fn main() -> void { let mut i = 0; let mut acc = 0; while i < 20000000 { let p = (i, 1); acc = acc + p.1; i = i + 1; } print(acc); print(pair(4).1); }",
+    )
+    .unwrap();
+    let exe = dir.join("t3");
+    let out = run_trackc(&["build", file.to_str().unwrap(), "-o", exe.to_str().unwrap()], &dir);
+    assert!(out.status.success(), "build failed: {}", String::from_utf8_lossy(&out.stderr));
+    let c = fs::read_to_string(dir.join("t3.c")).unwrap();
+    let main_body = &c[c.find("tk_w tk_main(void) {").expect("tk_main")..];
+    let main_body = &main_body[..main_body.find("\n}\n").unwrap()];
+    assert!(!main_body.contains("alloc("), "loop tuple must not allocate:\n{}", main_body);
+    let pair_body = &c[c.find("tk_w tk_pair(tk_w a0) {").expect("tk_pair")..];
+    let pair_body = &pair_body[..pair_body.find("\n}\n").unwrap()];
+    assert!(pair_body.contains("alloc("), "returned tuple must be a heap cell:\n{}", pair_body);
+    // 64 MB of address space is far below what 20M heap cells need.
+    let run = Command::new("sh")
+        .arg("-c")
+        .arg(format!("ulimit -v 65536; exec {}", exe.display()))
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "t3 failed under a 64 MB limit");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "20000000\n5\n");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn trackc_programs_print_the_expected_output() {
+    let dir = scratch("run_outputs");
+    for (name, source, expected) in RUN_OUTPUTS {
+        let file = dir.join(format!("{}.trk", name));
+        fs::write(&file, source).unwrap();
+        let out = run_trackc(&["run", file.to_str().unwrap()], &dir);
+        assert!(
+            out.status.success(),
+            "{}: trackc run failed: {}",
+            name,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            *expected,
+            "{}: wrong output",
+            name
+        );
+    }
     let _ = fs::remove_dir_all(&dir);
 }

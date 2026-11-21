@@ -5,7 +5,10 @@
 import "base";
 import "ast";
 
-// Compile-time integer evaluation. Returns (ok, value).
+// Compile-time integer evaluation. Returns (ok, value). A reference to a
+// constant declared later evaluates it on demand (dependency order).
+// NI_CONSTOK: 0 unevaluated, 1 integer ready, 2 being evaluated,
+// 3 string constant (the C emitter inlines its literal).
 fn const_eval(c: i64, n: i64) -> (i64, i64) {
     let k = nk(c, n);
     if k == K_INT {
@@ -16,17 +19,30 @@ fn const_eval(c: i64, n: i64) -> (i64, i64) {
     }
     if k == K_VAR {
         let name = na(c, n);
+        if ni(c, name, NI_CONSTOK) != 1 && ni(c, name, NI_CONST) >= 0 {
+            eval_const_item(c, ni(c, name, NI_CONST));
+        }
         if ni(c, name, NI_CONSTOK) == 1 {
             return (1, ni(c, name, NI_CONSTVAL));
+        }
+        let disc = variant_disc(c, name);
+        if disc >= 0 && !is_payload_variant(c, name) {
+            return (1, disc);
         }
         return (0, 0);
     }
     if k == K_UN {
-        if na(c, n) != OP_NEG {
-            return (0, 0);
-        }
         let (ok, v) = const_eval(c, nb(c, n));
-        return (ok, 0 - v);
+        if na(c, n) == OP_NEG {
+            return (ok, 0 - v);
+        }
+        if na(c, n) == OP_NOT {
+            if v == 0 {
+                return (ok, 1);
+            }
+            return (ok, 0);
+        }
+        return (0, 0);
     }
     if k == K_BIN {
         let op = na(c, n);
@@ -35,18 +51,62 @@ fn const_eval(c: i64, n: i64) -> (i64, i64) {
         if lok == 0 || rok == 0 {
             return (0, 0);
         }
+        if (op == OP_DIV || op == OP_MOD) && r == 0 {
+            fail_at(c, npos(c, n), "E0200", "division by zero in a constant expression");
+        }
         if op == OP_ADD { return (1, l + r); }
         if op == OP_SUB { return (1, l - r); }
         if op == OP_MUL { return (1, l * r); }
-        if op == OP_DIV && r != 0 { return (1, l / r); }
-        if op == OP_MOD && r != 0 { return (1, l % r); }
+        if op == OP_DIV { return (1, l / r); }
+        if op == OP_MOD { return (1, l % r); }
         if op == OP_BAND { return (1, l & r); }
         if op == OP_BOR { return (1, l | r); }
         if op == OP_SHL { return (1, l << (r & 63)); }
         if op == OP_SHR { return (1, l >> (r & 63)); }
+        if op == OP_EQ { return (1, bool_word(l == r)); }
+        if op == OP_NEQ { return (1, bool_word(l != r)); }
+        if op == OP_LT { return (1, bool_word(l < r)); }
+        if op == OP_GT { return (1, bool_word(l > r)); }
+        if op == OP_LTE { return (1, bool_word(l <= r)); }
+        if op == OP_GTE { return (1, bool_word(l >= r)); }
+        if op == OP_AND { return (1, bool_word(l != 0 && r != 0)); }
+        if op == OP_OR { return (1, bool_word(l != 0 || r != 0)); }
         return (0, 0);
     }
     return (0, 0);
+}
+
+fn bool_word(b: bool) -> i64 {
+    if b {
+        return 1;
+    }
+    return 0;
+}
+
+// Evaluate the K_CONST item `n`. A string literal is kept as a string
+// constant; anything else must fold to an integer or it is an error.
+fn eval_const_item(c: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    let state = ni(c, name, NI_CONSTOK);
+    if state == 2 {
+        return fail_at(c, npos(c, n), "E0200", text_cat3("constant '", name_text(c, name), "' depends on itself"));
+    }
+    if state != 0 {
+        return 0;
+    }
+    ni_set(c, name, NI_CONSTOK, 2);
+    let value = nb(c, n);
+    if nk(c, value) == K_STR {
+        ni_set(c, name, NI_CONSTOK, 3);
+        return 0;
+    }
+    let (ok, v) = const_eval(c, value);
+    if ok == 0 {
+        return fail_at(c, npos(c, value), "E0200", text_cat3("constant '", name_text(c, name), "' is not a compile-time integer or string expression"));
+    }
+    ni_set(c, name, NI_CONSTOK, 1);
+    ni_set(c, name, NI_CONSTVAL, v);
+    return 0;
 }
 
 fn variant_name(c: i64, owner: i64, variant: i64) -> i64 {
@@ -67,12 +127,7 @@ fn collect_symbols_from(c: i64, from: i64) -> i64 {
         let n = vget(items, i);
         let k = nk(c, n);
         if k == K_CONST {
-            let (ok, v) = const_eval(c, nb(c, n));
             ni_set(c, na(c, n), NI_CONST, n);
-            if ok == 1 {
-                ni_set(c, na(c, n), NI_CONSTOK, 1);
-                ni_set(c, na(c, n), NI_CONSTVAL, v);
-            }
         } else if k == K_ENUM {
             let name = na(c, n);
             ni_set(c, name, NI_TYPEKIND, 1);
@@ -128,6 +183,16 @@ fn collect_symbols_from(c: i64, from: i64) -> i64 {
             ni_set(c, name, NI_FN, n);
         }
         i = i + 1;
+    }
+    // Constants are evaluated after every declaration is known, so a
+    // constant may refer to one declared later.
+    let mut j: i64 = 0;
+    while j < vlen(items) {
+        let n = vget(items, j);
+        if nk(c, n) == K_CONST && ni(c, na(c, n), NI_CONST) == n {
+            eval_const_item(c, n);
+        }
+        j = j + 1;
     }
     return 0;
 }
