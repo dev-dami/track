@@ -191,18 +191,37 @@ fn rt_sb_bytes(b: i64, p: i64, n: i64) -> i64 {
     return 0;
 }
 
+// Copies while the capacity lasts (one pass, no strlen); only a push that
+// outgrows the buffer measures the string and reallocates.
 fn track_sb_push(b: i64, s: i64) -> i64 {
     if b == 0 || s == 0 {
         return 0;
     }
-    return rt_sb_bytes(b, s, rt_strlen(s));
+    let len = load64(b + 8);
+    let dst = load64(b) + len;
+    let room = load64(b + 16) - len - 1;
+    let mut i: i64 = 0;
+    let mut ch = load8(s);
+    while ch != 0 {
+        if i >= room {
+            return rt_sb_bytes(b, s, rt_strlen(s));
+        }
+        store8(dst + i, ch);
+        i = i + 1;
+        ch = load8(s + i);
+    }
+    store8(dst + i, 0);
+    store64(b + 8, len + i);
+    return 0;
 }
 
 fn track_sb_push_byte(b: i64, byte: i64) -> i64 {
     if b == 0 {
         return 0;
     }
-    rt_sb_reserve(b, 1);
+    if load64(b + 8) + 2 > load64(b + 16) {
+        rt_sb_reserve(b, 1);
+    }
     let len = load64(b + 8);
     let data = load64(b);
     store8(data + len, byte);

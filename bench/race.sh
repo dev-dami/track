@@ -6,6 +6,7 @@
 # Prints the median wall-clock ms; ratio = trackc/rust (below 1.00 = trackc wins).
 # Run rows also show user-mode megacycles of one run (perf stat) and their
 # ratio, cratio: the steadier number when the machine is loaded.
+# A second table lists wall ms, page faults and user vs user+kernel megacycles.
 # Every bench/progs/*.trk program is built with both compilers and both
 # binaries must print identical output, else the row says MISMATCH and the
 # script exits non-zero at the end.
@@ -37,8 +38,28 @@ row() { # row <task> <t ms> <r ms> [note] [t Mcyc] [r Mcyc]
   printf '%-30s %8s %8s %6s %8s %8s %6s  %s\n' "$1" "$2" "$3" "$(ratio "$2" "$3")" \
     "${5:--}" "${6:--}" "$(ratio "${5:--}" "${6:--}")" "${4:-}"
 }
+# probe <bin>: one perf run per sample -> median "ms faults Mucyc Mtotcyc"
+# (wall ms, page faults, user-mode and user+kernel megacycles); "-" without perf.
+probe() {
+  command -v perf >/dev/null 2>&1 || { echo "- - - -"; return; }
+  _n=${RACE_RUNS:-5}; _i=0
+  while [ $_i -lt "$_n" ]; do
+    _s=$(date +%s%N)
+    _p=$(perf stat -x, -e page-faults,cycles:u,cycles "$@" 2>&1 >/dev/null || true)
+    _e=$(date +%s%N)
+    echo "$(( (_e - _s) / 1000000 )) $(echo "$_p" | awk -F, '
+      $3 ~ /^page-faults/ { f = $1 } $3 ~ /^cycles:u/ { u = $1 } $3 ~ /^cycles(:|$)/ && $3 !~ /:u/ { t = $1 }
+      END { printf "%s %s %s", f + 0, int(u / 1e6), int(t / 1e6) }')"
+    _i=$((_i + 1))
+  done | awk '{ for (k = 1; k <= 4; k++) v[k, NR] = $k; n = NR }
+    END { for (k = 1; k <= 4; k++) {
+            for (i = 1; i <= n; i++) x[i] = v[k, i] + 0
+            for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (x[j] < x[i]) { t = x[i]; x[i] = x[j]; x[j] = t }
+            printf "%s%s", x[int((n + 1) / 2)], (k < 4 ? " " : "\n") } }'
+}
 o=$(mktemp -d); trap 'rm -rf "$o"' EXIT
 fail=0
+rows=
 printf '%-30s %8s %8s %6s %8s %8s %6s  %s\n' "task" "trackc" "rust" "ratio" "t Mcyc" "r Mcyc" "cratio" "output"
 if [ "${RACE_SKIP_COMPILER:-0}" != 1 ]; then
   row "check compiler/src/main.trk" "$(med "$T" check compiler/src/main.trk)" "$(med "$R" check compiler/src/main.trk)"
@@ -56,6 +77,13 @@ for f in bench/progs/*.trk; do
   else
     chk="MISMATCH"; fail=1
   fi
+  rows="$rows$(printf '%-11s %-7s %s' "$n" trackc "$(probe "$o/$n.tk")")
+$(printf '%-11s %-7s %s' "$n" rust "$(probe "$o/$n.rs")")
+"
   row "run $n" "$(med "$o/$n.tk")" "$(med "$o/$n.rs")" "$chk" "$(cyc "$o/$n.tk")" "$(cyc "$o/$n.rs")"
 done
+# honest scoreboard: wall ms, page faults, user vs user+kernel megacycles (median of runs)
+printf '\n%-11s %-7s %8s %9s %9s %10s %7s\n' prog build "wall ms" faults "user Mcyc" "total Mcyc" "kern %"
+printf '%s' "$rows" | awk 'NF { k = ($5 > 0 && $6 >= $5) ? sprintf("%.0f", ($6 - $5) * 100 / $6) : "-"
+  printf "%-11s %-7s %8s %9s %9s %10s %7s\n", $1, $2, $3, $4, $5, $6, k }'
 exit $fail

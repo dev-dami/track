@@ -3,6 +3,7 @@
 //   trackc build <file.trk> [-o <exe>]    compile to a native executable
 //   trackc run <file.trk> [args...]       build to a temporary file and run
 //   trackc check <file.trk>               parse and ownership-check only
+//   --deny-warnings (any command, any position) makes warnings exit 1
 //   trackc emit-c <file.trk> [-o <file.c>] write the generated C
 //   trackc tokens <file.trk>              dump the token stream
 //   trackc --version
@@ -38,6 +39,7 @@ fn usage() -> i64 {
     err("\nOPTIONS:\n");
     err("    --rt=track   link the runtime written in Track (compiler/rt/)\n");
     err("                 instead of runtime/track_runtime.c; no libc\n");
+    err("    --deny-warnings  exit 1 when any warning is reported\n");
     return 0;
 }
 
@@ -69,7 +71,11 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
     lex_init(c);
     load_program(c, path);
     collect_symbols(c);
+    if env_exists("TRACKC_WARN_TEST") != 0 {
+        force_test_warnings(c);
+    }
     check_program(c);
+    finish_warnings(c);
     if with_rt {
         let from = vlen(cx(c, CX_ITEMS));
         let mut m: i64 = 0;
@@ -80,6 +86,41 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
         collect_symbols_from(c, from);
     }
     return c;
+}
+
+// Hidden test-only trigger, `TRACKC_WARN_TEST=1`: one `warning[W0000]` per
+// top-level item of the root module, recorded in reverse source order so
+// tests can see that diagnostics print sorted by position. Real warning
+// rules arrive with the lifecycle cards (docs/lifecycles.md, L6).
+fn force_test_warnings(c: i64) -> i64 {
+    let items = cx(c, CX_ITEMS);
+    let files = cx(c, CX_ITEMFILE);
+    let mut i: i64 = vlen(items) - 1;
+    while i >= 0 {
+        if vget(files, i) == cx(c, CX_MAINFILE) {
+            warn_at(c, npos(c, vget(items, i)), "W0000", "forced test warning (TRACKC_WARN_TEST)");
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+// Print the warnings found while checking. They never change the exit
+// status unless `--deny-warnings` is given.
+fn finish_warnings(c: i64) -> i64 {
+    let n = flush_warnings(c);
+    if n > 0 && has_flag("--deny-warnings") {
+        err(text_cat3("error: ", warning_count_text(n), " denied by --deny-warnings\n"));
+        quit(1);
+    }
+    return n;
+}
+
+fn warning_count_text(n: i64) -> i64 {
+    if n == 1 {
+        return "1 warning";
+    }
+    return text_cat(text_of_int(n), " warnings");
 }
 
 fn front_end(path: i64) -> i64 {
@@ -316,7 +357,7 @@ fn file_arg_index() -> i64 {
         let a = arg_text(i);
         if text_eq(a, "-o") {
             i = i + 2;
-        } else if text_starts(a, "--rt=") || text_eq(a, "--native") {
+        } else if text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") {
             i = i + 1;
         } else {
             return i;
@@ -483,8 +524,13 @@ fn main() -> i64 {
     }
     if text_eq(command, "check") {
         let path = require_file();
-        front_end(path);
-        out(text_cat3("✓ Check passed: ", path, "\n"));
+        let c = front_end(path);
+        let n = cx(c, CX_NWARN);
+        if n > 0 {
+            out(text_cat3("✓ Check passed: ", path, text_cat3(" (", warning_count_text(n), ")\n")));
+        } else {
+            out(text_cat3("✓ Check passed: ", path, "\n"));
+        }
         return 0;
     }
     if text_eq(command, "emit-c") {
