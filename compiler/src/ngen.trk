@@ -55,7 +55,9 @@ const NG_CLOB = 30;    // the function runs `syscall` sequences that clobber r8/
 const NG_VOLX = 31;    // the function clobbers volatile registers (calls, syscalls, scratch-heavy prims)
 const NG_STACKARGS = 32; // the current function takes its arguments on the stack (> 6 parameters)
 const NG_FRAMELESS = 33; // the current function has no rbp frame
-const NG_SLOTS = 34;
+const NG_ACCLVL = 34;  // inlining depth (NG_EXITS length) the accumulator loop belongs to
+const NG_CURFN = 35;   // the function being generated
+const NG_SLOTS = 36;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -121,6 +123,36 @@ fn ng_store_from(c: i64, k: i64, r: i64) -> i64 {
 
 fn ng_load(c: i64, k: i64) -> i64 { return ng_load_to(c, k, 0); }
 fn ng_store(c: i64, k: i64) -> i64 { return ng_store_from(c, k, 0); }
+
+// slot k = value of `n`, computed in k's register when that register is
+// not an operand of `n` (rax is not left holding the value).
+fn ng_gen_into(c: i64, n: i64, k: i64) -> i64 {
+    let r = ng_reg(c, k);
+    let kind = nk(c, n);
+    if r >= 0 && kind == K_BIN {
+        let op = na(c, n);
+        let l = nb(c, n);
+        let rr = nc(c, n);
+        let lk = ng_opnd(c, l);
+        let lv = ng(c, NG_OPV);
+        let rk = ng_opnd(c, rr);
+        let rv = ng(c, NG_OPV);
+        let okop = op == OP_ADD || op == OP_SUB || op == OP_BAND || op == OP_BOR || op == OP_MUL || op == OP_SHL || op == OP_SHR;
+        if lk > 0 && rk > 0 && okop && ng_op_direct(op, rk, rv) && !(rk == 2 && rv == k) {
+            ng_opnd_to(c, lk, lv, r);
+            return ng_op_apply(c, op, r, rk, rv);
+        }
+    }
+    if r >= 0 {
+        let vk = ng_opnd(c, n);
+        let vv = ng(c, NG_OPV);
+        if vk > 0 {
+            return ng_opnd_to(c, vk, vv, r);
+        }
+    }
+    ng_gen(c, n);
+    return ng_store(c, k);
+}
 
 // Store rax in a fresh temporary slot.
 fn ng_temp(c: i64) -> i64 {
@@ -699,7 +731,13 @@ fn ng_assigns(c: i64, l: i64, out: i64) -> i64 {
 // Inline the whole body of `f` at a call with `args`; false if not done.
 fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     let names = ng_body_names(c, f);
-    if names < 0 || ng(c, NG_INLDEPTH) >= 1 {
+    if names < 0 {
+        return false;
+    }
+    // an accumulator-recursive function inlines into itself NG_ACC_DEPTH
+    // levels deep, each copy running its own accumulator loop
+    let accmode = f == ng(c, NG_CURFN) && ng(c, NG_ACCFN) == f && ng(c, NG_ACC) >= 0;
+    if ng(c, NG_INLDEPTH) >= 1 && !(accmode && ng(c, NG_INLDEPTH) < NG_ACC_DEPTH) {
         return false;
     }
     let params = nc(c, f);
@@ -709,6 +747,13 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     }
     let assigned = vnew();
     ng_assigns(c, ne(c, f), assigned);
+    if accmode {
+        let mut q: i64 = 0;
+        while q < count {
+            vpush(assigned, list_at(c, params, q * 2));
+            q = q + 1;
+        }
+    }
     let mark = ng_bind_args(c, params, args, assigned);
     let saved_ret = ng(c, NG_RETVAL);
     let ret = nd(c, f);
@@ -719,12 +764,115 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     ng_set(c, NG_RETVAL, returns);
     let exits = ng(c, NG_EXITS);
     vpush(exits, vnew());
+    let saved_acc = ng(c, NG_ACC);
+    let saved_top = ng(c, NG_ACCTOP);
+    let saved_lvl = ng(c, NG_ACCLVL);
+    if accmode {
+        let acc = ng_slot(c);
+        ng_set_imm(c, acc, 0);
+        ng_set(c, NG_ACC, acc);
+        ng_set(c, NG_ACCTOP, x_here(ncode(c)));
+        ng_set(c, NG_ACCLVL, vlen(exits));
+        ng_loop_enter(c);
+    }
     ng_block_v(c, ne(c, f), returns != 1);
     if returns != 1 {
         x_mov_rax_imm(ncode(c), 0);
     }
     ng_patch_all(c, vpop(exits));
+    if accmode {
+        ng_add_acc(c);
+        ng_loop_leave(c);
+        ng_set(c, NG_ACC, saved_acc);
+        ng_set(c, NG_ACCTOP, saved_top);
+        ng_set(c, NG_ACCLVL, saved_lvl);
+    }
     ng_set(c, NG_RETVAL, saved_ret);
+    ng_inline_end(c, mark);
+    return true;
+}
+
+const NG_ACC_DEPTH = 3;
+
+// `if cond { return e; }` opening `f`'s body with cond and e small
+// call-free expressions of its parameters: the guard, or -1.
+fn ng_guard(c: i64, f: i64) -> i64 {
+    let body = ne(c, f);
+    if list_len(c, body) < 2 {
+        return -1;
+    }
+    let st = list_at(c, body, 0);
+    if nk(c, st) != K_IF || list_len(c, nc(c, st)) != 0 || list_len(c, nb(c, st)) != 1 {
+        return -1;
+    }
+    let r = list_at(c, nb(c, st), 0);
+    if nk(c, r) != K_RETURN || na(c, r) < 0 {
+        return -1;
+    }
+    if !ng_param_expr(c, na(c, st), f) || !ng_param_expr(c, na(c, r), f) {
+        return -1;
+    }
+    return st;
+}
+
+// `n` is a small expression of constants and `f`'s parameters, no calls.
+fn ng_param_expr(c: i64, n: i64, f: i64) -> bool {
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL {
+        return true;
+    }
+    if k == K_VAR {
+        let params = nc(c, f);
+        let mut i: i64 = 0;
+        while i < list_len(c, params) {
+            if list_at(c, params, i) == na(c, n) {
+                return true;
+            }
+            i = i + 2;
+        }
+        return false;
+    }
+    if k == K_BIN {
+        let op = na(c, n);
+        if op == OP_DIV || op == OP_MOD {
+            return false;
+        }
+        return ng_param_expr(c, nb(c, n), f) && ng_param_expr(c, nc(c, n), f);
+    }
+    if k == K_UN {
+        return ng_param_expr(c, nb(c, n), f);
+    }
+    return false;
+}
+
+// A call of `f` (at most six parameters) whose guard is tested inline:
+// the guarded value without a call, else the call. False if not done.
+fn ng_call_guarded(c: i64, f: i64, args: i64) -> bool {
+    let g = ng_guard(c, f);
+    let params = nc(c, f);
+    let count = list_len(c, args);
+    if g < 0 || count > 6 || count * 2 != list_len(c, params) {
+        return false;
+    }
+    let b = ncode(c);
+    let mark = ng_bind_args(c, params, args, ng(c, NG_NONE));
+    let to_call = vnew();
+    ng_branch(c, na(c, g), false, to_call);
+    ng_gen(c, na(c, list_at(c, nb(c, g), 0)));
+    let done = x_jmp(b);
+    ng_patch_all(c, to_call);
+    let mut i: i64 = 0;
+    while i < count {
+        let slot = ni(c, list_at(c, params, i * 2), NI_CVAR);
+        if slot >= 0 {
+            ng_load_to(c, slot, ng_arg_reg(i));
+        } else {
+            x_mov_ri(b, ng_arg_reg(i), vget(ng(c, NG_CBIND), -2 - slot));
+        }
+        i = i + 1;
+    }
+    ng_call_regs(c, na(c, f), count);
+    x_patch_here(b, done);
     ng_inline_end(c, mark);
     return true;
 }
@@ -1686,6 +1834,9 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
         if ng_inline_full(c, f, args) {
             return 0;
         }
+        if (ng(c, NG_INLDEPTH) > 0 || f == ng(c, NG_CURFN)) && ng_call_guarded(c, f, args) {
+            return 0;
+        }
     }
     if builtin >= 0 && ng_mem_builtin(c, name_text(c, target), args) {
         return 0;
@@ -1785,6 +1936,15 @@ fn ng_stmt(c: i64, n: i64) -> i64 {
         if vk == 1 {
             let id = ng_new_local(c, na(c, n));
             return ng_set_imm(c, id, vv);
+        }
+        let k2 = ng_slot(c);
+        ng_gen_into(c, value, k2);
+        return ng_bind(c, na(c, n), k2);
+    }
+    if k == K_ASSIGN {
+        let target = na(c, n);
+        if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
+            return ng_gen_into(c, nb(c, n), ni(c, na(c, target), NI_CVAR));
         }
     }
     return ng_gen(c, n);
@@ -1995,7 +2155,7 @@ fn ng_add_acc(c: i64) -> i64 {
 fn ng_return(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     let value = na(c, n);
-    if ng(c, NG_ACC) >= 0 && vlen(ng(c, NG_EXITS)) == 0 && ng_is_acc_return(c, ng(c, NG_ACCFN), value) {
+    if ng(c, NG_ACC) >= 0 && vlen(ng(c, NG_EXITS)) == ng(c, NG_ACCLVL) && ng_is_acc_return(c, ng(c, NG_ACCFN), value) {
         // acc += x; params = args; loop: f(a) + x == x + f(a), wrapping
         ng_gen(c, nb(c, value));
         let acc = ng(c, NG_ACC);
@@ -2007,6 +2167,11 @@ fn ng_return(c: i64, n: i64) -> i64 {
         }
         let args = nb(c, nc(c, value));
         let tmps = vnew();
+        let fparams = nc(c, ng(c, NG_ACCFN));
+        if list_len(c, args) == 1 {
+            ng_gen_into(c, list_at(c, args, 0), ni(c, list_at(c, fparams, 0), NI_CVAR));
+            return x_patch_rel(b, x_jmp(b), ng(c, NG_ACCTOP));
+        }
         let mut i: i64 = 0;
         while i < list_len(c, args) {
             ng_gen(c, list_at(c, args, i));
@@ -2016,7 +2181,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
         let mut j: i64 = 0;
         while j < vlen(tmps) {
             ng_load(c, vget(tmps, j));
-            ng_store(c, j);
+            ng_store(c, ni(c, list_at(c, fparams, j * 2), NI_CVAR));
             j = j + 1;
         }
         return x_patch_rel(b, x_jmp(b), ng(c, NG_ACCTOP));
@@ -2470,6 +2635,8 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         }
     }
     ng_set(c, NG_ACC, -1);
+    ng_set(c, NG_ACCLVL, 0);
+    ng_set(c, NG_CURFN, f);
     if returns == 1 && !is_main && ng_find_acc(c, f, ne(c, f)) {
         let acc = ng_slot(c);
         ng_set_imm(c, acc, 0);
