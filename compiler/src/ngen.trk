@@ -62,7 +62,11 @@ const NG_TAILDONE = 37; // ... and was emitted as a jump
 const NG_SLEN = 38;    // slot -> length of the array literal it always holds (-1)
 const NG_SMAX = 39;    // slot -> upper bound of its value, known to be >= 0 (-1)
 const NG_ASSIGNED = 40; // names assigned anywhere in the function (-1: unknown)
-const NG_SLOTS = 41;
+const NG_PIN = 41;     // (slot, register) pairs: slots pinned to a caller-saved register
+const NG_FRAMEFIX = 42; // positions of epilogue `add rsp, imm32` to patch with the frame size
+const NG_ACCBODY = 43; // accumulator loop: code position after its guard (-1)
+const NG_ACCRET = 44;  // accumulator loop: guard jumps waiting for the loop's exit code (-1)
+const NG_SLOTS = 45;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -965,12 +969,16 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     vpush(exits, vnew());
     let saved_acc = ng(c, NG_ACC);
     let saved_top = ng(c, NG_ACCTOP);
+    let saved_body = ng(c, NG_ACCBODY);
+    let saved_pend = ng(c, NG_ACCRET);
     let saved_lvl = ng(c, NG_ACCLVL);
     if accmode {
         let acc = ng_slot(c);
         ng_set_imm(c, acc, 0);
         ng_set(c, NG_ACC, acc);
         ng_set(c, NG_ACCTOP, x_here(ncode(c)));
+        ng_set(c, NG_ACCBODY, -1);
+        ng_set(c, NG_ACCRET, -1);
         ng_set(c, NG_ACCLVL, vlen(exits));
         ng_loop_enter(c);
     }
@@ -978,12 +986,15 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     if returns != 1 {
         x_mov_rax_imm(ncode(c), 0);
     }
+    ng_acc_flush_end(c);
     ng_patch_all(c, vpop(exits));
     if accmode {
         ng_add_acc(c);
         ng_loop_leave(c);
         ng_set(c, NG_ACC, saved_acc);
         ng_set(c, NG_ACCTOP, saved_top);
+        ng_set(c, NG_ACCBODY, saved_body);
+        ng_set(c, NG_ACCRET, saved_pend);
         ng_set(c, NG_ACCLVL, saved_lvl);
     }
     ng_set(c, NG_RETVAL, saved_ret);
@@ -1044,6 +1055,37 @@ fn ng_param_expr(c: i64, n: i64, f: i64) -> bool {
     return false;
 }
 
+// `n` uses only rax/rcx when generated: constants, locals, and arithmetic
+// other than division on them.
+fn ng_simple_expr(c: i64, n: i64) -> bool {
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL {
+        return true;
+    }
+    if k == K_VAR {
+        return ni(c, na(c, n), NI_CVAR) >= 0 || ni(c, na(c, n), NI_CVAR) <= -2;
+    }
+    if k == K_BIN {
+        let op = na(c, n);
+        if !(op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_BAND || op == OP_BOR) {
+            return false;
+        }
+        return ng_simple_expr(c, nb(c, n)) && ng_simple_expr(c, nc(c, n));
+    }
+    return false;
+}
+
+fn ng_simple_args(c: i64, args: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < list_len(c, args) {
+        if !ng_simple_expr(c, list_at(c, args, i)) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // A call of `f` (at most six parameters) whose guard is tested inline:
 // the guarded value without a call, else the call. False if not done.
 fn ng_call_guarded(c: i64, f: i64, args: i64) -> bool {
@@ -1054,7 +1096,32 @@ fn ng_call_guarded(c: i64, f: i64, args: i64) -> bool {
         return false;
     }
     let b = ncode(c);
-    let mark = ng_bind_args(c, params, args, ng(c, NG_NONE));
+    let mut mark: i64 = -1;
+    if count <= 4 && ng_simple_args(c, args) {
+        // arguments computed straight into their argument registers (only
+        // rax/rcx are scratch while they and the guard are evaluated)
+        let slots = vnew();
+        let mut a: i64 = 0;
+        while a < count {
+            let k = ng_slot(c);
+            if ng(c, NG_PASS) == 1 {
+                vpush(ng(c, NG_PIN), k);
+                vpush(ng(c, NG_PIN), ng_arg_reg(a));
+            }
+            ng_gen_into(c, list_at(c, args, a), k);
+            vpush(slots, k);
+            a = a + 1;
+        }
+        mark = ng_scope_begin(c);
+        let mut j: i64 = 0;
+        while j < count {
+            ng_bind(c, list_at(c, params, j * 2), vget(slots, j));
+            j = j + 1;
+        }
+        ng_set(c, NG_INLDEPTH, ng(c, NG_INLDEPTH) + 1);
+    } else {
+        mark = ng_bind_args(c, params, args, ng(c, NG_NONE));
+    }
     let to_call = vnew();
     ng_branch(c, na(c, g), false, to_call);
     ng_gen(c, na(c, list_at(c, nb(c, g), 0)));
@@ -2200,13 +2267,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
             r = r - 1;
         }
         if ng(c, NG_FRAMELESS) == 0 {
-            let saved = ng(c, NG_SAVED);
-            let mut q: i64 = 0;
-            while q < vlen(saved) {
-                x_rm(b, 139, vget(saved, q), 5, 0 - 8 * (q + 1));
-                q = q + 1;
-            }
-            x_byte(b, 201); // leave
+            ng_unframe(c);
         }
         let pos = x_jmp(b);
         let fix = ng(c, NG_CALLS);
@@ -2395,10 +2456,19 @@ fn ng_assign_local(c: i64, n: i64) -> bool {
 
 fn ng_if(c: i64, n: i64, discard: bool) -> i64 {
     let b = ncode(c);
+    let els = nc(c, n);
+    if discard && ng(c, NG_ACC) >= 0 && ng(c, NG_ACCBODY) < 0 && vlen(ng(c, NG_EXITS)) == ng(c, NG_ACCLVL) && ng_guard(c, ng(c, NG_ACCFN)) == n {
+        // the accumulator loop's guard: taken only to leave, the return it
+        // guards is emitted after the back edge (ng_acc_back), which
+        // re-tests the guard and jumps to the body here
+        let pend = vnew();
+        ng_branch(c, na(c, n), true, pend);
+        ng_set(c, NG_ACCRET, pend);
+        return ng_set(c, NG_ACCBODY, x_here(b));
+    }
     let to_else = vnew();
     ng_branch(c, na(c, n), false, to_else);
     ng_block_v(c, nb(c, n), discard);
-    let els = nc(c, n);
     if discard && list_len(c, els) == 0 {
         return ng_patch_all(c, to_else);
     }
@@ -2516,6 +2586,50 @@ fn ng_add_acc(c: i64) -> i64 {
     return ng_op_apply(c, OP_ADD, 0, 2, acc);
 }
 
+// Back edge of an accumulator loop. With its guard already passed once
+// (NG_ACCBODY), the guard is re-tested here: the loop continues with one
+// taken branch, and the guard's return is emitted inline for the exit.
+fn ng_acc_back(c: i64) -> i64 {
+    let b = ncode(c);
+    let body = ng(c, NG_ACCBODY);
+    if body < 0 {
+        return x_patch_rel(b, x_jmp(b), ng(c, NG_ACCTOP));
+    }
+    let g = ng_guard(c, ng(c, NG_ACCFN));
+    let back = vnew();
+    ng_branch(c, na(c, g), false, back);
+    let mut i: i64 = 0;
+    while i < vlen(back) {
+        x_patch_rel(b, vget(back, i), body);
+        i = i + 1;
+    }
+    if ng(c, NG_ACCRET) < 0 {
+        return ng_return(c, list_at(c, nb(c, g), 0));
+    }
+    return ng_acc_flush(c);
+}
+
+// Emit the accumulator loop's guarded return for jumps still waiting.
+fn ng_acc_flush(c: i64) -> i64 {
+    let pend = ng(c, NG_ACCRET);
+    if pend < 0 {
+        return 0;
+    }
+    ng_set(c, NG_ACCRET, -1);
+    ng_patch_all(c, pend);
+    return ng_return(c, list_at(c, nb(c, ng_guard(c, ng(c, NG_ACCFN))), 0));
+}
+
+fn ng_acc_flush_end(c: i64) -> i64 {
+    if ng(c, NG_ACC) < 0 || ng(c, NG_ACCRET) < 0 {
+        return 0;
+    }
+    let b = ncode(c);
+    let skip = x_jmp(b);
+    ng_acc_flush(c);
+    return x_patch_here(b, skip);
+}
+
 fn ng_return(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     let value = na(c, n);
@@ -2534,7 +2648,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
         let fparams = nc(c, ng(c, NG_ACCFN));
         if list_len(c, args) == 1 {
             ng_gen_into(c, list_at(c, args, 0), ni(c, list_at(c, fparams, 0), NI_CVAR));
-            return x_patch_rel(b, x_jmp(b), ng(c, NG_ACCTOP));
+            return ng_acc_back(c);
         }
         let mut i: i64 = 0;
         while i < list_len(c, args) {
@@ -2548,7 +2662,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
             ng_store(c, ni(c, list_at(c, fparams, j * 2), NI_CVAR));
             j = j + 1;
         }
-        return x_patch_rel(b, x_jmp(b), ng(c, NG_ACCTOP));
+        return ng_acc_back(c);
     }
     if value >= 0 && nk(c, value) == K_CALL && ng(c, NG_RETVAL) == 1 && ng(c, NG_ACC) < 0 && vlen(ng(c, NG_EXITS)) == 0 && ng(c, NG_STACKARGS) == 0 {
         ng_set(c, NG_TAIL, 1);
@@ -2916,13 +3030,27 @@ fn ng_epilogue(c: i64) -> i64 {
     if ng(c, NG_FRAMELESS) == 1 {
         return x_ret(b);
     }
+    ng_unframe(c);
+    return x_ret(b);
+}
+
+// Pop the callee-saved registers (pushed right below rbp) and the frame.
+fn ng_unframe(c: i64) -> i64 {
+    let b = ncode(c);
     let saved = ng(c, NG_SAVED);
-    let mut i: i64 = 0;
-    while i < vlen(saved) {
-        x_rm(b, 139, vget(saved, i), 5, 0 - 8 * (i + 1));
-        i = i + 1;
+    let n = vlen(saved);
+    if n == 0 {
+        return x_byte(b, 201); // leave
     }
-    return x_leave_ret(b);
+    x_bytes3(b, 72, 129, 196); // add rsp, frame size (patched)
+    vpush(ng(c, NG_FRAMEFIX), vlen(b));
+    x_u32(b, 0);
+    let mut i = n - 1;
+    while i >= 0 {
+        x_pop_r(b, vget(saved, i));
+        i = i - 1;
+    }
+    return x_pop_r(b, 5);
 }
 
 // Out-of-line stub: the jumps in `jumps` land on a call of runtime
@@ -2976,14 +3104,20 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         ng_set(c, NG_STACKARGS, 0);
     }
     let mut frame: i64 = -1;
-    if ng(c, NG_FRAMELESS) == 0 {
-        frame = x_prologue(b);
-    }
+    vtrunc(ng(c, NG_FRAMEFIX), 0);
     let saved = ng(c, NG_SAVED);
-    let mut s: i64 = 0;
-    while s < vlen(saved) {
-        x_rm(b, 137, vget(saved, s), 5, 0 - 8 * (s + 1));
-        s = s + 1;
+    if ng(c, NG_FRAMELESS) == 0 {
+        // push rbp; mov rbp, rsp; push saved...; sub rsp, imm32
+        x_byte(b, 85);
+        x_bytes3(b, 72, 137, 229);
+        let mut s: i64 = 0;
+        while s < vlen(saved) {
+            x_push_r(b, vget(saved, s));
+            s = s + 1;
+        }
+        x_bytes3(b, 72, 129, 236);
+        frame = vlen(b);
+        x_u32(b, 0);
     }
     let mark = ng_scope_begin(c);
     let pass = ng(c, NG_PASS);
@@ -3029,6 +3163,8 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         ng_set(c, NG_ACC, acc);
         ng_set(c, NG_ACCFN, f);
         ng_set(c, NG_ACCTOP, x_here(b));
+        ng_set(c, NG_ACCBODY, -1);
+        ng_set(c, NG_ACCRET, -1);
     }
     if prelude >= 0 {
         let mut p: i64 = 0;
@@ -3041,6 +3177,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     if is_main || returns != 1 {
         x_mov_rax_imm(b, 0);
     }
+    ng_acc_flush_end(c);
     ng_add_acc(c);
     ng_set(c, NG_ACC, -1);
     ng_epilogue(c);
@@ -3057,7 +3194,14 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         return 0;
     }
     let size = ((locals + vlen(saved)) * 8 + 15) / 16 * 16;
-    return x_patch32(b, frame, size);
+    let fixes = ng(c, NG_FRAMEFIX);
+    let mut fi: i64 = 0;
+    while fi < vlen(fixes) {
+        x_patch32(b, vget(fixes, fi), size - 8 * vlen(saved));
+        fi = fi + 1;
+    }
+    vtrunc(fixes, 0);
+    return x_patch32(b, frame, size - 8 * vlen(saved));
 }
 
 const NG_CALLEE_SAVED = 7;
@@ -3087,6 +3231,7 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     vtrunc(ng(c, NG_SAVED), 0);
     vtrunc(ng(c, NG_USE), 0);
     vtrunc(ng(c, NG_REG), 0);
+    vtrunc(ng(c, NG_PIN), 0);
     ng_function_pass(c, f, prelude);
     let uses = ng(c, NG_USE);
     let nslot = ng(c, NG_NSLOT);
@@ -3096,6 +3241,12 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     vtrunc(ng(c, NG_STRS), strs);
     let regs = ng(c, NG_REG);
     vfill(regs, nslot, -1);
+    let pins = ng(c, NG_PIN);
+    let mut pi: i64 = 0;
+    while pi < vlen(pins) {
+        vset(regs, vget(pins, pi), vget(pins, pi + 1));
+        pi = pi + 2;
+    }
     let saved = ng(c, NG_SAVED);
     let leaf = ng(c, NG_VOLX) == 0 && np <= 6;
     if leaf {
@@ -3258,6 +3409,10 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_NONE, vnew());
     ng_set(c, NG_SLEN, vnew());
     ng_set(c, NG_SMAX, vnew());
+    ng_set(c, NG_PIN, vnew());
+    ng_set(c, NG_FRAMEFIX, vnew());
+    ng_set(c, NG_ACCBODY, -1);
+    ng_set(c, NG_ACCRET, -1);
     ng_set(c, NG_ASSIGNED, -1);
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_PASS, 2);
