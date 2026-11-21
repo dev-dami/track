@@ -1,0 +1,372 @@
+// rt_stub/more.trk — the rest of the stub runtime that trackc itself
+// needs: strings, collections, builders, files, environment, processes.
+
+// ------------------------------------------------------------- strings II
+
+fn rt_dup_n(s: i64, n: i64) -> i64 {
+    let out: i64 = alloc(n + 1);
+    rt_copy_bytes(out, s, n);
+    store8(out + n, 0);
+    return out;
+}
+
+fn str_char_at(s: i64, i: i64) -> i64 {
+    if s == 0 || i < 0 {
+        return 0;
+    }
+    let mut k: i64 = 0;
+    while k < i {
+        if load8(s + k) == 0 {
+            return 0;
+        }
+        k = k + 1;
+    }
+    return load8(s + i);
+}
+
+fn str_substr(s: i64, start: i64, len: i64) -> i64 {
+    if s == 0 || start < 0 || len <= 0 {
+        return rt_dup_n("", 0);
+    }
+    let mut avail: i64 = 0;
+    while avail < start + len && load8(s + avail) != 0 {
+        avail = avail + 1;
+    }
+    if start >= avail {
+        return rt_dup_n("", 0);
+    }
+    return rt_dup_n(s + start, avail - start);
+}
+
+fn str_starts_with(s: i64, prefix: i64) -> i64 {
+    if s == 0 || prefix == 0 {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    while load8(prefix + i) != 0 {
+        if load8(s + i) != load8(prefix + i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn str_ends_with(s: i64, suffix: i64) -> i64 {
+    if s == 0 || suffix == 0 {
+        return 0;
+    }
+    let ls: i64 = str_len(s);
+    let lp: i64 = str_len(suffix);
+    if lp > ls {
+        return 0;
+    }
+    return str_eq(s + ls - lp, suffix);
+}
+
+fn str_contains(s: i64, sub: i64) -> i64 {
+    if s == 0 || sub == 0 {
+        return 0;
+    }
+    if str_find(s, sub) >= 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn track_str_bytes(s: i64) -> i64 {
+    let n: i64 = str_len(s);
+    let out: i64 = track_i64_collection_new(n + 1);
+    let data: i64 = load64(out);
+    let mut i: i64 = 0;
+    while i < n {
+        store64(data + i * 8, load8(s + i));
+        i = i + 1;
+    }
+    store64(out + 8, n);
+    return out;
+}
+
+// ------------------------------------------------------------- collections
+// Handles are cells [data, len, cap] (the C runtime's TrackI64Collection).
+
+fn track_i64_collection_new(cap: i64) -> i64 {
+    let mut n: i64 = cap;
+    if n <= 0 {
+        n = 16;
+    }
+    let h: i64 = alloc(24);
+    store64(h, alloc(n * 8));
+    store64(h + 8, 0);
+    store64(h + 16, n);
+    return h;
+}
+
+fn track_i64_collection_len(h: i64) -> i64 {
+    if h == 0 {
+        return 0;
+    }
+    return load64(h + 8);
+}
+
+fn track_i64_collection_push(h: i64, v: i64) -> i64 {
+    if h == 0 {
+        return -1;
+    }
+    let len: i64 = load64(h + 8);
+    let cap: i64 = load64(h + 16);
+    if len == cap {
+        let data: i64 = alloc(cap * 16);
+        let old: i64 = load64(h);
+        let mut i: i64 = 0;
+        while i < len {
+            store64(data + i * 8, load64(old + i * 8));
+            i = i + 1;
+        }
+        store64(h, data);
+        store64(h + 16, cap * 2);
+    }
+    store64(load64(h) + len * 8, v);
+    store64(h + 8, len + 1);
+    return len;
+}
+
+fn track_i64_collection_get(h: i64, i: i64) -> i64 {
+    if h == 0 || i < 0 || i >= load64(h + 8) {
+        return 0;
+    }
+    return load64(load64(h) + i * 8);
+}
+
+fn track_i64_collection_set(h: i64, i: i64, v: i64) -> i64 {
+    if h == 0 || i < 0 || i >= load64(h + 8) {
+        return 0;
+    }
+    store64(load64(h) + i * 8, v);
+    return 1;
+}
+
+fn track_i64_collection_pop(h: i64) -> i64 {
+    if h == 0 || load64(h + 8) == 0 {
+        return 0;
+    }
+    let len: i64 = load64(h + 8) - 1;
+    store64(h + 8, len);
+    return load64(load64(h) + len * 8);
+}
+
+fn track_i64_collection_truncate(h: i64, len: i64) -> i64 {
+    if h != 0 && len >= 0 && len < load64(h + 8) {
+        store64(h + 8, len);
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------- builders
+// Handles are cells [data, len, cap]; data stays NUL-terminated.
+
+fn track_sb_new() -> i64 {
+    let h: i64 = alloc(24);
+    let data: i64 = alloc(256);
+    store8(data, 0);
+    store64(h, data);
+    store64(h + 8, 0);
+    store64(h + 16, 256);
+    return h;
+}
+
+fn rt_sb_reserve(h: i64, extra: i64) -> i64 {
+    let len: i64 = load64(h + 8);
+    let mut cap: i64 = load64(h + 16);
+    if len + extra + 1 <= cap {
+        return 0;
+    }
+    while len + extra + 1 > cap {
+        cap = cap * 2;
+    }
+    let data: i64 = alloc(cap);
+    rt_copy_bytes(data, load64(h), len + 1);
+    store64(h, data);
+    store64(h + 16, cap);
+    return 0;
+}
+
+fn track_sb_push(h: i64, s: i64) -> i64 {
+    if h == 0 || s == 0 {
+        return 0;
+    }
+    let n: i64 = str_len(s);
+    rt_sb_reserve(h, n);
+    let len: i64 = load64(h + 8);
+    rt_copy_bytes(load64(h) + len, s, n + 1);
+    store64(h + 8, len + n);
+    return 0;
+}
+
+fn track_sb_push_byte(h: i64, x: i64) -> i64 {
+    if h == 0 {
+        return 0;
+    }
+    rt_sb_reserve(h, 1);
+    let len: i64 = load64(h + 8);
+    store8(load64(h) + len, x);
+    store8(load64(h) + len + 1, 0);
+    store64(h + 8, len + 1);
+    return 0;
+}
+
+fn track_sb_push_int(h: i64, v: i64) -> i64 { return track_sb_push(h, int_to_str(v)); }
+
+fn track_sb_len(h: i64) -> i64 {
+    if h == 0 {
+        return 0;
+    }
+    return load64(h + 8);
+}
+
+fn track_sb_str(h: i64) -> i64 {
+    if h == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_dup_n(load64(h), load64(h + 8));
+}
+
+fn track_sb_clear(h: i64) -> i64 {
+    if h != 0 {
+        store64(h + 8, 0);
+        store8(load64(h), 0);
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------- files II
+
+fn track_file_read(path: i64) -> i64 {
+    let fd: i64 = syscall6(2, path, 0, 0, 0, 0, 0);
+    if fd < 0 {
+        return rt_dup_n("", 0);
+    }
+    let mut cap: i64 = 65536;
+    let mut buf: i64 = alloc(cap + 1);
+    let mut len: i64 = 0;
+    let mut going = true;
+    while going {
+        if len == cap {
+            let bigger: i64 = alloc(cap * 2 + 1);
+            rt_copy_bytes(bigger, buf, len);
+            buf = bigger;
+            cap = cap * 2;
+        }
+        let got: i64 = syscall6(0, fd, buf + len, cap - len, 0, 0, 0);
+        if got <= 0 {
+            going = false;
+        } else {
+            len = len + got;
+        }
+    }
+    syscall6(3, fd, 0, 0, 0, 0, 0);
+    store8(buf + len, 0);
+    return buf;
+}
+
+fn track_file_write_all(path: i64, content: i64) -> i64 {
+    let fd: i64 = syscall6(2, path, 577, 420, 0, 0, 0);
+    if fd < 0 {
+        return -1;
+    }
+    let n: i64 = str_len(content);
+    let mut done: i64 = 0;
+    while done < n {
+        let w: i64 = syscall6(1, fd, content + done, n - done, 0, 0, 0);
+        if w <= 0 {
+            syscall6(3, fd, 0, 0, 0, 0, 0);
+            return -1;
+        }
+        done = done + w;
+    }
+    syscall6(3, fd, 0, 0, 0, 0, 0);
+    return 0;
+}
+
+fn file_remove(path: i64) -> i64 {
+    if syscall6(87, path, 0, 0, 0, 0, 0) == 0 {
+        return 0;
+    }
+    return -1;
+}
+
+// ------------------------------------------------------------- process II
+
+fn rt_envp() -> i64 {
+    return load64(RT_BASE + 16) + (load64(RT_BASE + 8) + 1) * 8;
+}
+
+// Value of environment variable `key`, or 0.
+fn rt_getenv(key: i64) -> i64 {
+    if key == 0 {
+        return 0;
+    }
+    let n: i64 = str_len(key);
+    let mut e: i64 = rt_envp();
+    while load64(e) != 0 {
+        let entry: i64 = load64(e);
+        let mut i: i64 = 0;
+        while i < n && load8(entry + i) == load8(key + i) {
+            i = i + 1;
+        }
+        if i == n && load8(entry + n) == 61 {
+            return entry + n + 1;
+        }
+        e = e + 8;
+    }
+    return 0;
+}
+
+fn env_get(key: i64) -> i64 {
+    let v: i64 = rt_getenv(key);
+    if v == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_dup_n(v, str_len(v));
+}
+
+fn env_exists(key: i64) -> i64 {
+    if rt_getenv(key) == 0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn clock_ms() -> i64 {
+    let ts: i64 = alloc(16);
+    syscall6(228, 1, ts, 0, 0, 0, 0);
+    return load64(ts) * 1000 + load64(ts + 8) / 1000000;
+}
+
+// /bin/sh -c cmd; returns the exit status (128 + signal when killed).
+fn sys_exec(cmd: i64) -> i64 {
+    if cmd == 0 {
+        return -1;
+    }
+    let argv: i64 = alloc(32);
+    store64(argv, "/bin/sh");
+    store64(argv + 8, "-c");
+    store64(argv + 16, cmd);
+    store64(argv + 24, 0);
+    let pid: i64 = syscall6(57, 0, 0, 0, 0, 0, 0);
+    if pid < 0 {
+        return -1;
+    }
+    if pid == 0 {
+        syscall6(59, "/bin/sh", argv, rt_envp(), 0, 0, 0);
+        syscall6(60, 127, 0, 0, 0, 0, 0);
+    }
+    let status: i64 = alloc(8);
+    store64(status, 0);
+    syscall6(61, pid, status, 0, 0, 0, 0);
+    let st: i64 = load64(status) & 65535;
+    if (st & 127) == 0 {
+        return (st >> 8) & 255;
+    }
+    return 128 + (st & 127);
+}

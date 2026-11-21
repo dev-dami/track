@@ -8,6 +8,8 @@
 //   RT_BASE + 16  argv
 //   RT_HEAP...    heap (bump allocation, never freed)
 
+import "more";
+
 const RT_BASE = 268435456;      // 0x10000000
 const RT_HEAP = 269484032;      // RT_BASE + 1 MiB
 const RT_SPAN = 17179869184;    // 16 GiB, MAP_NORESERVE
