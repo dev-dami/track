@@ -1,0 +1,89 @@
+// Register-argument calls: more than six parameters (stack convention),
+// nested calls as arguments, tail calls, leaf frames, deep recursion and
+// accumulator recursion inlined into itself with guard tests.
+fn seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 {
+    return a * 1 + b * 10 + c * 100 + d * 1000 + e * 10000 + f * 100000 + g * 1000000;
+}
+
+fn eight(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64) -> i64 {
+    return seven(h, g, f, e, d, c, b) - a;
+}
+
+fn six(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
+    let x = a - b;
+    let y = c - d;
+    let z = e - f;
+    return x * 100 + y * 10 + z;
+}
+
+fn leaf_many(a: i64, b: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    let mut p: i64 = 1;
+    let mut q: i64 = 2;
+    let mut r: i64 = 3;
+    let mut t: i64 = 4;
+    while i < a {
+        s = s + i * b;
+        p = p + s;
+        q = q | p;
+        r = r + (q & 255);
+        t = t + r - p;
+        i = i + 1;
+    }
+    return s + p + q + r + t;
+}
+
+fn depth(n: i64) -> i64 {
+    if n == 0 {
+        return 0;
+    }
+    return 1 + depth(n - 1);
+}
+
+fn tail_count(n: i64, acc: i64) -> i64 {
+    if n == 0 {
+        return acc;
+    }
+    return tail_count(n - 1, acc + n);
+}
+
+fn pick(a: i64, b: i64) -> i64 {
+    if a > b {
+        return six(a, b, a, b, a, b);
+    }
+    return seven(a, b, a, b, a, b, a);
+}
+
+fn fib(n: i64) -> i64 {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn trib(n: i64, k: i64) -> i64 {
+    if n < 3 {
+        return n + k;
+    }
+    return trib(n - 1, k) + trib(n - 2, k + 1);
+}
+
+fn main() -> void {
+    print(seven(1, 2, 3, 4, 5, 6, 7));
+    print(eight(1, 2, 3, 4, 5, 6, 7, 8));
+    print(six(seven(1, 1, 1, 1, 1, 1, 1), six(9, 8, 7, 6, 5, 4), 3, eight(0, 1, 2, 3, 4, 5, 6, 7), 2, 1));
+    print(seven(six(1, 2, 3, 4, 5, 6), 2, six(6, 5, 4, 3, 2, 1), 4, 5, seven(1, 2, 3, 4, 5, 6, 7), 7));
+    print(leaf_many(1000, 3));
+    print(depth(200000));
+    print(tail_count(1000000, 0));
+    print(pick(5, 3));
+    print(pick(3, 5));
+    let mut i: i64 = 0;
+    while i < 25 {
+        print(fib(i));
+        i = i + 1;
+    }
+    print(trib(20, 1));
+    print(trib(2, 5));
+}

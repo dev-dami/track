@@ -1,0 +1,46 @@
+// Inline string-builder appends: literals of every short length through
+// buffer growth, push_byte growth, and push_int on edge values.
+fn main() -> void {
+    let b: i64 = track_sb_new();
+    let mut i: i64 = 0;
+    while i < 300 {
+        track_sb_push(b, "a");
+        track_sb_push(b, "bc");
+        track_sb_push(b, "defg");
+        track_sb_push(b, "hijklmn");
+        track_sb_push(b, "opqrstuv");
+        track_sb_push(b, "wxyz012345678");
+        track_sb_push(b, "0123456789abcdefghijklmn");
+        track_sb_push(b, "");
+        track_sb_push_byte(b, 33 + (i % 90));
+        track_sb_push_int(b, i * i * i * i);
+        i = i + 1;
+    }
+    let s: i64 = track_sb_str(b);
+    print(str_len(s));
+    print(str_char_at(s, 1000));
+    let c: i64 = track_sb_new();
+    track_sb_push_int(c, 0);
+    track_sb_push_byte(c, 32);
+    track_sb_push_int(c, 0 - 1);
+    track_sb_push_byte(c, 32);
+    track_sb_push_int(c, 9223372036854775807);
+    track_sb_push_byte(c, 32);
+    track_sb_push_int(c, 0 - 9223372036854775807 - 1);
+    track_sb_push_byte(c, 32);
+    track_sb_push_int(c, 99999999);
+    track_sb_push_byte(c, 32);
+    track_sb_push_int(c, 100000000);
+    track_sb_push_byte(c, 32);
+    track_sb_push_int(c, 10);
+    track_sb_push_int(c, 9);
+    track_sb_push_int(c, 1234567);
+    print(track_sb_str(c));
+    let d: i64 = track_sb_new();
+    let mut j: i64 = 0;
+    while j < 1000 {
+        track_sb_push_byte(d, 120);
+        j = j + 1;
+    }
+    print(track_sb_len(d));
+}

@@ -1,0 +1,30 @@
+// Bounds checks dropped only when provable: an array literal never
+// reassigned, indexed by `x & C` (C below its length) or an immutable
+// local bound to one; other indexes stay checked, and the final index
+// past a reassigned shorter array must still abort.
+fn main() -> void {
+    let mut xs = [5, 6, 7, 8];
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 1000 {
+        let j: i64 = i & 3;
+        xs[j] = xs[j] + xs[(i * 5) & 3] + i;
+        acc = acc + xs[i & 2];
+        i = i + 1;
+    }
+    print(acc);
+    print(xs[0] + xs[1] + xs[2] + xs[3]);
+    let mut ys = [1, 2, 3, 4, 5, 6, 7, 8];
+    let mut k: i64 = 0;
+    while k < 8 {
+        ys[k] = ys[k] * 2;
+        k = k + 1;
+    }
+    print(ys[7]);
+    let mut zs = [1, 2, 3, 4, 5, 6, 7, 8];
+    print(zs[5 & 7]);
+    zs = [9, 9];
+    let idx: i64 = 5 & 7;
+    print(zs[1]);
+    print(zs[idx]);
+}

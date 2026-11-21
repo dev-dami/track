@@ -59,7 +59,10 @@ const NG_ACCLVL = 34;  // inlining depth (NG_EXITS length) the accumulator loop 
 const NG_CURFN = 35;   // the function being generated
 const NG_TAIL = 36;    // the call being generated is in tail position
 const NG_TAILDONE = 37; // ... and was emitted as a jump
-const NG_SLOTS = 38;
+const NG_SLEN = 38;    // slot -> length of the array literal it always holds (-1)
+const NG_SMAX = 39;    // slot -> upper bound of its value, known to be >= 0 (-1)
+const NG_ASSIGNED = 40; // names assigned anywhere in the function (-1: unknown)
+const NG_SLOTS = 41;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -337,6 +340,200 @@ fn ng_string(c: i64, s: i64) -> i64 {
 
 // ------------------------------------------------------------ expressions
 
+
+
+// ------------------------------------------------------------ facts
+
+// Names assigned in statement list `l` go on `out`; false when the list
+// holds a construct this scan does not follow.
+fn ng_scan_assigns(c: i64, l: i64, out: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        if !ng_scan_node(c, list_at(c, l, i), out) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn ng_scan_node(c: i64, n: i64, out: i64) -> bool {
+    if n < 0 {
+        return true;
+    }
+    let k = nk(c, n);
+    if k == K_MATCH || k == K_LETD {
+        return false;
+    }
+    if k == K_ASSIGN {
+        if nk(c, na(c, n)) == K_VAR {
+            vpush(out, na(c, na(c, n)));
+        }
+        return ng_scan_node(c, nb(c, n), out);
+    }
+    if k == K_IF {
+        return ng_scan_assigns(c, nb(c, n), out) && ng_scan_assigns(c, nc(c, n), out);
+    }
+    if k == K_WHILE {
+        return ng_scan_assigns(c, nb(c, n), out);
+    }
+    if k == K_FOR {
+        return ng_scan_assigns(c, nc(c, n), out);
+    }
+    if k == K_LET {
+        return ng_scan_node(c, nd(c, n), out);
+    }
+    if k == K_RETURN {
+        return ng_scan_node(c, na(c, n), out);
+    }
+    return true;
+}
+
+fn ng_scan_assigns_vec(c: i64, v: i64, out: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < vlen(v) {
+        if !ng_scan_node(c, vget(v, i), out) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn ng_name_assigned(c: i64, name: i64) -> bool {
+    let set = ng(c, NG_ASSIGNED);
+    if set < 0 {
+        return true;
+    }
+    let mut i: i64 = 0;
+    while i < vlen(set) {
+        if vget(set, i) == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn ng_fact(c: i64, which: i64, k: i64) -> i64 {
+    let v = ng(c, which);
+    if k >= 0 && k < vlen(v) {
+        return vget(v, k);
+    }
+    return -1;
+}
+
+fn ng_fact_set(c: i64, which: i64, k: i64, val: i64) -> i64 {
+    let v = ng(c, which);
+    if vlen(v) <= k {
+        vfill(v, k + 1 - vlen(v), -1);
+    }
+    return vset(v, k, val);
+}
+
+// Upper bound of `n` when it is known to lie in [0, bound], else -1.
+fn ng_range(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_INT {
+        if na(c, n) >= 0 {
+            return na(c, n);
+        }
+        return -1;
+    }
+    if k == K_VAR {
+        let local = ni(c, na(c, n), NI_CVAR);
+        if local >= 0 {
+            return ng_fact(c, NG_SMAX, local);
+        }
+        if local <= -2 {
+            let cv = vget(ng(c, NG_CBIND), -2 - local);
+            if cv >= 0 {
+                return cv;
+            }
+        }
+        return -1;
+    }
+    if k == K_BIN && na(c, n) == OP_BAND {
+        let a = ng_range(c, nb(c, n));
+        let d = ng_range(c, nc(c, n));
+        if a < 0 {
+            return d;
+        }
+        if d < 0 || a < d {
+            return a;
+        }
+        return d;
+    }
+    return -1;
+}
+
+// Record what `let` node `n`, bound to slot `slot`, guarantees.
+fn ng_let_facts(c: i64, n: i64, slot: i64) -> i64 {
+    let value = nd(c, n);
+    if nk(c, value) == K_ARRAY && ng(c, NG_INLDEPTH) == 0 && !ng_name_assigned(c, na(c, n)) {
+        ng_fact_set(c, NG_SLEN, slot, list_len(c, na(c, value)));
+    }
+    if nb(c, n) == 0 {
+        let r = ng_range(c, value);
+        if r >= 0 {
+            ng_fact_set(c, NG_SMAX, slot, r);
+        }
+    }
+    return 0;
+}
+
+// Slot of array local `a` when index `i` is provably in bounds, else -1.
+fn ng_safe_index(c: i64, a: i64, i: i64) -> i64 {
+    if nk(c, a) != K_VAR {
+        return -1;
+    }
+    let slot = ni(c, na(c, a), NI_CVAR);
+    if slot < 0 {
+        return -1;
+    }
+    let len = ng_fact(c, NG_SLEN, slot);
+    if len < 0 {
+        return -1;
+    }
+    let r = ng_range(c, i);
+    if r < 0 || r >= len {
+        return -1;
+    }
+    return slot;
+}
+
+// rax = a[i] or [a + i*8 + 8] = rdx for a provably in-bounds index:
+// operands straight from their registers when they have them.
+fn ng_index_direct(c: i64, a: i64, i: i64, store: bool) -> i64 {
+    let b = ncode(c);
+    let ak = ng_opnd(c, a);
+    let av = ng(c, NG_OPV);
+    let ik = ng_opnd(c, i);
+    let iv = ng(c, NG_OPV);
+    let mut ra: i64 = -1;
+    if ak == 2 {
+        ra = ng_reg(c, av);
+    }
+    let mut ri: i64 = -1;
+    if ik == 2 {
+        ri = ng_reg(c, iv);
+    }
+    if ra < 0 || ri < 0 {
+        if store {
+            x_push_r(b, 2);
+        }
+        ng_gen2(c, a, i);
+        if store {
+            x_pop_r(b, 2);
+        }
+        ra = 0;
+        ri = 1;
+    }
+    if store {
+        return x_rmx(b, 0, 137, 2, ra, ri, 3, 8);
+    }
+    return x_rmx(b, 0, 139, 0, ra, ri, 3, 8);
+}
 
 // ------------------------------------------------------------ inlining
 
@@ -1445,10 +1642,39 @@ fn ng_gen2(c: i64, x: i64, y: i64) -> i64 {
         return ng_opnd_to(c, xk, xv, 0);
     }
     ng_gen(c, x);
+    if ng_index_rcx(c, y) {
+        return 0;
+    }
     x_push_rax(b);
     ng_gen(c, y);
     x_mov_rcx_rax(b);
     return x_pop_rax(b);
+}
+
+// rcx = y without touching rax, when y is an in-bounds index of
+// register operands; false (nothing emitted) otherwise.
+fn ng_index_rcx(c: i64, y: i64) -> bool {
+    if nk(c, y) != K_INDEX || ng_safe_index(c, na(c, y), nb(c, y)) < 0 {
+        return false;
+    }
+    let ak = ng_opnd(c, na(c, y));
+    let av = ng(c, NG_OPV);
+    let ik = ng_opnd(c, nb(c, y));
+    let iv = ng(c, NG_OPV);
+    if ak != 2 || ik != 2 {
+        return false;
+    }
+    let ra = ng_reg(c, av);
+    let ri = ng_reg(c, iv);
+    if ng(c, NG_PASS) == 1 || ra < 0 || ri < 0 {
+        // pass 1 counts the uses the same way and keeps the fallback shape
+        if ng(c, NG_PASS) == 1 {
+            return false;
+        }
+        return false;
+    }
+    x_rmx(ncode(c), 0, 139, 1, ra, ri, 3, 8);
+    return true;
 }
 
 // Compile-time value of a constant expression (in NG_OPV); false if none.
@@ -1788,6 +2014,9 @@ fn ng_assign_place(c: i64, target: i64, v: i64) -> i64 {
         x_mov_rcx_rax(b);
         ng_load(c, v);
         x_store_at_rcx(b, nb(c, target) * 8);
+    } else if k == K_INDEX && ng_safe_index(c, na(c, target), nb(c, target)) >= 0 {
+        ng_load_to(c, v, 2);
+        ng_index_direct(c, na(c, target), nb(c, target), true);
     } else if k == K_INDEX {
         ng_gen2(c, na(c, target), nb(c, target));
         ng_load_to(c, v, 2);
@@ -2068,11 +2297,13 @@ fn ng_stmt(c: i64, n: i64) -> i64 {
         let vv = ng(c, NG_OPV);
         if vk == 1 {
             let id = ng_new_local(c, na(c, n));
-            return ng_set_imm(c, id, vv);
+            ng_set_imm(c, id, vv);
+            return ng_let_facts(c, n, id);
         }
         let k2 = ng_slot(c);
         ng_gen_into(c, value, k2);
-        return ng_bind(c, na(c, n), k2);
+        ng_bind(c, na(c, n), k2);
+        return ng_let_facts(c, n, k2);
     }
     if k == K_ASSIGN {
         let target = na(c, n);
@@ -2594,7 +2825,7 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         ng_gen(c, nd(c, n));
         let id = ng_new_local(c, na(c, n));
         ng_store(c, id);
-        return 0;
+        return ng_let_facts(c, n, id);
     }
     if k == K_ASSIGN {
         ng_gen(c, nb(c, n));
@@ -2648,6 +2879,9 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         return ng_cell(c, count + 1);
     }
     if k == K_INDEX {
+        if ng_safe_index(c, na(c, n), nb(c, n)) >= 0 {
+            return ng_index_direct(c, na(c, n), nb(c, n), false);
+        }
         ng_gen2(c, na(c, n), nb(c, n));
         return ng_array_get(c);
     }
@@ -2777,6 +3011,14 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
             }
             j = j + 1;
         }
+    }
+    vtrunc(ng(c, NG_SLEN), 0);
+    vtrunc(ng(c, NG_SMAX), 0);
+    let assigned = vnew();
+    if ng_scan_assigns(c, ne(c, f), assigned) && (prelude < 0 || ng_scan_assigns_vec(c, prelude, assigned)) {
+        ng_set(c, NG_ASSIGNED, assigned);
+    } else {
+        ng_set(c, NG_ASSIGNED, -1);
     }
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_ACCLVL, 0);
@@ -3014,6 +3256,9 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_BODYOK, vnew());
     ng_set(c, NG_EXITS, vnew());
     ng_set(c, NG_NONE, vnew());
+    ng_set(c, NG_SLEN, vnew());
+    ng_set(c, NG_SMAX, vnew());
+    ng_set(c, NG_ASSIGNED, -1);
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_PASS, 2);
     ng_entry(c);
