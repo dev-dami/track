@@ -29,6 +29,10 @@ esac
 
 rm -rf "$out"
 mkdir -p "$out/stage1" "$out/stage2" "$out/stage3"
+# A private runtime-object cache per run: every stage links the runtime the
+# same way, and concurrent bootstraps cannot race on a shared cache.
+TRACKC_CACHE="$out/cache"
+export TRACKC_CACHE
 
 echo "==> stage 0: yard builds compiler/ (Rust bootstrap compiler)"
 (cd "$root/compiler" && "$yard" build >/dev/null)

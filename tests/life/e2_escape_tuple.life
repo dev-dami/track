@@ -1,0 +1,6 @@
+fn pair
+  result fresh
+  effects none
+fn main
+  result void
+  effects calls

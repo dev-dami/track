@@ -1,0 +1,7 @@
+fn total
+  param values ref use=mutate end=-
+  result copy
+  effects calls
+fn main
+  result void
+  effects calls

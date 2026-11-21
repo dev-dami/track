@@ -1,0 +1,7 @@
+fn fib
+  param n copy
+  result copy
+  effects calls
+fn main
+  result void
+  effects calls

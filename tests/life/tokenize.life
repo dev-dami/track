@@ -1,0 +1,11 @@
+fn is_alpha
+  param c copy
+  result copy
+  effects none
+fn is_digit
+  param c copy
+  result copy
+  effects none
+fn main
+  result void
+  effects calls
