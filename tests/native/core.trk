@@ -1,0 +1,124 @@
+// Native backend parity: core control flow, arithmetic and data.
+
+const LIMIT = 10;
+
+enum Color { Red, Green = 5, Blue }
+
+union Shape {
+    Circle(i64),
+    Rect((i64, i64)),
+    Empty,
+}
+
+struct Point { x: i64, y: i64 }
+struct Size { w: i64, x: i64 }
+
+fn fib(n: i64) -> i64 {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn area(s: Shape) -> i64 {
+    return match s {
+        Shape::Circle(r) => r * r * 3,
+        Shape::Rect(d) => d.0 * d.1,
+        Shape::Empty => 0,
+    };
+}
+
+fn divmod(a: i64, b: i64) -> (i64, i64) {
+    return (a / b, a % b);
+}
+
+fn classify(n: i64) -> i64 {
+    return match n {
+        0 => "zero",
+        1 => "one",
+        k if k < 0 => "negative",
+        _ => "many",
+    };
+}
+
+fn word(s: i64) -> i64 {
+    return match s {
+        "a" => 1,
+        "bb" => 2,
+        _ => 0,
+    };
+}
+
+fn side_effect(n: i64) -> bool {
+    print(n);
+    return true;
+}
+
+fn main() -> i64 {
+    print(fib(20));
+    let mut total: i64 = 0;
+    for i in 0..LIMIT {
+        total = total + i * i;
+    }
+    print(total);
+    let mut j: i64 = 0;
+    while j < 5 {
+        j = j + 1;
+    }
+    print(j);
+    print(Color::Red);
+    print(Color::Blue);
+    print(area(Shape::Circle(2)));
+    print(area(Shape::Rect((3, 4))));
+    print(area(Shape::Empty));
+    let (q, r) = divmod(17, 5);
+    print(q);
+    print(r);
+    let t = divmod(-17, 5);
+    print(t.0);
+    print(t.1);
+    let pair = (7, 8);
+    print(pair.0 + pair.1);
+    print(classify(0));
+    print(classify(1));
+    print(classify(-4));
+    print(classify(9));
+    print(word("bb"));
+    print(word("zz"));
+    let mut p = Point { y: 2, x: 1 };
+    print(p.x * 10 + p.y);
+    p.y = 40;
+    print(p.y);
+    let s = Size { w: 3, x: 9 };
+    print(s.x);
+    print(p.x);
+    let mut arr = [10, 20, 30, 40];
+    print(arr[2]);
+    arr[1] = 99;
+    print(arr[1]);
+    print(array_len(&arr));
+    let part = arr[1..3];
+    print(array_len(&part));
+    print(part[0]);
+    print(1 << 65);
+    print(-1 >> 60);
+    print(9223372036854775807 + 1);
+    print(-7 / 2);
+    print(-7 % 2);
+    print(5 & 3);
+    print(5 | 3);
+    print(!true);
+    print(-(3));
+    if false && side_effect(1) {
+        print(111);
+    }
+    if true || side_effect(2) {
+        print(222);
+    }
+    print(str_concat("ab", "cd"));
+    print(str_len("hello"));
+    print(str_eq("x", "x"));
+    let label = if total > 100 { "big" } else { "small" };
+    print(label);
+    return 3;
+}
