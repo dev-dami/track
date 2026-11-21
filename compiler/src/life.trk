@@ -192,6 +192,16 @@ fn var_origin(c: i64, s: i64, name: i64) -> i64 {
     return slot_origin(c, slot);
 }
 
+// A value in a move position (returned, bound, stored, passed by value).
+// A bare variable there is moved, not used (docs/lifecycles.md §1.1:
+// `read` is a field load or a `&` pass), so it raises no use level.
+fn ev_move(c: i64, s: i64, n: i64) -> i64 {
+    if n >= 0 && nk(c, n) == K_VAR {
+        return var_origin(c, s, na(c, n));
+    }
+    return ev(c, s, n);
+}
+
 // Origin of a value whose type is `ty`, given the origin of what holds it.
 fn through(c: i64, n: i64, o: i64) -> i64 {
     if life_tracked(c, infer_type(c, n)) {
@@ -207,7 +217,7 @@ fn walk_block(c: i64, s: i64, body: i64) -> i64 {
     let mut i: i64 = 0;
     while i < list_len(c, body) {
         let n = list_at(c, body, i);
-        v = ev(c, s, n);
+        v = ev_move(c, s, n);
         if nk(c, n) == K_RETURN {
             i = list_len(c, body);
         }
@@ -235,7 +245,7 @@ fn ev_list(c: i64, s: i64, l: i64, from: i64, step: i64) -> i64 {
     let mut o: i64 = 0;
     let mut i = from;
     while i < list_len(c, l) {
-        o = o | ev(c, s, list_at(c, l, i));
+        o = o | ev_move(c, s, list_at(c, l, i));
         i = i + step;
     }
     return o;
@@ -257,17 +267,25 @@ fn ev_call(c: i64, s: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
     while i < list_len(c, args) {
         let a = list_at(c, args, i);
-        let o = ev(c, s, a);
         let mut pty: i64 = -1;
         if params >= 0 && i * 2 + 1 < list_len(c, params) {
             pty = list_at(c, params, i * 2 + 1);
         } else {
             pty = infer_type(c, a);
         }
+        let mut o: i64 = 0;
+        if ty_is_ref(c, pty) {
+            o = ev(c, s, a);
+        } else {
+            o = ev_move(c, s, a);
+        }
         if ty_is_ref(c, pty) {
             touch(s, o, U_MUT);
             res = res | o;
         } else if life_tracked(c, pty) {
+            // A moved owned value is the callee's now, but a borrowed one
+            // stays the lender's: the callee may read through it.
+            touch(s, o & lsg(s, LS_REFS), U_READ);
             sink_esc(s, o);
             res = res | o;
         }
@@ -311,7 +329,7 @@ fn ev_place_indices(c: i64, s: i64, n: i64) -> i64 {
 
 fn ev_assign(c: i64, s: i64, n: i64) -> i64 {
     let target = na(c, n);
-    let o = ev(c, s, nb(c, n));
+    let o = ev_move(c, s, nb(c, n));
     let name = place_var(c, target);
     if name < 0 {
         sink_esc(s, o);
@@ -403,16 +421,36 @@ fn ev_match(c: i64, s: i64, n: i64) -> i64 {
     return v;
 }
 
-// Loops: the body runs twice, each pass joined with the state before the
-// loop (zero iterations). The domain only grows, so two passes suffice.
+// True when the current path state equals the saved `st`.
+fn life_same(c: i64, s: i64, st: i64) -> bool {
+    if lsg(s, LS_LIVE) != vget(st, 0) {
+        return false;
+    }
+    let base = lsg(s, LS_BASE);
+    let mut i: i64 = 1;
+    while i < vlen(st) {
+        if slot_origin(c, base + i - 1) != vget(st, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Loops: each pass walks the body from the join of the state before the
+// loop (zero iterations) and every earlier pass, until a pass changes
+// nothing. A value can need one pass per hop to reach a slot (an n-way
+// rotation needs n - 1), so no fixed pass count is enough. Joins only add
+// bits, so the passes are bounded by slots x bits; once the state repeats,
+// another pass would record the same use and end facts again.
 fn ev_while(c: i64, s: i64, n: i64) -> i64 {
-    let mut pass: i64 = 0;
-    while pass < 2 {
+    let mut done = false;
+    while !done {
         let pre = life_save(c, s);
         ev(c, s, na(c, n));
         walk_block(c, s, nb(c, n));
         life_join(c, s, pre);
-        pass = pass + 1;
+        done = life_same(c, s, pre);
     }
     return 0;
 }
@@ -421,8 +459,8 @@ fn ev_for(c: i64, s: i64, n: i64) -> i64 {
     let iter = nb(c, n);
     let oi = ev(c, s, iter);
     let elem = for_elem_type(c, infer_type(c, iter));
-    let mut pass: i64 = 0;
-    while pass < 2 {
+    let mut done = false;
+    while !done {
         let pre = life_save(c, s);
         let count = var_count(c);
         let slot = declare(c, na(c, n), elem, 0);
@@ -432,7 +470,7 @@ fn ev_for(c: i64, s: i64, n: i64) -> i64 {
         walk_block(c, s, nc(c, n));
         truncate_vars(c, count);
         life_join(c, s, pre);
-        pass = pass + 1;
+        done = life_same(c, s, pre);
     }
     return 0;
 }
@@ -525,7 +563,13 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
     }
     if k == K_MACROCALL {
         lsg_set(s, LS_FLAGS, lsg(s, LS_FLAGS) | LF_EFFECT);
-        let o = ev_list(c, s, nb(c, n), 0, 1);
+        let args = nb(c, n);
+        let mut o: i64 = 0;
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            o = o | ev(c, s, list_at(c, args, i));
+            i = i + 1;
+        }
         sink_esc(s, o);
         if nc(c, n) >= 0 {
             walk_block(c, s, nc(c, n));
@@ -551,7 +595,7 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         return ev_for(c, s, n);
     }
     if k == K_RETURN {
-        let o = ev(c, s, na(c, n));
+        let o = ev_move(c, s, na(c, n));
         exit_with(s, o);
         return 0;
     }
@@ -559,7 +603,7 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         return ev_assign(c, s, n);
     }
     if k == K_LET {
-        let o = ev(c, s, nd(c, n));
+        let o = ev_move(c, s, nd(c, n));
         let mut ty = nc(c, n);
         if ty < 0 {
             ty = infer_type(c, nd(c, n));
@@ -571,7 +615,7 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         return 0;
     }
     if k == K_LETD {
-        let o = ev(c, s, nc(c, n));
+        let o = ev_move(c, s, nc(c, n));
         let mut ty = infer_type(c, nc(c, n));
         if ty < 0 {
             ty = ck(c, CK_TY_UNK);

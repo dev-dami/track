@@ -1,0 +1,46 @@
+// 6-variable rotation: p reaches `a` after 5 iterations, so the
+// loop needs 5 passes plus one to confirm the fixpoint. p must end by
+// `ret` and the result must be derived(p) fresh (card L3b).
+struct Point { x: i64, y: i64 }
+fn rot6_while(p: Point, n: i64) -> Point {
+    let mut a = Point { x: 0, y: 0 };
+    let mut b = Point { x: 0, y: 0 };
+    let mut c = Point { x: 0, y: 0 };
+    let mut d = Point { x: 0, y: 0 };
+    let mut e = Point { x: 0, y: 0 };
+    let mut f = p;
+    let mut i = 0;
+    while i < n {
+        let t = a;
+        a = b;
+        b = c;
+        c = d;
+        d = e;
+        e = f;
+        f = t;
+        i = i + 1;
+    }
+    return a;
+}
+fn rot6_for(p: Point, n: i64) -> Point {
+    let mut a = Point { x: 0, y: 0 };
+    let mut b = Point { x: 0, y: 0 };
+    let mut c = Point { x: 0, y: 0 };
+    let mut d = Point { x: 0, y: 0 };
+    let mut e = Point { x: 0, y: 0 };
+    let mut f = p;
+    for i in 0..n {
+        let t = a;
+        a = b;
+        b = c;
+        c = d;
+        d = e;
+        e = f;
+        f = t;
+    }
+    return a;
+}
+fn main() -> void {
+    print(rot6_while(Point { x: 1, y: 2 }, 5).x);
+    print(rot6_for(Point { x: 1, y: 2 }, 5).x);
+}

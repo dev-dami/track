@@ -1,0 +1,13 @@
+fn rot6_while
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn rot6_for
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn main
+  result void
+  effects calls

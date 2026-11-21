@@ -1,5 +1,5 @@
 fn dup
-  param r ref use=read end=ret
+  param r ref use=none end=ret
   result derived(r) fresh
   effects none
 fn main

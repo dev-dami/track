@@ -1033,14 +1033,14 @@ fn trackc_programs_print_the_expected_output() {
 }
 
 /// `trackc life` dumps per-function lifecycle summaries (card L3). Each
-/// program in docs/lifecycles/ and bench/progs/ has a golden dump in
-/// tests/life/<stem>.life. Set `UPDATE_LIFE=1` to rewrite the goldens.
+/// program in docs/lifecycles/, bench/progs/ and tests/life/progs/ has a
+/// golden dump in tests/life/<stem>.life. Set `UPDATE_LIFE=1` to rewrite the goldens.
 #[test]
 fn life_dumps_match_goldens() {
     let root = repo();
     let update = env::var("UPDATE_LIFE").is_ok();
     let mut checked = 0;
-    for sub in ["docs/lifecycles", "bench/progs"] {
+    for sub in ["docs/lifecycles", "bench/progs", "tests/life/progs"] {
         let mut files: Vec<PathBuf> = fs::read_dir(root.join(sub))
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -1075,8 +1075,8 @@ fn life_dumps_match_goldens() {
         }
     }
     assert!(
-        checked >= 17,
-        "expected at least 17 programs, saw {}",
+        checked >= 22,
+        "expected at least 22 programs, saw {}",
         checked
     );
 }

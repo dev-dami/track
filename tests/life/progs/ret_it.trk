@@ -1,0 +1,23 @@
+// A parameter only moved into the result is never used: use=none,
+// end=ret (docs/lifecycles.md §1.1). A field load is a read.
+struct Point { x: i64, y: i64 }
+fn ret_it(p: Point) -> Point {
+    return p;
+}
+fn ret_tail(p: Point) -> Point {
+    p
+}
+fn ret_let(p: Point) -> Point {
+    let q = p;
+    return q;
+}
+fn ret_read(p: Point) -> Point {
+    print(p.x);
+    return p;
+}
+fn main() -> void {
+    print(ret_it(Point { x: 1, y: 2 }).x);
+    print(ret_tail(Point { x: 3, y: 4 }).x);
+    print(ret_let(Point { x: 5, y: 6 }).x);
+    print(ret_read(Point { x: 7, y: 8 }).y);
+}
