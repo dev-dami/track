@@ -774,6 +774,45 @@ fn lifecycle_warnings_match_the_catalogue() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// examples/ is warning-free except two intended demonstrations: an unused
+/// allocation that is auto-freed, and a struct pattern match on a by-value
+/// parameter.
+#[test]
+fn examples_warn_only_where_intended() {
+    let root = repo();
+    let intended = [
+        ("linear_auto_free.trk", "warning[W0301]: 'buf'"),
+        ("structs_arrays.trk", "warning[W0305]: 'quadrant'"),
+    ];
+    let mut files: Vec<PathBuf> = fs::read_dir(root.join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "trk"))
+        .collect();
+    files.sort();
+    for file in files {
+        let name = file.file_name().unwrap().to_str().unwrap().to_string();
+        let rel = format!("examples/{}", name);
+        let out = run_trackc(&["check", &rel], &root);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let want: Vec<&str> = intended
+            .iter()
+            .filter(|(f, _)| *f == name)
+            .map(|(_, w)| *w)
+            .collect();
+        assert_eq!(
+            stderr.matches("warning[").count(),
+            want.len(),
+            "{}: {}",
+            rel,
+            stderr
+        );
+        for w in want {
+            assert!(stderr.contains(w), "{}: want {:?}: {}", rel, w, stderr);
+        }
+    }
+}
+
 /// The compiler's own sources stay warning-clean (CI runs the same check).
 #[test]
 fn compiler_sources_are_warning_clean() {
