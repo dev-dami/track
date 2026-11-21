@@ -1213,9 +1213,9 @@ fn rt_summaries(c: i64) -> i64 {
     rt(c, "dealloc", "s", "-");
     rt(c, "mem_realloc", "kn", "0");
     rt(c, "memset", "mnn", "-");
-    rt(c, "memcpy", "mrn", "-");
+    rt(c, "memcpy", "msn", "-"); // src words land in dst: treat as stored
     rt(c, "memcmp", "rrn", "-");
-    rt(c, "track_words_copy", "rn", "f");
+    rt(c, "track_words_copy", "rn", "0"); // copied words may alias src cells
     rt(c, "array_len", "r", "-");
     // strings
     rt(c, "str_len", "r", "-");
