@@ -1,0 +1,21 @@
+// L4: self recursion. `walk` reads its point and passes it back to itself
+// by value; the SCC fixpoint sees end=die (not esc) and reaches it in
+// 2 passes (one to compute, one to confirm).
+struct Point { x: i64, y: i64 }
+fn walk(p: Point, n: i64) -> i64 {
+    if n == 0 {
+        return p.x;
+    }
+    return walk(p, n - 1);
+}
+// Returns its parameter through the recursive call: result derived(p).
+fn keep(p: Point, n: i64) -> Point {
+    if n == 0 {
+        return p;
+    }
+    return keep(p, n - 1);
+}
+fn main() -> void {
+    print(walk(Point { x: 1, y: 2 }, 3));
+    print(keep(Point { x: 4, y: 5 }, 2).y);
+}
