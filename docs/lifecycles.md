@@ -210,6 +210,17 @@ E0212 extends the current `check_escape`, which only follows `K_ADDR`,
 `K_VAR`, `K_CALL`, `K_IF` and `K_LENS`, to struct, tuple, array and
 payload literals through container edges.
 
+*As built (L5):* all five examples are rejected with the texts above
+(`life_fail_pending` in `life.trk`; `trackc life` still dumps them).
+E0211 fires when a `&`-typed variable is passed to a by-value,
+non-generic parameter whose end includes `die` or `esc`. E0212 checks
+`&local` elements of returned tuple, array and struct literals (payload
+literals are not covered yet). E0213 records `r = &x` targets and flags
+a reference whose target's block closed when it is next read or stored
+through. E0214 is found at the literal; when the borrowed value is a
+`&` parameter, it is reported at each call site and names the caller's
+value (`'p'` in e5), or at the literal if nothing calls the function.
+
 ### Warnings (suspicious, never fatal)
 
 | code | example | diagnostic |
