@@ -1942,3 +1942,725 @@ fn life_dump(c: i64) -> i64 {
     }
     return sb_text(b);
 }
+
+// ------------------------------------------------------- warnings (L6)
+//
+// Lifecycle warnings W0301-W0305 (docs/lifecycles.md §2). They run after
+// the summaries are final, in one more walk per function that mirrors the
+// checker's scopes (declare / bind_pattern / truncate_vars) so names
+// resolve exactly as they did while checking. Per slot it records the
+// binding `let`, whether the value was read, and a pending write (a field
+// store, or a call that mutates it through `&`) that no read has followed
+// yet. A slot's warnings are decided when its scope closes. A read
+// anywhere in a loop body keeps a write in the same body alive, since the
+// next iteration may read it.
+//   W0301 a `let` binding is never read
+//   W0302 a field or element store into a local is never read
+//   W0303 a call mutates a local through `&`, and it is never read again
+//   W0304 a call's result is discarded and the call has no other effect
+//   W0305 a by-value parameter is only read
+// `_`-prefixed names silence them.
+
+const WS_BASE = 0;  // first slot of the function
+const WS_ROWS = 1;  // per-slot rows, WR words each, from WS_BASE
+const WS_SEQ = 2;   // event counter (reads and pending writes)
+const WS_PURE = 3;  // purity memo by record offset: 0 unknown, 2 pure, 3 impure, 10+depth visiting
+const WS_LOW = 4;   // shallowest visiting depth a purity search leaned on
+const WS_WIDTH = 5;
+
+const WR_DECL = 0;  // the K_LET node, or -1 (parameters, patterns, lenses)
+const WR_READ = 1;  // 1 once the value is read
+const WR_LAST = 2;  // event number of the last read
+const WR_PEND = 3;  // node of a write no read has followed, or -1
+const WR_PCALL = 4; // 1 when the pending write is a mutating call
+const WR_PSEQ = 5;  // event number of the pending write
+const WR_LOCAL = 6; // 1 for an owned, non-reference local (its writes can be dead)
+const WR = 7;
+
+fn wsg(w: i64, i: i64) -> i64 { return vget(w, i); }
+
+fn wtick(w: i64) -> i64 {
+    vset(w, WS_SEQ, vget(w, WS_SEQ) + 1);
+    return vget(w, WS_SEQ);
+}
+
+fn wrow(w: i64, slot: i64) -> i64 { return (slot - wsg(w, WS_BASE)) * WR; }
+fn wget(w: i64, slot: i64, f: i64) -> i64 { return vget(wsg(w, WS_ROWS), wrow(w, slot) + f); }
+fn wset(w: i64, slot: i64, f: i64, x: i64) -> i64 { return vset(wsg(w, WS_ROWS), wrow(w, slot) + f, x); }
+
+// Give every slot declared since the last sync a blank row.
+fn wsync(c: i64, w: i64) -> i64 {
+    let rows = wsg(w, WS_ROWS);
+    let want = (var_count(c) - wsg(w, WS_BASE)) * WR;
+    while vlen(rows) < want {
+        vpush(rows, -1); // WR_DECL
+        vpush(rows, 0);
+        vpush(rows, 0);
+        vpush(rows, -1); // WR_PEND
+        vpush(rows, 0);
+        vpush(rows, 0);
+        vpush(rows, 0);
+    }
+    return 0;
+}
+
+// The function slot `name` resolves to, or -1 for globals and unknowns.
+fn wslot(c: i64, w: i64, name: i64) -> i64 {
+    let slot = lookup(c, name);
+    if slot < wsg(w, WS_BASE) {
+        return -1;
+    }
+    return slot;
+}
+
+fn wread(c: i64, w: i64, name: i64) -> i64 {
+    let slot = wslot(c, w, name);
+    if slot < 0 {
+        return 0;
+    }
+    wset(w, slot, WR_READ, 1);
+    wset(w, slot, WR_LAST, wtick(w));
+    wset(w, slot, WR_PEND, -1);
+    return 0;
+}
+
+// Record a write to `slot` that only a later read can justify. The first
+// unread write is the one reported.
+fn wpend(w: i64, slot: i64, node: i64, is_call: i64) -> i64 {
+    if wget(w, slot, WR_PEND) < 0 {
+        wset(w, slot, WR_PEND, node);
+        wset(w, slot, WR_PCALL, is_call);
+        wset(w, slot, WR_PSEQ, wtick(w));
+    }
+    return 0;
+}
+
+fn silenced(c: i64, name: i64) -> bool {
+    return str_char_at(name_text(c, name), 0) == 95;
+}
+
+// Line of the `}` closing the block that holds the statement at `pos`.
+fn scope_end_line(c: i64, pos: i64) -> i64 {
+    let f = file_of_pos(c, pos);
+    let src = vget(cx(c, CX_SRCS), f);
+    let n = text_len(src);
+    let mut i = pos - vget(cx(c, CX_BASES), f);
+    let mut depth: i64 = 0;
+    let mut done = false;
+    while !done && i < n {
+        let ch = str_char_at(src, i);
+        if ch == 34 {
+            i = i + 1;
+            while i < n && str_char_at(src, i) != 34 {
+                if str_char_at(src, i) == 92 {
+                    i = i + 1;
+                }
+                i = i + 1;
+            }
+        } else if ch == 47 && i + 1 < n && str_char_at(src, i + 1) == 47 {
+            while i < n && str_char_at(src, i) != 10 {
+                i = i + 1;
+            }
+        } else if ch == 123 {
+            depth = depth + 1;
+        } else if ch == 125 {
+            if depth == 0 {
+                done = true;
+            }
+            depth = depth - 1;
+        }
+        if !done {
+            i = i + 1;
+        }
+    }
+    let mut line: i64 = 1;
+    let mut j: i64 = 0;
+    while j < i && j < n {
+        if str_char_at(src, j) == 10 {
+            line = line + 1;
+        }
+        j = j + 1;
+    }
+    return line;
+}
+
+// The variable node at the base of a store target (no derefs: see wassign).
+fn store_root_node(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_FIELD || k == K_TINDEX || k == K_INDEX {
+        return store_root_node(c, na(c, n));
+    }
+    return n;
+}
+
+// Source-like text of a store target: `p.y`, `p.0`, `p[..]`.
+fn place_text(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_VAR {
+        return name_text(c, na(c, n));
+    }
+    if k == K_FIELD {
+        return text_cat3(place_text(c, na(c, n)), ".", name_text(c, nb(c, n)));
+    }
+    if k == K_TINDEX {
+        return text_cat3(place_text(c, na(c, n)), ".", text_of_int(nb(c, n)));
+    }
+    if k == K_INDEX {
+        return text_cat(place_text(c, na(c, n)), "[..]");
+    }
+    return "_";
+}
+
+// Decide the warnings of the slots from `count` up, then drop them.
+fn wscope_end(c: i64, w: i64, count: i64) -> i64 {
+    let mut slot = count;
+    while slot < var_count(c) {
+        let decl = wget(w, slot, WR_DECL);
+        let name = vf(c, slot, V_NAME);
+        if decl >= 0 && !silenced(c, name) {
+            let q = quoted(c, name);
+            let pend = wget(w, slot, WR_PEND);
+            if wget(w, slot, WR_READ) == 0 {
+                warn_at(c, npos(c, decl), "W0301", text_cat3(q, " is created and never read; remove it or name it '_",
+                    text_cat(name_text(c, name), "'.")));
+            } else if pend >= 0 && wget(w, slot, WR_PCALL) == 1 {
+                warn_at(c, npos(c, pend), "W0303", text_cat3(text_cat3("'", name_text(c, na(c, pend)), "' mutates "),
+                    q, text_cat3(", but ", q, " is never read afterwards.")));
+            } else if pend >= 0 {
+                let line = text_of_int(scope_end_line(c, npos(c, decl)));
+                warn_at(c, npos(c, store_root_node(c, pend)), "W0302", text_cat3(text_cat3("write to '", place_text(c, pend), "' is never read; "),
+                    q, text_cat3(" ends at line ", line, ".")));
+            }
+        }
+        slot = slot + 1;
+    }
+    truncate_vars(c, count);
+    vtrunc(wsg(w, WS_ROWS), (count - wsg(w, WS_BASE)) * WR);
+    return 0;
+}
+
+// A loop body read keeps the body's own writes alive: the next iteration
+// may read them. Slots below `count` existed before the loop.
+fn wloop_end(c: i64, w: i64, start: i64, count: i64) -> i64 {
+    let mut slot = wsg(w, WS_BASE);
+    while slot < count {
+        if wget(w, slot, WR_PEND) >= 0 && wget(w, slot, WR_PSEQ) > start && wget(w, slot, WR_LAST) > start {
+            wset(w, slot, WR_PEND, -1);
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+
+// A block's statements; the last one's value is used when `used`.
+fn wblock(c: i64, w: i64, body: i64, used: bool) -> i64 {
+    let count = var_count(c);
+    let len = list_len(c, body);
+    let mut i: i64 = 0;
+    while i < len {
+        let n = list_at(c, body, i);
+        wk(c, w, n, used && i == len - 1);
+        if nk(c, n) == K_RETURN {
+            i = len;
+        }
+        i = i + 1;
+    }
+    wscope_end(c, w, count);
+    return 0;
+}
+
+fn wlist(c: i64, w: i64, l: i64, from: i64, step: i64) -> i64 {
+    let mut i = from;
+    while i < list_len(c, l) {
+        wk(c, w, list_at(c, l, i), true);
+        i = i + step;
+    }
+    return 0;
+}
+
+fn place_has_deref(c: i64, n: i64) -> bool {
+    let k = nk(c, n);
+    if k == K_UN {
+        return true;
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_INDEX {
+        return place_has_deref(c, na(c, n));
+    }
+    return false;
+}
+
+fn wassign(c: i64, w: i64, n: i64) -> i64 {
+    let target = na(c, n);
+    wk(c, w, nb(c, n), true);
+    if nk(c, target) == K_VAR {
+        return 0; // rebinding writes the variable, it reads nothing
+    }
+    let mut p = target;
+    while nk(c, p) == K_FIELD || nk(c, p) == K_TINDEX || nk(c, p) == K_INDEX || nk(c, p) == K_UN {
+        if nk(c, p) == K_INDEX {
+            wk(c, w, nb(c, p), true);
+        }
+        if nk(c, p) == K_UN {
+            p = nb(c, p);
+        } else {
+            p = na(c, p);
+        }
+    }
+    let name = place_var(c, target);
+    if name < 0 {
+        return 0;
+    }
+    let slot = wslot(c, w, name);
+    if slot >= 0 && wget(w, slot, WR_LOCAL) == 1 && !place_has_deref(c, target) {
+        return wpend(w, slot, target, 0);
+    }
+    // A store through a reference, a lens or a parameter: whoever lent
+    // the value sees it.
+    return wread(c, w, name);
+}
+
+fn wcall(c: i64, w: i64, n: i64, used: bool) -> i64 {
+    let args = nb(c, n);
+    wlist(c, w, args, 0, 1);
+    let at = life_callee(c, na(c, n));
+    if at < 0 {
+        return 0;
+    }
+    let recs = life_records(c);
+    let np = vget(recs, at + LR_NP);
+    let mut i: i64 = 0;
+    while i < list_len(c, args) && i < np {
+        let a = list_at(c, args, i);
+        if nk(c, a) == K_ADDR && nk(c, na(c, a)) == K_VAR && vget(recs, at + LR_PARAMS + i * 2) == U_MUT {
+            let slot = wslot(c, w, na(c, na(c, a)));
+            if slot >= 0 && wget(w, slot, WR_LOCAL) == 1 {
+                wpend(w, slot, n, 1);
+            }
+        }
+        i = i + 1;
+    }
+    if !used {
+        wdiscard(c, w, n, at);
+    }
+    return 0;
+}
+
+// W0304: the call's result is dropped, and the callee only reads its
+// parameters, ends none of them by `esc`, returns a fresh (or copy) value
+// and reaches no call with an effect.
+fn wdiscard(c: i64, w: i64, n: i64, at: i64) -> i64 {
+    let recs = life_records(c);
+    let f = vget(recs, at + LR_FN);
+    if !fn_returns_value(c, f) {
+        return 0;
+    }
+    if (vget(recs, at + LR_RES) & (O_PARAMS | O_STATIC | O_UNKNOWN)) != 0 {
+        return 0;
+    }
+    vset(w, WS_LOW, 1000000);
+    if !pure_fn(c, w, at, 0) {
+        return 0;
+    }
+    let mut what = "returns a value";
+    if life_tracked(c, nd(c, f)) {
+        what = "returns a fresh value";
+    }
+    let q = text_cat3("'", name_text(c, na(c, n)), "'");
+    return warn_at(c, npos(c, n), "W0304", text_cat3(text_cat3("result of ", q, " is discarded, and "),
+        q, text_cat3(" has no other effect (it only reads its parameters and ", what, ").")));
+}
+
+// True when the program function at record `at` has no effect: no
+// parameter mutated or escaping, and every call it makes (transitively)
+// is to such a function or to a side-effect-free runtime function.
+// Results are memoized, except a "pure" that leaned on a function still
+// being searched further up: that one may yet turn out impure.
+fn pure_fn(c: i64, w: i64, at: i64, depth: i64) -> bool {
+    let memo = wsg(w, WS_PURE);
+    let m = vget(memo, at);
+    if m == 2 {
+        return true;
+    }
+    if m == 3 {
+        return false;
+    }
+    if m >= 10 {
+        if m - 10 < wsg(w, WS_LOW) {
+            vset(w, WS_LOW, m - 10);
+        }
+        return true;
+    }
+    let recs = life_records(c);
+    let mut ok = true;
+    let np = vget(recs, at + LR_NP);
+    let mut k: i64 = 0;
+    while k < np {
+        if vget(recs, at + LR_PARAMS + k * 2) == U_MUT || (vget(recs, at + LR_PARAMS + k * 2 + 1) & E_ESC) != 0 {
+            ok = false;
+        }
+        k = k + 1;
+    }
+    let low_before = wsg(w, WS_LOW);
+    vset(w, WS_LOW, 1000000);
+    if ok {
+        vset(memo, at, 10 + depth);
+        ok = pure_list(c, w, ne(c, vget(recs, at + LR_FN)), 0, 1, depth + 1);
+    }
+    let low = wsg(w, WS_LOW);
+    if !ok {
+        vset(memo, at, 3);
+    } else if low >= depth {
+        vset(memo, at, 2);
+    } else {
+        vset(memo, at, 0);
+    }
+    if low < low_before {
+        vset(w, WS_LOW, low);
+    } else {
+        vset(w, WS_LOW, low_before);
+    }
+    return ok;
+}
+
+// Runtime functions that only compute a value (allocation included).
+fn rt_pure_name(s: i64) -> bool {
+    if text_starts(s, "str_") || text_starts(s, "path_") || text_starts(s, "char_") {
+        return true;
+    }
+    if text_starts(s, "math_") {
+        return !text_eq(s, "math_random");
+    }
+    return text_eq(s, "int_to_str") || text_eq(s, "memcmp") || text_eq(s, "array_len") || text_eq(s, "alloc")
+        || text_eq(s, "vec_init") || text_eq(s, "vec_get") || text_eq(s, "vec_len")
+        || text_eq(s, "ring_init") || text_eq(s, "ring_peek") || text_eq(s, "ring_full")
+        || text_eq(s, "ring_empty") || text_eq(s, "ring_count")
+        || text_eq(s, "track_i64_collection_new") || text_eq(s, "track_i64_collection_len")
+        || text_eq(s, "track_i64_collection_get") || text_eq(s, "track_sb_new") || text_eq(s, "track_sb_len")
+        || text_eq(s, "track_sb_str") || text_eq(s, "track_str_bytes") || text_eq(s, "track_words_copy");
+}
+
+fn pure_call(c: i64, w: i64, n: i64, depth: i64) -> bool {
+    let callee = life_callee(c, na(c, n));
+    if callee >= 0 {
+        if !pure_fn(c, w, callee, depth) {
+            return false;
+        }
+    } else if callee <= C_RT0 {
+        let recs = vget(ck(c, CK_LIFE), LT_RTRECS);
+        let at = C_RT0 - callee;
+        let mut k: i64 = 0;
+        while k < vget(recs, at + LR_NP) {
+            if vget(recs, at + LR_PARAMS + k * 2) == U_MUT || (vget(recs, at + LR_PARAMS + k * 2 + 1) & E_ESC) != 0 {
+                return false;
+            }
+            k = k + 1;
+        }
+        if !rt_pure_name(name_text(c, last_segment(c, na(c, n)))) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    return pure_list(c, w, nb(c, n), 0, 1, depth);
+}
+
+fn pure_node(c: i64, w: i64, n: i64, depth: i64) -> bool {
+    if n < 0 {
+        return true;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL || k == K_STR || k == K_VAR {
+        return true;
+    }
+    if k == K_CALL {
+        return pure_call(c, w, n, depth);
+    }
+    if k == K_MACROCALL {
+        return false;
+    }
+    if k == K_BIN {
+        return pure_node(c, w, nb(c, n), depth) && pure_node(c, w, nc(c, n), depth);
+    }
+    if k == K_UN {
+        return pure_node(c, w, nb(c, n), depth);
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return pure_list(c, w, na(c, n), 0, 1, depth);
+    }
+    if k == K_SINIT {
+        return pure_list(c, w, nb(c, n), 1, 2, depth);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR || k == K_RETURN {
+        return pure_node(c, w, na(c, n), depth);
+    }
+    if k == K_INDEX || k == K_RANGE || k == K_ASSIGN {
+        return pure_node(c, w, na(c, n), depth) && pure_node(c, w, nb(c, n), depth);
+    }
+    if k == K_SLICE {
+        return pure_node(c, w, na(c, n), depth) && pure_node(c, w, nb(c, n), depth) && pure_node(c, w, nc(c, n), depth);
+    }
+    if k == K_LENS {
+        return pure_list(c, w, nc(c, n), 0, 1, depth);
+    }
+    if k == K_IF {
+        return pure_node(c, w, na(c, n), depth) && pure_list(c, w, nb(c, n), 0, 1, depth)
+            && pure_list(c, w, nc(c, n), 0, 1, depth);
+    }
+    if k == K_WHILE {
+        return pure_node(c, w, na(c, n), depth) && pure_list(c, w, nb(c, n), 0, 1, depth);
+    }
+    if k == K_FOR {
+        return pure_node(c, w, nb(c, n), depth) && pure_list(c, w, nc(c, n), 0, 1, depth);
+    }
+    if k == K_MATCH {
+        if !pure_node(c, w, na(c, n), depth) {
+            return false;
+        }
+        let arms = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            if !pure_node(c, w, list_at(c, arms, i + 1), depth) || !pure_node(c, w, list_at(c, arms, i + 2), depth) {
+                return false;
+            }
+            i = i + 3;
+        }
+        return true;
+    }
+    if k == K_LET {
+        return pure_node(c, w, nd(c, n), depth);
+    }
+    if k == K_LETD {
+        return pure_node(c, w, nc(c, n), depth);
+    }
+    return true;
+}
+
+fn pure_list(c: i64, w: i64, l: i64, from: i64, step: i64, depth: i64) -> bool {
+    let mut i = from;
+    while i < list_len(c, l) {
+        if !pure_node(c, w, list_at(c, l, i), depth) {
+            return false;
+        }
+        i = i + step;
+    }
+    return true;
+}
+
+// The warnings walk: `used` is false for a value nobody takes.
+fn wk(c: i64, w: i64, n: i64, used: bool) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL || k == K_STR {
+        return 0;
+    }
+    if k == K_VAR {
+        return wread(c, w, na(c, n));
+    }
+    if k == K_BIN {
+        wk(c, w, nb(c, n), true);
+        return wk(c, w, nc(c, n), true);
+    }
+    if k == K_UN {
+        return wk(c, w, nb(c, n), true);
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return wlist(c, w, na(c, n), 0, 1);
+    }
+    if k == K_SINIT {
+        return wlist(c, w, nb(c, n), 1, 2);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR || k == K_RETURN {
+        return wk(c, w, na(c, n), true);
+    }
+    if k == K_INDEX || k == K_RANGE {
+        wk(c, w, na(c, n), true);
+        return wk(c, w, nb(c, n), true);
+    }
+    if k == K_SLICE {
+        wk(c, w, na(c, n), true);
+        wk(c, w, nb(c, n), true);
+        return wk(c, w, nc(c, n), true);
+    }
+    if k == K_CALL {
+        return wcall(c, w, n, used);
+    }
+    if k == K_MACROCALL {
+        wlist(c, w, nb(c, n), 0, 1);
+        if nc(c, n) >= 0 {
+            wblock(c, w, nc(c, n), false);
+        }
+        return 0;
+    }
+    if k == K_LENS {
+        wread(c, w, na(c, n));
+        let target = lookup(c, na(c, n));
+        let mut ty: i64 = -1;
+        if target >= 0 {
+            ty = vf(c, target, V_TYPE);
+        }
+        let count = var_count(c);
+        let lens = declare(c, nb(c, n), ty, 0);
+        vf_set(c, lens, V_LENS, 1);
+        wsync(c, w);
+        wblock(c, w, nc(c, n), used);
+        return wscope_end(c, w, count);
+    }
+    if k == K_IF {
+        wk(c, w, na(c, n), true);
+        wblock(c, w, nb(c, n), used);
+        return wblock(c, w, nc(c, n), used);
+    }
+    if k == K_MATCH {
+        let target = na(c, n);
+        wk(c, w, target, true);
+        let mut tt = infer_type(c, target);
+        if tt < 0 {
+            tt = ck(c, CK_TY_UNK);
+        }
+        let arms = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            let count = var_count(c);
+            bind_pattern(c, list_at(c, arms, i), tt, 0);
+            wsync(c, w);
+            wk(c, w, list_at(c, arms, i + 1), true);
+            wk(c, w, list_at(c, arms, i + 2), used);
+            wscope_end(c, w, count);
+            i = i + 3;
+        }
+        return 0;
+    }
+    if k == K_WHILE {
+        let start = wsg(w, WS_SEQ);
+        let count = var_count(c);
+        wk(c, w, na(c, n), true);
+        wblock(c, w, nb(c, n), false);
+        return wloop_end(c, w, start, count);
+    }
+    if k == K_FOR {
+        let iter = nb(c, n);
+        wk(c, w, iter, true);
+        let start = wsg(w, WS_SEQ);
+        let count = var_count(c);
+        declare(c, na(c, n), for_elem_type(c, infer_type(c, iter)), 0);
+        wsync(c, w);
+        wblock(c, w, nc(c, n), false);
+        wscope_end(c, w, count);
+        return wloop_end(c, w, start, count);
+    }
+    if k == K_ASSIGN {
+        return wassign(c, w, n);
+    }
+    if k == K_LET {
+        wk(c, w, nd(c, n), true);
+        let mut ty = nc(c, n);
+        if ty < 0 {
+            ty = infer_type(c, nd(c, n));
+        }
+        let slot = declare(c, na(c, n), ty, nb(c, n));
+        wsync(c, w);
+        wset(w, slot, WR_DECL, n);
+        if !ty_is_ref(c, ty) && life_tracked(c, ty) {
+            wset(w, slot, WR_LOCAL, 1);
+        }
+        return 0;
+    }
+    if k == K_LETD {
+        wk(c, w, nc(c, n), true);
+        let mut ty = infer_type(c, nc(c, n));
+        if ty < 0 {
+            ty = ck(c, CK_TY_UNK);
+        }
+        bind_pattern(c, na(c, n), ty, nb(c, n));
+        return wsync(c, w);
+    }
+    return 0;
+}
+
+fn type_text(c: i64, t: i64) -> i64 {
+    let k = nk(c, t);
+    if k == T_CUSTOM {
+        return name_text(c, na(c, t));
+    }
+    if k == T_REF {
+        return text_cat("&", type_text(c, na(c, t)));
+    }
+    if k == T_SLICE {
+        return text_cat("[]", type_text(c, na(c, t)));
+    }
+    if k == T_ARRAY {
+        return text_cat3(text_cat("[", type_text(c, na(c, t))), "; ", text_cat(text_of_int(nb(c, t)), "]"));
+    }
+    if k == T_PTR {
+        return text_cat3("ptr<", type_text(c, na(c, t)), ">");
+    }
+    if k == T_PRIM {
+        let p = na(c, t);
+        if p == PRIM_U8 { return "u8"; }
+        if p == PRIM_I8 { return "i8"; }
+        if p == PRIM_I32 { return "i32"; }
+        if p == PRIM_U32 { return "u32"; }
+        if p == PRIM_U64 { return "u64"; }
+        if p == PRIM_BOOL { return "bool"; }
+        return "i64";
+    }
+    return "_";
+}
+
+// W0305: a by-value, non-copy parameter the function only reads and lets
+// die. Generic templates are skipped: taking a `T` by value is the point.
+fn warn_consume_only_reads(c: i64, at: i64) -> i64 {
+    let recs = life_records(c);
+    let f = vget(recs, at + LR_FN);
+    if list_len(c, nb(c, f)) > 0 {
+        return 0;
+    }
+    let params = nc(c, f);
+    let np = vget(recs, at + LR_NP);
+    let mut k: i64 = 0;
+    while k < np {
+        let ty = list_at(c, params, k * 2 + 1);
+        let pname = list_at(c, params, k * 2);
+        if !ty_is_ref(c, ty) && life_tracked(c, ty) && !silenced(c, pname)
+            && vget(recs, at + LR_PARAMS + k * 2) == U_READ && vget(recs, at + LR_PARAMS + k * 2 + 1) == E_DIE {
+            let fq = text_cat3("'", name_text(c, na(c, f)), "'");
+            warn_at(c, npos(c, f), "W0305", text_cat3(text_cat3(fq, " takes ", quoted(c, pname)),
+                " by value but only reads it; take '&", text_cat(type_text(c, ty), "' so callers keep it.")));
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn warn_function(c: i64, w: i64, f: i64) -> i64 {
+    let params = nc(c, f);
+    let np = list_len(c, params) / 2;
+    let base = var_count(c);
+    vset(w, WS_BASE, base);
+    vtrunc(wsg(w, WS_ROWS), 0);
+    let mut k: i64 = 0;
+    while k < np {
+        declare(c, list_at(c, params, k * 2), list_at(c, params, k * 2 + 1), 0);
+        k = k + 1;
+    }
+    wsync(c, w);
+    wblock(c, w, ne(c, f), fn_returns_value(c, f));
+    return wscope_end(c, w, base);
+}
+
+// Lifecycle warnings for every program function (after `life_program`).
+fn life_warnings(c: i64) -> i64 {
+    let recs = life_records(c);
+    let w = vfill(vnew_cap(WS_WIDTH), WS_WIDTH, 0);
+    vset(w, WS_ROWS, vnew_cap(256));
+    vset(w, WS_PURE, vfill(vnew_cap(vlen(recs) + 1), vlen(recs), 0));
+    let mut at: i64 = 0;
+    while at < vlen(recs) {
+        warn_function(c, w, vget(recs, at + LR_FN));
+        warn_consume_only_reads(c, at);
+        at = at + LR_PARAMS + vget(recs, at + LR_NP) * 2;
+    }
+    return 0;
+}

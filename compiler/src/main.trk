@@ -74,14 +74,12 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
     lex_init(c);
     load_program(c, path);
     collect_symbols(c);
-    if env_exists("TRACKC_WARN_TEST") != 0 {
-        force_test_warnings(c);
-    }
     check_program(c);
     life_program(c);
     if !text_eq(arg_text(1), "life") {
         life_fail_pending(c);
     }
+    life_warnings(c);
     finish_warnings(c);
     if with_rt {
         let from = vlen(cx(c, CX_ITEMS));
@@ -93,23 +91,6 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
         collect_symbols_from(c, from);
     }
     return c;
-}
-
-// Hidden test-only trigger, `TRACKC_WARN_TEST=1`: one `warning[W0000]` per
-// top-level item of the root module, recorded in reverse source order so
-// tests can see that diagnostics print sorted by position. Real warning
-// rules arrive with the lifecycle cards (docs/lifecycles.md, L6).
-fn force_test_warnings(c: i64) -> i64 {
-    let items = cx(c, CX_ITEMS);
-    let files = cx(c, CX_ITEMFILE);
-    let mut i: i64 = vlen(items) - 1;
-    while i >= 0 {
-        if vget(files, i) == cx(c, CX_MAINFILE) {
-            warn_at(c, npos(c, vget(items, i)), "W0000", "forced test warning (TRACKC_WARN_TEST)");
-        }
-        i = i - 1;
-    }
-    return 0;
 }
 
 // Print the warnings found while checking. They never change the exit

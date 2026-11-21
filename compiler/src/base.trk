@@ -304,7 +304,7 @@ fn print_diagnostic(c: i64, severity: i64, pos: i64, code: i64, message: i64) ->
     let path = vget(cx(c, CX_PATHS), f);
     let offset = pos - vget(cx(c, CX_BASES), f);
     let span = source_span(&src, offset, offset + 1);
-    let text = format_diagnostic(&src, &path, &severity, &code, &message, "here", span);
+    let text = format_diagnostic(&src, &path, &severity, &code, &message, "here", &span);
     err(text);
     err("\n");
     return 0;

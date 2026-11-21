@@ -3,7 +3,7 @@ fn test_math_and_str() -> void {
     let clamped = math_clamp(a, 0, 100);
     print(clamped);
 
-    let rng = math_random();
+    let _rng = math_random();
     print(1111);
 
     let idx = str_find("hello track", "track");

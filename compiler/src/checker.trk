@@ -1457,11 +1457,9 @@ fn check_if(c: i64, n: i64) -> i64 {
     while m < vlen(u) {
         let slot = vget(u, m);
         let mut then_state = vf(c, slot, V_STATE);
-        let mut then_b = vf(c, slot, V_BORROWS);
         let ti = vget(uthen, m);
         if ti >= 0 {
             then_state = vget(then_vals, ti * 2);
-            then_b = vget(then_vals, ti * 2 + 1);
         }
         let else_state = vget(uelse, m * 2);
         if slot_visible(c, slot) && then_state != else_state && !then_div && !else_div {
