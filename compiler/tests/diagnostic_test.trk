@@ -26,7 +26,7 @@ fn test_error_golden_output() -> void {
         "E1001",
         "expected expression",
         "expression required after '='",
-        span
+        &span
     );
     assert_string(&actual, &expected);
 }
@@ -40,7 +40,7 @@ fn test_multiline_span_stays_on_primary_line() -> void {
         "W2001",
         "multiline selection",
         "starts here",
-        span
+        &span
     );
     let expected = "warning[W2001]: multiline selection\n --> multi.trk:1:13\n  |\n1 | let value = broken\n  |             ^^^^^^ starts here";
     assert_string(&actual, &expected);
@@ -55,7 +55,7 @@ fn test_gutter_scales_for_multidigit_lines() -> void {
         "E1002",
         "bad value",
         "replace this value",
-        span
+        &span
     );
     let expected = "error[E1002]: bad value\n --> ten.trk:10:1\n   |\n10 | bad\n   | ^^^ replace this value";
     assert_string(&actual, &expected);
