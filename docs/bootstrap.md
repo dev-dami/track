@@ -166,6 +166,26 @@ The natively built `trackc` compiles itself to a byte-identical fixed
 point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
 compares native and C builds of the examples.
 
+### Bootstrapping from .trk alone
+
+```sh
+scripts/selfhost.sh
+# stage  built by                                bytes    ms  sha256
+# n1     seed (build/bootstrap/stage3/trackc)   410309    63  086fa61f8a84db56
+# n2     n1, env -i PATH=/nonexistent           410309   298  086fa61f8a84db56
+# n3     n2, env -i PATH=/nonexistent           410309   294  086fa61f8a84db56
+# n4     n3, env -i PATH=/nonexistent           410309   262  086fa61f8a84db56
+# ✓ n2 = n3 = n4: Track reproduces itself from .trk with no C toolchain
+# ✓ processes started by n4 while compiling itself: 0 (strace)
+```
+
+A seed `trackc` (any build, by default the stage3 of `scripts/bootstrap.sh`)
+compiles `compiler/src/main.trk` with `--native` once. From then on each
+native `trackc` compiles the compiler, runtime included, from `.trk` source
+with an empty environment and no reachable programs. The compiler, the
+runtime (`compiler/rt/`) and the machine-code backend are all Track; CI runs
+the script on every push.
+
 ## The runtime
 
 `runtime/track_runtime.c` is the single source of truth. The Rust compiler
