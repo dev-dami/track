@@ -62,7 +62,11 @@ fn build_creates_missing_output_directories() {
         &["build", src.to_str().unwrap(), "-o", exe.to_str().unwrap()],
         &dir,
     );
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(run_exe(&exe).0.trim(), "7");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -82,13 +86,23 @@ fn runtime_object_is_cached_and_builds_stay_identical() {
             .current_dir(&dir)
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
     let objects = || {
         fs::read_dir(&cache)
             .map(|d| {
-                d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "o"))
-                    .count()
+                d.filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_some_and(|x| x == "o")
+                })
+                .count()
             })
             .unwrap_or(0)
     };
@@ -471,7 +485,12 @@ fn run_under_both_runtimes(
     let c_exe = dir.join(format!("{}_crt", stem));
     let t_exe = dir.join(format!("{}_trt", stem));
     let out = run_trackc(
-        &["build", src.to_str().unwrap(), "-o", c_exe.to_str().unwrap()],
+        &[
+            "build",
+            src.to_str().unwrap(),
+            "-o",
+            c_exe.to_str().unwrap(),
+        ],
         dir,
     );
     assert!(
@@ -555,13 +574,23 @@ fn trackc_on_the_track_runtime_self_compiles() {
     );
     let a_exe = dir.join("a/trackc");
     let out = run_trackc(
-        &["build", "compiler/src/main.trk", "-o", a_exe.to_str().unwrap()],
+        &[
+            "build",
+            "compiler/src/main.trk",
+            "-o",
+            a_exe.to_str().unwrap(),
+        ],
         &repo(),
     );
     assert!(out.status.success());
     let b_exe = dir.join("b/trackc");
     let out = Command::new(&rt_trackc)
-        .args(["build", "compiler/src/main.trk", "-o", b_exe.to_str().unwrap()])
+        .args([
+            "build",
+            "compiler/src/main.trk",
+            "-o",
+            b_exe.to_str().unwrap(),
+        ])
         .current_dir(repo())
         .output()
         .unwrap();
