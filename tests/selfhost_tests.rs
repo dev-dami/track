@@ -938,3 +938,48 @@ fn trackc_programs_print_the_expected_output() {
     }
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `trackc life` dumps per-function lifecycle summaries (card L3). Each
+/// program in docs/lifecycles/ and bench/progs/ has a golden dump in
+/// tests/life/<stem>.life. Set `UPDATE_LIFE=1` to rewrite the goldens.
+#[test]
+fn life_dumps_match_goldens() {
+    let root = repo();
+    let update = env::var("UPDATE_LIFE").is_ok();
+    let mut checked = 0;
+    for sub in ["docs/lifecycles", "bench/progs"] {
+        let mut files: Vec<PathBuf> = fs::read_dir(root.join(sub))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|x| x == "trk"))
+            .collect();
+        files.sort();
+        for file in files {
+            let rel = file.strip_prefix(&root).unwrap().to_str().unwrap();
+            let out = run_trackc(&["life", rel], &root);
+            assert!(
+                out.status.success(),
+                "{}: trackc life failed: {}",
+                rel,
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let stem = file.file_stem().unwrap().to_str().unwrap();
+            let golden = root.join("tests/life").join(format!("{}.life", stem));
+            if update {
+                fs::create_dir_all(golden.parent().unwrap()).unwrap();
+                fs::write(&golden, &out.stdout).unwrap();
+            }
+            let want = fs::read_to_string(&golden)
+                .unwrap_or_else(|_| panic!("missing golden {}", golden.display()));
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                want,
+                "{}: lifecycle dump differs from {}",
+                rel,
+                golden.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 17, "expected at least 17 programs, saw {}", checked);
+}

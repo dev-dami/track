@@ -1,0 +1,7 @@
+fn bump
+  param c ref use=mutate end=-
+  result copy
+  effects none
+fn main
+  result void
+  effects calls

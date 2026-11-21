@@ -1,0 +1,8 @@
+fn vadd
+  param a ref use=read end=-
+  param b ref use=read end=-
+  result fresh
+  effects none
+fn main
+  result void
+  effects calls

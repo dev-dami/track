@@ -25,7 +25,7 @@ const ST_ACTIVE = 0;
 const ST_LOCKED = 1;
 const ST_SPENT = 2;
 
-const VW = 8;
+const VW = 9;
 const V_NAME = 0;
 const V_STATE = 1;
 const V_TYPE = 2;
@@ -34,6 +34,7 @@ const V_LENS = 4;
 const V_PREV = 5;
 const V_BORROWS = 6;
 const V_DEAD = 7;
+const V_ORIGIN = 8;  // life.trk: origin set of the value (see life.trk)
 
 // Checker state slots (vector stored in CX_CHK)
 const CK_VARS = 0;
@@ -60,7 +61,8 @@ const CK_TY_UNK = 20;    // placeholder type of a value whose type is not known
 const CK_INSTS = 21;     // instantiation keys already queued (see `note_instantiation`)
 const CK_PENDING = 22;   // queued instantiations: (fn node, bindings vector) pairs
 const CK_TY_OPAQUE = 23; // stand-in for a generic argument whose type is linear or unknown
-const CK_SLOTS = 24;
+const CK_LIFE = 24;      // life.trk: lifecycle summary table
+const CK_SLOTS = 25;
 
 fn ck(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_CHK), slot); }
 fn ck_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_CHK), slot, v); }
@@ -460,6 +462,7 @@ fn declare(c: i64, name: i64, ty: i64, mutable: i64) -> i64 {
     vpush(v, 0);
     vpush(v, ni(c, name, NI_VARSLOT));
     vpush(v, -1);
+    vpush(v, 0);
     vpush(v, 0);
     ni_set(c, name, NI_VARSLOT, slot);
     return slot;

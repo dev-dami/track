@@ -1,0 +1,7 @@
+fn dup
+  param r ref use=read end=ret
+  result derived(r) fresh
+  effects none
+fn main
+  result void
+  effects calls

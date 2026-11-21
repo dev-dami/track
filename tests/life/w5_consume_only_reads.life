@@ -1,0 +1,7 @@
+fn norm1
+  param p owned use=read end=die
+  result copy
+  effects none
+fn main
+  result void
+  effects calls
