@@ -1436,7 +1436,11 @@ fn stack_cells_run_and_plan() {
         assert_eq!(run_exe(&exe), (want, Some(0)), "{}: output differs", rel);
         let c = fs::read_to_string(exe.with_extension("c")).unwrap();
         if stem != "escapes" {
-            assert!(c.contains("tk_w s0["), "{}: no stack slot in emitted C", rel);
+            assert!(
+                c.contains("tk_w s0["),
+                "{}: no stack slot in emitted C",
+                rel
+            );
         }
         let plan = run_trackc(&["life", "--place", &rel], &root);
         let got = String::from_utf8_lossy(&plan.stdout).into_owned();
