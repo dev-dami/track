@@ -604,3 +604,96 @@ fn trackc_on_the_track_runtime_self_compiles() {
     assert!(a == b, "trackc on the Track runtime emitted different C");
     let _ = fs::remove_dir_all(&dir);
 }
+
+fn run_trackc_warn_test(args: &[&str], cwd: &Path) -> Output {
+    Command::new(trackc())
+        .args(args)
+        .env("TRACKC_WARN_TEST", "1")
+        .current_dir(cwd)
+        .output()
+        .expect("failed to run trackc")
+}
+
+// L2 warnings channel. `TRACKC_WARN_TEST=1` is a hidden test-only trigger:
+// trackc emits `warning[W0000]` at every top-level item, in reverse order,
+// so the output also shows that diagnostics are sorted by position.
+#[test]
+fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
+    let dir = scratch("warnings");
+    let src = dir.join("w.trk");
+    fs::write(
+        &src,
+        "fn helper() -> i64 { return 2; }\nfn main() -> void { print(helper()); }\n",
+    )
+    .unwrap();
+    let path = src.to_str().unwrap();
+    let at = |stderr: &str, needle: &str| stderr.find(needle).unwrap_or(usize::MAX);
+
+    for args in [
+        vec!["check", path],
+        vec!["build", path],
+        vec!["build", "--native", path],
+    ] {
+        let out = run_trackc_warn_test(&args, &dir);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{:?}: {}", args, stderr);
+        assert_eq!(
+            stderr.matches("warning[W0000]").count(),
+            2,
+            "{:?}: {}",
+            args,
+            stderr
+        );
+        assert!(
+            at(&stderr, "w.trk:1:1") < at(&stderr, "w.trk:2:1"),
+            "{:?}: warnings not sorted by position:\n{}",
+            args,
+            stderr
+        );
+    }
+    let out = run_trackc_warn_test(&["check", path], &dir);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("(2 warnings)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let out = run_trackc_warn_test(&["run", path], &dir);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("warning[W0000]"));
+
+    // --deny-warnings in any position turns warnings into a failure.
+    for args in [
+        vec!["check", "--deny-warnings", path],
+        vec!["check", path, "--deny-warnings"],
+        vec!["build", "--native", path, "--deny-warnings"],
+        vec!["run", "--deny-warnings", path],
+    ] {
+        let out = run_trackc_warn_test(&args, &dir);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{:?}: {}", args, stderr);
+        assert!(stderr.contains("warning[W0000]"), "{:?}: {}", args, stderr);
+    }
+
+    // Without the trigger there are no warnings, and --deny-warnings passes.
+    let out = run_trackc(&["check", "--deny-warnings", path], &dir);
+    assert!(out.status.success());
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("warning"));
+
+    // A pending warning and an error print together, sorted by position.
+    let bad = dir.join("bad.trk");
+    fs::write(
+        &bad,
+        "fn main() -> void {\n    print(nope);\n}\nfn later() -> i64 { return 1; }\n",
+    )
+    .unwrap();
+    let out = run_trackc_warn_test(&["check", bad.to_str().unwrap()], &dir);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr);
+    let w1 = at(&stderr, "bad.trk:1:1");
+    let e = at(&stderr, "error[");
+    let w2 = at(&stderr, "bad.trk:4:1");
+    assert!(w1 < e && e < w2, "not sorted by position:\n{}", stderr);
+    let _ = fs::remove_dir_all(&dir);
+}
