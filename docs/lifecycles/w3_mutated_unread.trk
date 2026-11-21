@@ -1,0 +1,13 @@
+// W-LC03: a callee mutates its parameter, and the caller never reads it again.
+struct Counter { n: i64 }
+fn bump(c: &Counter) -> i64 {
+    with c -> l {
+        l.n = l.n + 1;
+    }
+    return 0;
+}
+fn main() -> void {
+    let c = Counter { n: 0 };
+    bump(&c);
+    print(7);
+}
