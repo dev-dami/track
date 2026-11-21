@@ -36,6 +36,9 @@ const O_STATIC = 2305843009213693952;  // 1 << 61
 const O_UNKNOWN = 4611686018427387904; // 1 << 62
 const O_PARAMS = 1152921504606846975;  // bits 0..59
 const O_MAXPARAMS = 60;
+// Path flag on a reference slot whose target's block has ended (E0213).
+// Stripped when the slot is read, so it never reaches a summary.
+const O_DANGLE = 0 - 9223372036854775807 - 1; // 1 << 63
 
 const U_NONE = 0;
 const U_READ = 1;
@@ -80,6 +83,13 @@ const LT_RTBYNAME = 3;
 const LT_CALLEE = 4;
 const LT_READ = 5;  // by record offset: 1 when a call read it since its last change
 const LT_STALE = 6; // 1 when a pass changed a summary some call had already read
+// Hard errors (card L5, see "hard errors" below).
+const LT_ERR = 7;     // first hard error found: [pos, code, message], or 0
+const LT_TWICE = 8;   // by record offset: latent E0214 of a `&` param, or 0
+const LT_CUR = 9;     // record offset of the function being walked
+const LT_POINTS = 10; // (ref slot, target slot) pairs from `r = &x`
+const LT_DANGLE = 11; // (ref slot, target name, block end pos) of dangling refs
+const LT_BSTART = 12; // first slot of the innermost block being walked
 
 // Callee cache values: >= 0 is a program record offset, <= C_RT0 a runtime
 // record (offset C_RT0 - value), C_UNKNOWN a conservative callee.
@@ -227,7 +237,7 @@ fn var_origin(c: i64, s: i64, name: i64) -> i64 {
 // `read` is a field load or a `&` pass), so it raises no use level.
 fn ev_move(c: i64, s: i64, n: i64) -> i64 {
     if n >= 0 && nk(c, n) == K_VAR {
-        return var_origin(c, s, na(c, n));
+        return live_var_origin(c, s, n);
     }
     return ev(c, s, n);
 }
@@ -243,6 +253,9 @@ fn through(c: i64, n: i64, o: i64) -> i64 {
 // Origin of the walked block's last value. Block-local slots are dropped.
 fn walk_block(c: i64, s: i64, body: i64) -> i64 {
     let count = var_count(c);
+    let table = ck(c, CK_LIFE);
+    let outer = vget(table, LT_BSTART);
+    vset(table, LT_BSTART, count);
     let mut v: i64 = 0;
     let mut i: i64 = 0;
     while i < list_len(c, body) {
@@ -253,6 +266,10 @@ fn walk_block(c: i64, s: i64, body: i64) -> i64 {
         }
         i = i + 1;
     }
+    if vlen(vget(table, LT_POINTS)) > 0 && list_len(c, body) > 0 {
+        refs_outlive_block(c, count, npos(c, list_at(c, body, list_len(c, body) - 1)));
+    }
+    vset(table, LT_BSTART, outer);
     truncate_vars(c, count);
     return v;
 }
@@ -377,6 +394,9 @@ fn ev_call(c: i64, s: i64, n: i64) -> i64 {
             // The callee's summary of parameter i (docs/lifecycles.md §1.3).
             let pu = vget(recs, at + LR_PARAMS + i * 2);
             let pe = vget(recs, at + LR_PARAMS + i * 2 + 1);
+            if params >= 0 {
+                check_twice_at_call(c, at, i, a);
+            }
             if is_ref {
                 // Lending is a read; the callee may raise it to mutate.
                 touch(s, o, U_READ);
@@ -385,6 +405,9 @@ fn ev_call(c: i64, s: i64, n: i64) -> i64 {
                     sink_esc(s, o);
                 }
             } else if life_tracked(c, pty) {
+                if (pe & (E_DIE | E_ESC)) != 0 && params >= 0 {
+                    check_lent_consumed(c, s, name, vget(recs, at + LR_FN), i, a);
+                }
                 // The callee uses the same value, so its use is ours. A
                 // borrowed value stays the lender's and is read.
                 touch(s, o & lsg(s, LS_REFS), U_READ);
@@ -468,13 +491,21 @@ fn ev_assign(c: i64, s: i64, n: i64) -> i64 {
         sink_esc(s, o);
         return 0;
     }
-    let ro = slot_origin(c, slot);
+    let mut ro = slot_origin(c, slot);
     if nk(c, target) == K_VAR && vf(c, slot, V_LENS) == 0 {
         // Rebinding: the old value dies (it stays in LIVE until the exit).
         if life_tracked(c, vf(c, slot, V_TYPE)) {
             slot_origin_set(c, slot, o);
         }
+        if ty_is_ref(c, vf(c, slot, V_TYPE)) {
+            ref_rebound(c, slot, nb(c, n));
+        }
         return 0;
+    }
+    if ro < 0 {
+        // A store through a reference whose target is gone.
+        dangling_use(c, slot, target);
+        ro = bit_clear(ro, O_DANGLE);
     }
     // A store through the place (or a whole write through a lens).
     ev_place_indices(c, s, target);
@@ -636,7 +667,7 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         return O_STATIC;
     }
     if k == K_VAR {
-        let o = var_origin(c, s, na(c, n));
+        let o = live_var_origin(c, s, n);
         touch(s, o, U_READ);
         return o;
     }
@@ -662,6 +693,7 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         return O_FRESH | ev_list(c, s, na(c, n), 0, 1);
     }
     if k == K_SINIT {
+        check_owned_twice(c, s, n);
         return O_FRESH | ev_list(c, s, nb(c, n), 1, 2);
     }
     if k == K_FIELD || k == K_TINDEX {
@@ -723,6 +755,7 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         return ev_for(c, s, n);
     }
     if k == K_RETURN {
+        check_return_escape(c, s, na(c, n));
         let o = ev_move(c, s, na(c, n));
         exit_with(s, o);
         return 0;
@@ -739,6 +772,9 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         let slot = declare(c, na(c, n), ty, nb(c, n));
         if life_tracked(c, ty) {
             slot_origin_set(c, slot, o);
+        }
+        if ty_is_ref(c, ty) {
+            ref_points(c, slot, nd(c, n));
         }
         return 0;
     }
@@ -768,6 +804,7 @@ fn life_function(c: i64, f: i64, at: i64) -> bool {
     let np = list_len(c, params) / 2;
     let s = vfill(vnew_cap(LS_WIDTH), LS_WIDTH, 0);
     let base = var_count(c);
+    life_errors_enter(c, at);
     lsg_set(s, LS_BASE, base);
     lsg_set(s, LS_NP, np);
     lsg_set(s, LS_USE, vfill(vnew_cap(np + 1), np, U_NONE));
@@ -1076,6 +1113,7 @@ fn life_program(c: i64) -> i64 {
     vpush(table, vfill(vnew_cap(nn + 1), nn, C_UNSET));
     vpush(table, 0); // LT_READ, sized once the records exist
     vpush(table, 0);
+    life_errors_init(table);
     ck_set(c, CK_LIFE, table);
     rt_summaries(c);
     let byname = vget(table, LT_BYNAME);
@@ -1096,6 +1134,7 @@ fn life_program(c: i64) -> i64 {
     // The call graph, indexed by record offset.
     let nr = vlen(recs);
     vset(table, LT_READ, vfill(vnew_cap(nr + 1), nr, 0));
+    vset(table, LT_TWICE, vfill(vnew_cap(nr + 1), nr, 0));
     let adj = vfill(vnew_cap(nr + 1), nr, 0);
     i = 0;
     while i < vlen(fns) {
@@ -1134,6 +1173,449 @@ fn life_program(c: i64) -> i64 {
     return 0;
 }
 
+
+// ------------------------------------------------------------ hard errors
+//
+// Card L5, docs/lifecycles.md §2: definite lifecycle bugs found during the
+// walk. Facts only grow across fixpoint passes, so an error seen in any
+// pass is real. The first one found is kept and `life_fail_pending`
+// reports it once the summaries are complete (`trackc life` skips that,
+// so the dump still works on rejected programs).
+//   E0211  a `&` value passed where the callee ends its parameter
+//   E0212  `&local` inside a returned tuple, array or struct literal
+//   E0213  a reference read after the block of its target closed
+//   E0214  one borrowed value stored into two owned fields
+
+const O_KEEP = 9223372036854775807; // every bit but O_DANGLE
+
+fn life_errors_init(table: i64) -> i64 {
+    vpush(table, 0);      // LT_ERR
+    vpush(table, 0);      // LT_TWICE, sized once the records exist
+    vpush(table, -1);     // LT_CUR
+    vpush(table, vnew()); // LT_POINTS
+    vpush(table, vnew()); // LT_DANGLE
+    vpush(table, 0);      // LT_BSTART
+    return 0;
+}
+
+fn life_errors_enter(c: i64, at: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    vset(table, LT_CUR, at);
+    vtrunc(vget(table, LT_POINTS), 0);
+    vtrunc(vget(table, LT_DANGLE), 0);
+    return 0;
+}
+
+fn life_error(c: i64, pos: i64, code: i64, message: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    if vget(table, LT_ERR) == 0 {
+        let e = vnew_cap(3);
+        vpush(e, pos);
+        vpush(e, code);
+        vpush(e, message);
+        vset(table, LT_ERR, e);
+    }
+    return 0;
+}
+
+// Report the first hard error, if any (exits). A latent E0214 that no call
+// site named is reported at its literal.
+fn life_fail_pending(c: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    let e = vget(table, LT_ERR);
+    if e != 0 {
+        return fail_at(c, vget(e, 0), vget(e, 1), vget(e, 2));
+    }
+    let tw = vget(table, LT_TWICE);
+    let mut at: i64 = 0;
+    while at < vlen(tw) {
+        let t = vget(tw, at);
+        if t != 0 && vget(t, 3) == 0 {
+            return fail_at(c, vget(t, 0), "E0214", text_cat3(quoted(c, vget(t, 4)), " would be ended twice: ", vget(t, 2)));
+        }
+        at = at + 1;
+    }
+    return 0;
+}
+
+fn life_line(c: i64, pos: i64) -> i64 {
+    let f = file_of_pos(c, pos);
+    let bytes = text_bytes(vget(cx(c, CX_SRCS), f));
+    let end = pos - vget(cx(c, CX_BASES), f);
+    let mut line: i64 = 1;
+    let mut i: i64 = 0;
+    while i < end && i < vlen(bytes) {
+        if vget(bytes, i) == 10 {
+            line = line + 1;
+        }
+        i = i + 1;
+    }
+    return line;
+}
+
+fn cur_fn_name(c: i64) -> i64 {
+    let at = vget(ck(c, CK_LIFE), LT_CUR);
+    return na(c, vget(life_records(c), at + LR_FN));
+}
+
+fn ty_text(c: i64, t: i64) -> i64 {
+    if t >= 0 && nk(c, t) == T_CUSTOM {
+        return name_text(c, na(c, t));
+    }
+    if t >= 0 && nk(c, t) == T_REF {
+        return text_cat("&", ty_text(c, na(c, t)));
+    }
+    if t >= 0 && nk(c, t) == T_SLICE {
+        return text_cat("[]", ty_text(c, na(c, t)));
+    }
+    return "T";
+}
+
+fn is_generic_param(c: i64, f: i64, t: i64) -> bool {
+    if t < 0 || nk(c, t) != T_CUSTOM || nb(c, f) < 0 {
+        return false;
+    }
+    let g = nb(c, f);
+    let mut j: i64 = 0;
+    while j < list_len(c, g) {
+        if list_at(c, g, j) == na(c, t) {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+// E0211: argument `a` (index i) of a call to `f` is a `&` variable, but f
+// ends its by-value parameter (die or esc): the frame that only borrowed
+// the value would end it.
+fn check_lent_consumed(c: i64, s: i64, name: i64, f: i64, i: i64, a: i64) -> i64 {
+    if nk(c, a) != K_VAR {
+        return 0;
+    }
+    let slot = lookup(c, na(c, a));
+    if slot < lsg(s, LS_BASE) || !ty_is_ref(c, vf(c, slot, V_TYPE)) {
+        return 0;
+    }
+    let params = nc(c, f);
+    let pty = list_at(c, params, i * 2 + 1);
+    if ty_is_ref(c, pty) || is_generic_param(c, f, pty) {
+        return 0;
+    }
+    let callee = quoted(c, na(c, f));
+    let p = quoted(c, list_at(c, params, i * 2));
+    let me = quoted(c, cur_fn_name(c));
+    // Name the `&` parameter the value was lent through, not a local alias.
+    let mut lent = na(c, a);
+    let refs = slot_origin(c, slot) & lsg(s, LS_REFS);
+    if refs != 0 {
+        let mut k: i64 = 0;
+        while (refs & param_bit(k)) == 0 {
+            k = k + 1;
+        }
+        lent = vf(c, lsg(s, LS_BASE) + k, V_NAME);
+    }
+    let b = sb_new();
+    sb_add(b, callee);
+    sb_add(b, " consumes its parameter ");
+    sb_add(b, p);
+    sb_add(b, ", but ");
+    sb_add(b, quoted(c, lent));
+    sb_add(b, " is only lent to ");
+    sb_add(b, me);
+    sb_add(b, ". Pass '&' and make '");
+    sb_add(b, name_text(c, list_at(c, params, i * 2)));
+    sb_add(b, ": &");
+    sb_add(b, ty_text(c, pty));
+    sb_add(b, "', or take ownership in ");
+    sb_add(b, me);
+    sb_add(b, ".");
+    return life_error(c, npos(c, a), "E0211", sb_text(b));
+}
+
+// E0212: a returned literal holds `&x` for a local `x` of this frame.
+fn check_return_escape(c: i64, s: i64, v: i64) -> i64 {
+    if v < 0 {
+        return 0;
+    }
+    let k = nk(c, v);
+    if k != K_TUPLE && k != K_ARRAY && k != K_SINIT {
+        return 0;
+    }
+    let mut l = na(c, v);
+    let mut from: i64 = 0;
+    let mut step: i64 = 1;
+    if k == K_SINIT {
+        l = nb(c, v);
+        from = 1;
+        step = 2;
+    }
+    let mut i = from;
+    while i < list_len(c, l) {
+        let e = list_at(c, l, i);
+        if nk(c, e) == K_ADDR {
+            let root = place_var(c, na(c, e));
+            let slot = lookup(c, root);
+            if root >= 0 && slot >= lsg(s, LS_BASE) + lsg(s, LS_NP) && !ty_is_ref(c, vf(c, slot, V_TYPE)) {
+                let mut place: i64 = 0;
+                if k == K_SINIT {
+                    place = text_cat3("through field '", name_text(c, na(c, v)), ".");
+                    place = text_cat3(place, name_text(c, list_at(c, l, i - 1)), "'");
+                } else if k == K_TUPLE {
+                    place = text_cat3("inside the returned tuple (element ", text_of_int(i), ")");
+                } else {
+                    place = text_cat3("inside the returned array (element ", text_of_int(i), ")");
+                }
+                let fname = quoted(c, cur_fn_name(c));
+                let b = sb_new();
+                sb_add(b, "local ");
+                sb_add(b, quoted(c, root));
+                sb_add(b, " escapes ");
+                sb_add(b, fname);
+                sb_add(b, " ");
+                sb_add(b, place);
+                sb_add(b, "; it dies when ");
+                sb_add(b, fname);
+                sb_add(b, " returns.");
+                life_error(c, npos(c, e), "E0212", sb_text(b));
+            }
+        } else {
+            check_return_escape(c, s, e);
+        }
+        i = i + step;
+    }
+    return 0;
+}
+
+// E0214: a struct literal stores the same borrowed variable into two owned
+// fields. For a `&` parameter the error names the caller's value, so it is
+// latent here and reported at the call sites (`check_twice_at_call`).
+fn check_owned_twice(c: i64, s: i64, n: i64) -> i64 {
+    let pairs = nb(c, n);
+    let mut i: i64 = 1;
+    while i < list_len(c, pairs) {
+        let e = list_at(c, pairs, i);
+        if owned_from_borrow(c, s, n, list_at(c, pairs, i - 1), e) {
+            let mut j: i64 = 1;
+            while j < i {
+                let d = list_at(c, pairs, j);
+                if nk(c, d) == K_VAR && na(c, d) == na(c, e) && owned_from_borrow(c, s, n, list_at(c, pairs, j - 1), d) {
+                    twice_found(c, s, n, list_at(c, pairs, j - 1), list_at(c, pairs, i - 1), e);
+                    return 0;
+                }
+                j = j + 2;
+            }
+        }
+        i = i + 2;
+    }
+    return 0;
+}
+
+// True when field `field` of literal `n` is owned and `e` is a borrowed
+// variable (a `&` typed local or parameter).
+fn owned_from_borrow(c: i64, s: i64, n: i64, field: i64, e: i64) -> bool {
+    if nk(c, e) != K_VAR {
+        return false;
+    }
+    let slot = lookup(c, na(c, e));
+    if slot < lsg(s, LS_BASE) || !ty_is_ref(c, vf(c, slot, V_TYPE)) {
+        return false;
+    }
+    let sd = struct_def(c, na(c, n));
+    if sd < 0 {
+        return false;
+    }
+    let idx = struct_field_index(c, sd, field);
+    if idx < 0 {
+        return false;
+    }
+    let ft = list_at(c, nb(c, sd), idx * 2 + 1);
+    return ft >= 0 && !ty_is_ref(c, ft) && life_tracked(c, ft);
+}
+
+fn twice_found(c: i64, s: i64, n: i64, f1: i64, f2: i64, e: i64) -> i64 {
+    let sname = name_text(c, na(c, n));
+    let b = sb_new();
+    sb_add(b, "fields '");
+    sb_add(b, sname);
+    sb_add(b, ".");
+    sb_add(b, name_text(c, f1));
+    sb_add(b, "' and '");
+    sb_add(b, sname);
+    sb_add(b, ".");
+    sb_add(b, name_text(c, f2));
+    sb_add(b, "' both take ownership of the borrowed ");
+    sb_add(b, quoted(c, na(c, e)));
+    sb_add(b, ".");
+    let text = sb_text(b);
+    let slot = lookup(c, na(c, e));
+    let base = lsg(s, LS_BASE);
+    let table = ck(c, CK_LIFE);
+    if slot < base + lsg(s, LS_NP) {
+        let tw = vget(table, LT_TWICE);
+        let at = vget(table, LT_CUR);
+        if vget(tw, at) == 0 {
+            let t = vnew_cap(5);
+            vpush(t, npos(c, e));
+            vpush(t, slot - base);
+            vpush(t, text);
+            vpush(t, 0);
+            vpush(t, na(c, e));
+            vset(tw, at, t);
+        }
+        return 0;
+    }
+    // A local reference: name its target when known.
+    let mut owner = na(c, e);
+    let pts = vget(table, LT_POINTS);
+    let mut k: i64 = 0;
+    while k < vlen(pts) {
+        if vget(pts, k) == slot {
+            owner = vf(c, vget(pts, k + 1), V_NAME);
+        }
+        k = k + 2;
+    }
+    return life_error(c, npos(c, e), "E0214", text_cat3(quoted(c, owner), " would be ended twice: ", text));
+}
+
+// E0214 at a call site: argument i feeds a parameter the callee stores
+// twice, so the caller's value would be ended twice.
+fn check_twice_at_call(c: i64, at: i64, i: i64, a: i64) -> i64 {
+    let t = vget(vget(ck(c, CK_LIFE), LT_TWICE), at);
+    if t == 0 || vget(t, 1) != i {
+        return 0;
+    }
+    let mut name: i64 = -1;
+    if nk(c, a) == K_ADDR {
+        name = place_var(c, na(c, a));
+    } else if nk(c, a) == K_VAR {
+        name = na(c, a);
+    }
+    if name < 0 {
+        return 0;
+    }
+    vset(t, 3, 1);
+    return life_error(c, npos(c, a), "E0214", text_cat3(quoted(c, name), " would be ended twice: ", vget(t, 2)));
+}
+
+// E0213 bookkeeping: `slot` (a reference) now points at the place in `rhs`.
+fn ref_points(c: i64, slot: i64, rhs: i64) -> i64 {
+    let pts = vget(ck(c, CK_LIFE), LT_POINTS);
+    let mut k: i64 = 0;
+    while k < vlen(pts) {
+        if vget(pts, k) == slot {
+            vset(pts, k, vget(pts, vlen(pts) - 2));
+            vset(pts, k + 1, vget(pts, vlen(pts) - 1));
+            vtrunc(pts, vlen(pts) - 2);
+        } else {
+            k = k + 2;
+        }
+    }
+    if rhs >= 0 && nk(c, rhs) == K_ADDR {
+        let root = place_var(c, na(c, rhs));
+        if root >= 0 {
+            let t = lookup(c, root);
+            if t >= 0 {
+                vpush(pts, slot);
+                vpush(pts, t);
+            }
+        }
+    }
+    return 0;
+}
+
+// A reference rebound in the block that declares it no longer carries an
+// older dangling target.
+fn ref_rebound(c: i64, slot: i64, rhs: i64) -> i64 {
+    ref_points(c, slot, rhs);
+    let table = ck(c, CK_LIFE);
+    if slot >= vget(table, LT_BSTART) {
+        let d = vget(table, LT_DANGLE);
+        let k = dangle_find(c, slot);
+        if k >= 0 {
+            vset(d, k, -1);
+        }
+    }
+    return 0;
+}
+
+fn dangle_find(c: i64, slot: i64) -> i64 {
+    let d = vget(ck(c, CK_LIFE), LT_DANGLE);
+    let mut k: i64 = 0;
+    while k < vlen(d) {
+        if vget(d, k) == slot {
+            return k;
+        }
+        k = k + 3;
+    }
+    return -1;
+}
+
+// The block whose slots start at `count` closes (its last statement is at
+// `endpos`): references declared outside it that point inside dangle.
+fn refs_outlive_block(c: i64, count: i64, endpos: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    let pts = vget(table, LT_POINTS);
+    let keep = vnew_cap(vlen(pts));
+    let mut k: i64 = 0;
+    while k < vlen(pts) {
+        let r = vget(pts, k);
+        let t = vget(pts, k + 1);
+        if r < count && t >= count {
+            slot_origin_set(c, r, slot_origin(c, r) | O_DANGLE);
+            if dangle_find(c, r) < 0 {
+                let d = vget(table, LT_DANGLE);
+                vpush(d, r);
+                vpush(d, vf(c, t, V_NAME));
+                vpush(d, endpos);
+            }
+        } else if r < count {
+            vpush(keep, r);
+            vpush(keep, t);
+        }
+        k = k + 2;
+    }
+    vtrunc(pts, 0);
+    k = 0;
+    while k < vlen(keep) {
+        vpush(pts, vget(keep, k));
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Origin of the variable at node `n`; reading a dangling reference is E0213.
+fn live_var_origin(c: i64, s: i64, n: i64) -> i64 {
+    let o = var_origin(c, s, na(c, n));
+    if o >= 0 {
+        return o;
+    }
+    dangling_use(c, lookup(c, na(c, n)), n);
+    return o & O_KEEP;
+}
+
+fn dangling_use(c: i64, slot: i64, n: i64) -> i64 {
+    let r = quoted(c, vf(c, slot, V_NAME));
+    let use_line = text_of_int(life_line(c, npos(c, n)));
+    let k = dangle_find(c, slot);
+    let b = sb_new();
+    sb_add(b, r);
+    if k >= 0 {
+        let d = vget(ck(c, CK_LIFE), LT_DANGLE);
+        sb_add(b, " refers to ");
+        sb_add(b, quoted(c, vget(d, k + 1)));
+        sb_add(b, ", which ends at the close of this block (line ");
+        sb_add(b, text_of_int(life_line(c, vget(d, k + 2))));
+        sb_add(b, "); ");
+    } else {
+        sb_add(b, " refers to a value whose block has ended; ");
+    }
+    sb_add(b, r);
+    sb_add(b, " is used after it at line ");
+    sb_add(b, use_line);
+    sb_add(b, ".");
+    return life_error(c, npos(c, n), "E0213", sb_text(b));
+}
 // ------------------------------------------------------ runtime summaries
 
 // One runtime function: `params` has one letter per parameter, `result`
