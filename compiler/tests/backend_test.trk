@@ -48,14 +48,15 @@ fn test_emitted_c_shape() -> i64 {
     let code = generate_c(c);
     expect_true(contains(code, "tk_w tk_add(tk_w a0, tk_w a1) {"), "function signature");
     expect_true(contains(code, "return (l0 + l1);"), "arithmetic return");
-    expect_true(contains(code, "= alloc(16);"), "payload variant is a heap cell");
+    expect_true(contains(code, "tk_w s0[2];"), "a payload variant only matched is a stack cell");
+    expect_true(contains(code, "s0[0] = t"), "tag in word 0 of the slot");
     expect_true(contains(code, "(TK_AT(t"), "match loads the tag");
     expect_true(contains(code, "int main(int argc, char **argv) {"), "C entry point");
     return 0;
 }
 
 fn test_structs_and_arrays_lower_to_cells() -> i64 {
-    let c = compile_text("struct P { x: i64, y: i64 } struct Q { y: i64 } fn main() -> void { let mut p = P { y: 2, x: 1 }; p.x = 3; print(p.y); let a = [4, 5]; print(a[1]); }");
+    let c = compile_text("struct P { x: i64, y: i64 } struct Q { y: i64 } fn mk() -> P { let mut p = P { y: 2, x: 1 }; p.x = 3; return p; } fn main() -> void { let q = mk(); print(q.y); let a = [4, 5]; print(a[1]); }");
     let tag = struct_tag(c, intern(c, "P"));
     expect_true(tag == text_hash("P"), "struct tag is the name hash");
     expect_i64(vlen(field_candidates(c, intern(c, "y"))), 4, "two structs declare y");
@@ -64,6 +65,7 @@ fn test_structs_and_arrays_lower_to_cells() -> i64 {
     expect_true(contains(code, "TK_AT(t0, 1) = 1;"), "fields in declaration order");
     expect_true(contains(code, "track_bad_field()"), "shared field name dispatches on the tag");
     expect_true(contains(code, "track_array_get("), "bounds-checked indexing");
+    expect_true(contains(code, "tk_w s0[3];"), "an array only indexed is a stack cell");
     return 0;
 }
 
