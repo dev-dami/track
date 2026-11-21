@@ -170,7 +170,6 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "        cell = (size_t *)g_bump_cur;");
     sb_line(b, "        g_bump_cur += span;");
     sb_line(b, "    }");
-    sb_line(b, "    *cell = size | TK_BUMP_BIT;");
     sb_line(b, "    return cell;");
     sb_line(b, "}");
     sb_line(b, "");
@@ -194,7 +193,7 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "        fflush(stderr);");
     sb_line(b, "        exit(137);");
     sb_line(b, "    }");
-    sb_line(b, "    *ptr = size;");
+    sb_line(b, "    *ptr = size <= TK_BUMP_MAX ? size | TK_BUMP_BIT : size;");
     sb_line(b, "    g_allocated_bytes += size;");
     sb_line(b, "    return TK_WORD(ptr + 1);");
     sb_line(b, "}");

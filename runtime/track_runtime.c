@@ -164,7 +164,6 @@ static size_t *tk_bump_cell(size_t size) {
         cell = (size_t *)g_bump_cur;
         g_bump_cur += span;
     }
-    *cell = size | TK_BUMP_BIT;
     return cell;
 }
 
@@ -188,7 +187,7 @@ tk_w alloc(tk_w size_w) {
         fflush(stderr);
         exit(137);
     }
-    *ptr = size;
+    *ptr = size <= TK_BUMP_MAX ? size | TK_BUMP_BIT : size;
     g_allocated_bytes += size;
     return TK_WORD(ptr + 1);
 }
