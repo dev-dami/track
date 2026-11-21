@@ -918,6 +918,56 @@ fn c_prelude(b: i64) -> i64 {
     sb_line(b, "#define track_i64_collection_get tk_coll_get");
     sb_line(b, "#define track_i64_collection_set tk_coll_set");
     sb_line(b, "#define track_i64_collection_push tk_coll_push");
+    // Array cells are [length, elements...] (runtime/track_runtime.c); a
+    // failing bounds check calls the runtime op, which aborts as before.
+    sb_line(b, "static inline tk_w tk_arr_get(tk_w a, tk_w i) {");
+    sb_line(b, "    const tk_w *p = (const tk_w *)(uintptr_t)a;");
+    sb_line(b, "    if (__builtin_expect(p && i >= 0 && i < p[0], 1)) return p[i + 1];");
+    sb_line(b, "    return track_array_get(a, i);");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tk_arr_set(tk_w a, tk_w i, tk_w v) {");
+    sb_line(b, "    tk_w *p = (tk_w *)(uintptr_t)a;");
+    sb_line(b, "    if (__builtin_expect(p && i >= 0 && i < p[0], 1)) { p[i + 1] = v; return v; }");
+    sb_line(b, "    return track_array_set(a, i, v);");
+    sb_line(b, "}");
+    // A NUL before idx reads as 0, like the runtime's strnlen check.
+    sb_line(b, "static inline tk_w tk_str_char_at(tk_w s, tk_w idx) {");
+    sb_line(b, "    const unsigned char *p = (const unsigned char *)(uintptr_t)s;");
+    sb_line(b, "    if (!p || idx < 0) return 0;");
+    sb_line(b, "    return __builtin_memchr(p, 0, (unsigned long)idx) ? 0 : p[idx];");
+    sb_line(b, "}");
+    // String builder fast paths; the layout mirrors TrackStrBuf. Growth
+    // and null handles call the runtime.
+    sb_line(b, "typedef struct { char *data; uintptr_t len; uintptr_t cap; } tk_sb;");
+    sb_line(b, "static inline tk_w tk_sb_push_n(tk_w h, const char *s, uintptr_t n) {");
+    sb_line(b, "    tk_sb *b = (tk_sb *)(uintptr_t)h;");
+    sb_line(b, "    if (b && b->len + n + 1 <= b->cap) { __builtin_memcpy(b->data + b->len, s, n + 1); b->len += n; return 0; }");
+    sb_line(b, "    return track_sb_push(h, TK_W(s));");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tk_sb_push(tk_w h, tk_w s) {");
+    sb_line(b, "    if (!s) return track_sb_push(h, s);");
+    sb_line(b, "    const char *p = (const char *)(uintptr_t)s;");
+    sb_line(b, "    return tk_sb_push_n(h, p, __builtin_strlen(p));");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tk_sb_push_byte(tk_w h, tk_w byte) {");
+    sb_line(b, "    tk_sb *b = (tk_sb *)(uintptr_t)h;");
+    sb_line(b, "    if (b && b->len + 2 <= b->cap) { b->data[b->len++] = (char)byte; b->data[b->len] = 0; return 0; }");
+    sb_line(b, "    return track_sb_push_byte(h, byte);");
+    sb_line(b, "}");
+    sb_line(b, "static inline tk_w tk_sb_push_int(tk_w h, tk_w v) {");
+    sb_line(b, "    char buf[24]; char *e = buf + 23; char *p = e;");
+    sb_line(b, "    uint64_t u = v < 0 ? 0 - (uint64_t)v : (uint64_t)v;");
+    sb_line(b, "    *e = 0;");
+    sb_line(b, "    do { *--p = (char)('0' + u % 10); u /= 10; } while (u);");
+    sb_line(b, "    if (v < 0) *--p = '-';");
+    sb_line(b, "    return tk_sb_push_n(h, p, (uintptr_t)(e - p));");
+    sb_line(b, "}");
+    sb_line(b, "#define track_array_get tk_arr_get");
+    sb_line(b, "#define track_array_set tk_arr_set");
+    sb_line(b, "#define str_char_at tk_str_char_at");
+    sb_line(b, "#define track_sb_push tk_sb_push");
+    sb_line(b, "#define track_sb_push_byte tk_sb_push_byte");
+    sb_line(b, "#define track_sb_push_int tk_sb_push_int");
     sb_line(b, "");
     sb_line(b, "static tk_w tk_div(tk_w a, tk_w b) {");
     sb_line(b, "    if (b == 0 || (b == -1 && a == INT64_MIN)) return track_trap_div();");
