@@ -1256,6 +1256,14 @@ fn generate_c(c: i64) -> i64 {
         }
         i = i + 1;
     }
+    // No `main`: an empty one runs the top-level statements. Registered
+    // before any function is emitted so calls to it (the Track runtime's
+    // rt_start) resolve to tk_main, as in ngen.
+    let mut synthetic: i64 = -1;
+    if main_fn < 0 {
+        synthetic = node_new(c, K_FN, intern(c, "main"), 0, 0, -1, 0, -1);
+        ni_set(c, intern(c, "main"), NI_FN, synthetic);
+    }
     let mut j: i64 = 0;
     while j < vlen(items) {
         let n = vget(items, j);
@@ -1268,8 +1276,7 @@ fn generate_c(c: i64) -> i64 {
         }
         j = j + 1;
     }
-    if main_fn < 0 {
-        let synthetic = node_new(c, K_FN, intern(c, "main"), 0, 0, -1, 0, -1);
+    if synthetic >= 0 {
         gen_function(c, synthetic, prelude);
     }
     let out = sb_new();

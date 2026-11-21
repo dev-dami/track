@@ -543,6 +543,19 @@ fn track_runtime_matches_the_c_runtime() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A program without `main` runs its top-level statements under both
+/// runtimes (the Track runtime's rt_start calls the synthetic main).
+#[test]
+fn program_without_main_runs_on_both_runtimes() {
+    let dir = scratch("trackrt_nomain");
+    let src = dir.join("nomain.trk");
+    fs::write(&src, "let x = 41;\nprint(x + 1);\n").unwrap();
+    let (c, t) = run_under_both_runtimes(&dir, "nomain", &src);
+    assert_eq!(c, ("42\n".to_string(), Some(0)));
+    assert_eq!(c, t, "behaviour differs between runtimes");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// trackc linked against the Track runtime (no libc) compiles the compiler
 /// to the same C as trackc on the C runtime.
 #[test]
@@ -616,6 +629,88 @@ const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
     (
         "generic_param_used_once",
         "fn id<T>(x: T) -> T { return x; } fn main() -> void { let s = id(str_concat(\"a\", \"b\")); print(s); print(id(3)); }",
+        true,
+    ),
+    // Generics are checked per instantiation: T is Copy when bound to i64.
+    (
+        "generic_dup_of_copy_type",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { let t = dup(3); print(t.0); }",
+        true,
+    ),
+    (
+        "generic_twice_of_copy_type",
+        "fn twice<T>(x: T) -> T { let a = x; let b = x; return b; } fn main() -> void { let n: i64 = 4; print(twice(n)); }",
+        true,
+    ),
+    (
+        "generic_twice_of_linear_type",
+        "fn twice<T>(x: T) -> T { let a = x; let b = x; return b; } fn main() -> void { let s = str_concat(\"a\", \"b\"); print(twice(s)); }",
+        false,
+    ),
+    (
+        "generic_both_instantiations_checked",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { let t = dup(3); print(t.0); let u = dup(str_concat(\"a\", \"b\")); print(u.0); }",
+        false,
+    ),
+    (
+        "generic_nested_instantiation_linear",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn wrap<U>(y: U) -> (U, U) { return dup(y); } fn main() -> void { let t = wrap(str_concat(\"a\", \"b\")); print(t.0); }",
+        false,
+    ),
+    (
+        "generic_nested_instantiation_copy",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn wrap<U>(y: U) -> (U, U) { return dup(y); } fn main() -> void { let t = wrap(7); print(t.1); }",
+        true,
+    ),
+    (
+        "generic_pick_with_early_return",
+        "fn pick<T>(c: bool, a: T, b: T) -> T { if c { return a; } return b; } fn main() -> void { let x: i64 = 1; let y: i64 = 2; print(pick(true, x, y)); print(x + y); }",
+        true,
+    ),
+    (
+        "generic_max_of_copy_type",
+        "fn mx<T>(a: T, b: T) -> T { if a > b { return a; } return b; } fn main() -> void { print(mx(3, 9)); }",
+        true,
+    ),
+    (
+        "generic_max_of_linear_type",
+        "fn mx<T>(a: T, b: T) -> T { if a > b { return a; } return b; } fn main() -> void { let s = mx(str_concat(\"a\", \"b\"), str_concat(\"c\", \"d\")); print(s); }",
+        true,
+    ),
+    (
+        "unused_generic_checked_linear",
+        "fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { print(1); }",
+        false,
+    ),
+    // A branch that returns does not take part in the state merge.
+    (
+        "returning_then_branch_skips_merge",
+        "fn eat(s: Str) -> void { } fn f(s: Str, c: bool) -> i64 { if c { eat(s); return 1; } eat(s); return 0; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), true)); }",
+        true,
+    ),
+    (
+        "returning_else_branch_skips_merge",
+        "fn eat(s: Str) -> void { } fn f(s: Str, c: bool) -> i64 { if c { print(1); } else { eat(s); return 0; } eat(s); return 1; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), true)); }",
+        true,
+    ),
+    (
+        "returning_else_keeps_then_state",
+        "fn eat(s: Str) -> void { } fn f(s: Str, c: bool) -> i64 { if c { eat(s); } else { return 0; } eat(s); return 1; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), true)); }",
+        false,
+    ),
+    (
+        "returning_branch_in_loop",
+        "fn eat(s: Str) -> void { } fn f(s: Str) -> i64 { let mut i = 0; while i < 3 { if i == 2 { eat(s); return i; } i = i + 1; } eat(s); return 0; } fn main() -> void { print(f(str_concat(\"a\", \"b\"))); }",
+        true,
+    ),
+    (
+        "aborting_branch_skips_merge",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); let c = true; if c { eat(s); } else { abort(\"no\"); } print(1); }",
+        true,
+    ),
+    (
+        "returning_match_arm_skips_merge",
+        "fn eat(s: Str) -> void { } fn g(s: Str) -> i64 { return 1; } fn f(s: Str, k: i64) -> i64 { match k { 1 => return g(s), _ => print(0), } eat(s); return 0; } fn main() -> void { print(f(str_concat(\"a\", \"b\"), 1)); }",
         true,
     ),
     ("const_div_by_zero", "const D = 7 / 0; fn main() -> void { print(D); }", false),
