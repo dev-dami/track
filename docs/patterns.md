@@ -84,6 +84,14 @@ match val {
 }
 ```
 
+A guard runs only when its arm's pattern matches, before the body. If it
+spends a resource (passes it by value), that resource is spent on the
+paths where the pattern matched, whether the guard holds or not: a later
+arm whose pattern may also match (`_`, a binding, the same literal or
+variant) must not use it, and as with `if`/`else` the match must leave it
+spent on every way out or on none. Arms with a distinct literal or variant
+never see the guard's spend.
+
 ## Tuple Patterns & Destructuring
 
 Match directly on tuples or destructure in `let` bindings:
