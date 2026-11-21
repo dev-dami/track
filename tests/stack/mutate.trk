@@ -1,0 +1,28 @@
+// L8: a stack struct whose fields are written through the slot, directly
+// and by a callee that mutates through a lens; a stack array written by
+// index. Every loop iteration starts from a fresh literal.
+struct Counter { n: i64, hits: i64 }
+
+fn bump(c: &Counter) -> i64 {
+    with c -> l {
+        l.n = l.n + 1;
+    }
+    return 0;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 10 {
+        let mut c = Counter { n: i, hits: 0 };
+        c.hits = c.hits + 2;
+        bump(&c);
+        bump(&c);
+        let mut a = [0, 0, 0];
+        a[1] = c.n;
+        a[2] = a[1] + c.hits;
+        total = total + a[2] * 10 + a[0];
+        i = i + 1;
+    }
+    print(total);
+}

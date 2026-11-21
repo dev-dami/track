@@ -3,8 +3,10 @@
 Status: design, partly implemented. Base: `agent/track-race` at
 62d8d50, with card K2 (branch `k2`, not yet landed) taken as given.
 L7 landed: `life.trk` builds the placement plan (`PLACE`/`ENDS`, dumped by
-`trackc life --place`) and cgen takes its stack tuples from it; no
-placement is acted on beyond K2's tuples yet (L8+).
+`trackc life --place`) and cgen takes its stack tuples from it.
+L8 landed: cgen puts struct, array and payload-union literals planned
+`stack` in `tk_w sN[k]` slots (C structs: 78k faults, was 109k); other
+places are not acted on yet (L9+).
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors
