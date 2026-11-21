@@ -365,6 +365,51 @@ fn call_text(sym: i64, args: i64, arity: i64) -> i64 {
     return sb_text(b);
 }
 
+// Machine builtins of the Track runtime (docs/native.md): raw memory words
+// and bytes, and the Linux x86-64 `syscall` instruction. Lowered inline;
+// returns false for any other name.
+fn gen_raw_builtin(c: i64, name: i64, args: i64, t: i64) -> bool {
+    if text_eq(name, "load64") {
+        emit(c, text_cat3(t, " = TK_AT(", text_cat(arg_at(args, 0), ", 0);")));
+        return true;
+    }
+    if text_eq(name, "store64") {
+        emit(c, text_cat3("TK_AT(", arg_at(args, 0), text_cat3(", 0) = ", arg_at(args, 1), ";")));
+        return true;
+    }
+    if text_eq(name, "load8") {
+        emit(c, text_cat3(t, " = (tk_w)*(unsigned char *)(uintptr_t)(", text_cat(arg_at(args, 0), ");")));
+        return true;
+    }
+    if text_eq(name, "store8") {
+        emit(c, text_cat3("*(unsigned char *)(uintptr_t)(", arg_at(args, 0), text_cat3(") = (unsigned char)(", arg_at(args, 1), ");")));
+        return true;
+    }
+    if text_eq(name, "syscall6") {
+        let b = sb_new();
+        sb_add(b, "{ register tk_w r10 __asm__(\"r10\") = ");
+        sb_add(b, arg_at(args, 4));
+        sb_add(b, "; register tk_w r8 __asm__(\"r8\") = ");
+        sb_add(b, arg_at(args, 5));
+        sb_add(b, "; register tk_w r9 __asm__(\"r9\") = ");
+        sb_add(b, arg_at(args, 6));
+        sb_add(b, "; __asm__ volatile (\"syscall\" : \"=a\"(");
+        sb_add(b, t);
+        sb_add(b, ") : \"a\"(");
+        sb_add(b, arg_at(args, 0));
+        sb_add(b, "), \"D\"(");
+        sb_add(b, arg_at(args, 1));
+        sb_add(b, "), \"S\"(");
+        sb_add(b, arg_at(args, 2));
+        sb_add(b, "), \"d\"(");
+        sb_add(b, arg_at(args, 3));
+        sb_add(b, "), \"r\"(r10), \"r\"(r8), \"r\"(r9) : \"rcx\", \"r11\", \"memory\"); }");
+        emit(c, sb_text(b));
+        return true;
+    }
+    return false;
+}
+
 fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
     let name = na(c, n);
     let args = gen_list_values(c, args_list);
@@ -393,6 +438,9 @@ fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
     if f >= 0 {
         let arity = list_len(c, nc(c, f)) / 2;
         emit(c, text_cat3(t, " = ", text_cat(call_text(text_cat("tk_", name_text(c, target)), args, arity), ";")));
+        return t;
+    }
+    if gen_raw_builtin(c, name_text(c, target), args, t) {
         return t;
     }
     let mut sym = target;
@@ -932,6 +980,47 @@ fn c_prelude(b: i64) -> i64 {
     return 0;
 }
 
+// A program linked with the Track runtime (`--rt=track`, compiler/rt/)
+// defines `rt_start` and every runtime function itself. Runtime names the
+// emitter calls directly (`alloc`, `track_array_get`, ...) become aliases
+// of the Track definitions, and `_start` replaces the C `main`
+// (docs/native.md has the stack contract).
+fn track_runtime_entry(c: i64, out: i64) -> i64 {
+    sb_line(out, "/* Track runtime aliases */");
+    let mut id: i64 = 0;
+    while id < name_count(c) {
+        let f = ni(c, id, NI_FN);
+        if f >= 0 && ni(c, id, NI_EXTERN) >= 0 && !is_qualified(c, id) {
+            // The prelude may map a runtime name to an inline helper.
+            sb_line(out, text_cat("#undef ", name_text(c, id)));
+            let b = sb_new();
+            sb_add(b, "tk_w ");
+            sb_add(b, name_text(c, id));
+            sb_add(b, "(");
+            let arity = list_len(c, nc(c, f)) / 2;
+            if arity == 0 {
+                sb_add(b, "void");
+            }
+            let mut a: i64 = 0;
+            while a < arity {
+                if a > 0 {
+                    sb_add(b, ", ");
+                }
+                sb_add(b, "tk_w");
+                a = a + 1;
+            }
+            sb_add(b, ") __attribute__((alias(\"tk_");
+            sb_add(b, name_text(c, id));
+            sb_add(b, "\")));");
+            sb_line(out, sb_text(b));
+        }
+        id = id + 1;
+    }
+    sb_line(out, "");
+    sb_line(out, "__asm__(\".text\\n.globl _start\\n_start:\\n\\txor %ebp, %ebp\\n\\tmov (%rsp), %rdi\\n\\tlea 8(%rsp), %rsi\\n\\tand $-16, %rsp\\n\\tcall tk_rt_start\\n\\thlt\\n\");");
+    return 0;
+}
+
 // Generate the C translation unit for the loaded, checked program.
 fn generate_c(c: i64) -> i64 {
     let state = vfill(vnew_cap(G_SLOTS), G_SLOTS, 0);
@@ -1009,6 +1098,10 @@ fn generate_c(c: i64) -> i64 {
     sb_add(out, sb_text(g(c, G_PROTOS)));
     sb_add(out, sb_text(g(c, G_FUNCS)));
     sb_line(out, "");
+    if ni(c, intern(c, "rt_start"), NI_FN) >= 0 {
+        track_runtime_entry(c, out);
+        return sb_text(out);
+    }
     sb_line(out, "int main(int argc, char **argv) {");
     sb_line(out, "    track_runtime_init((tk_w)argc, TK_W(argv));");
     sb_line(out, "    return (int)tk_main();");

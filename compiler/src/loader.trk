@@ -126,6 +126,23 @@ fn load_module(c: i64, path: i64) -> i64 {
     return f;
 }
 
+// Append a module held in memory (an embedded rt module). It must not
+// import anything: its items join the program as they are.
+fn load_embedded_module(c: i64, path: i64, src: i64) -> i64 {
+    vpush(cx(c, CX_MODS), path);
+    let f = add_source(c, path, src);
+    let items = parse_file(c, lex_file(c, f));
+    let all = cx(c, CX_ITEMS);
+    let files = cx(c, CX_ITEMFILE);
+    let mut i: i64 = 0;
+    while i < list_len(c, items) {
+        vpush(all, list_at(c, items, i));
+        vpush(files, f);
+        i = i + 1;
+    }
+    return f;
+}
+
 // Load `path` and everything it imports. Returns the root file id.
 fn load_program(c: i64, path: i64) -> i64 {
     let root = load_module(c, path);

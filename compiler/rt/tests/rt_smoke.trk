@@ -1,0 +1,136 @@
+// rt_smoke.trk — exercises the runtime functions. The output must be the
+// same with runtime/track_runtime.c and with `--rt=track` (compiler/rt/).
+
+fn show(label: i64, v: i64) -> i64 {
+    track_out(label);
+    track_out(" = ");
+    track_out(int_to_str(v));
+    track_out("\n");
+    return 0;
+}
+
+fn show_s(label: i64, s: i64) -> i64 {
+    track_out(label);
+    track_out(" = [");
+    track_out(s);
+    track_out("]\n");
+    return 0;
+}
+
+fn main() -> i64 {
+    print("hello");
+    print(42);
+    print(-7);
+    print_int(-9223372036854775807 - 1);
+    print_hex(255);
+    print_hex(0);
+    print_hex(-1);
+    print_str("plain");
+    show("str_len", str_len("hello world"));
+    show("str_eq same", str_eq("abc", "abc"));
+    show("str_eq diff", str_eq("abc", "abd"));
+    show_s("str_concat", str_concat("foo", "bar"));
+    show("str_find", str_find("hello world", "wor"));
+    show("str_find miss", str_find("hello", "xyz"));
+    show("str_find empty", str_find("hello", ""));
+    show("str_contains", str_contains("hello", "ell"));
+    show("str_to_int", str_to_int("  -1234xyz"));
+    show("str_to_int plus", str_to_int("+77"));
+    show("str_is_int", str_is_int("-12"));
+    show("str_is_int bad", str_is_int("12a"));
+    show_s("int_to_str", int_to_str(1234567890123));
+    show_s("int_to_str 0", int_to_str(0));
+    show("starts", str_starts_with("prefix-rest", "prefix"));
+    show("ends", str_ends_with("file.trk", ".trk"));
+    show("ends no", str_ends_with("a", "long"));
+    show_s("substr", str_substr("hello world", 6, 5));
+    show_s("substr past", str_substr("hello", 3, 10));
+    show_s("substr out", str_substr("hello", 9, 2));
+    show_s("trim", str_trim("  \t padded \n "));
+    show("char_at", str_char_at("abc", 1));
+    show("char_at out", str_char_at("abc", 5));
+    show("is_digit", char_is_digit(55));
+    show("is_alpha", char_is_alpha(90));
+    show("is_alnum", char_is_alphanumeric(33));
+    show("is_space", char_is_space(10));
+    show("upper", char_to_upper(97));
+    show("lower", char_to_lower(65));
+    show_s("basename", path_basename("/usr/lib/x.so"));
+    show_s("ext", path_ext("archive.tar.gz"));
+    show_s("ext none", path_ext(".hidden"));
+    show_s("join", path_join("dir", "file"));
+    show_s("join slash", path_join("dir/", "/file"));
+    let bytes = track_str_bytes("AZ");
+    show("bytes len", track_i64_collection_len(bytes));
+    show("bytes 1", track_i64_collection_get(bytes, 1));
+    let v = track_i64_collection_new(2);
+    let mut i: i64 = 0;
+    while i < 1000 {
+        track_i64_collection_push(v, i * 3);
+        i = i + 1;
+    }
+    show("coll len", track_i64_collection_len(v));
+    show("coll 999", track_i64_collection_get(v, 999));
+    track_i64_collection_set(v, 5, 77);
+    show("coll set", track_i64_collection_get(v, 5));
+    show("coll pop", track_i64_collection_pop(v));
+    track_i64_collection_truncate(v, 10);
+    show("coll trunc", track_i64_collection_len(v));
+    let b = track_sb_new();
+    let mut j: i64 = 0;
+    while j < 300 {
+        track_sb_push(b, "ab");
+        track_sb_push_int(b, j);
+        track_sb_push_byte(b, 44);
+        j = j + 1;
+    }
+    show("sb len", track_sb_len(b));
+    show("sb str len", str_len(track_sb_str(b)));
+    track_sb_clear(b);
+    track_sb_push(b, "after clear");
+    show_s("sb", track_sb_str(b));
+    let vec: i64 = vec_init(1);
+    vec_push(vec, 10);
+    vec_push(vec, 20);
+    vec_push(vec, 30);
+    vec_set(vec, 0, 11);
+    show("vec len", vec_len(vec));
+    show("vec get", vec_get(vec, 0));
+    show("vec pop", vec_pop(vec));
+    show("mem used > 0", sys_get_memory_used() > 0);
+    let p: i64 = alloc(100);
+    show("alloc zero", vec_get(p, 0));
+    show("math_pow", math_pow(3, 13));
+    show("math_sqrt", math_sqrt(1000000007));
+    show("math_abs", math_abs(-5));
+    show("math_clamp", math_clamp(50, 0, 10));
+    show("random", math_random());
+    show("random 2", math_random());
+    show("env missing", env_exists("TRACK_RT_SURELY_UNSET_VAR"));
+    show_s("env missing value", env_get("TRACK_RT_SURELY_UNSET_VAR"));
+    show("args", os_args_count());
+    show("exec true", sys_exec("exit 3"));
+    let path: i64 = "/tmp/track_rt_smoke.txt";
+    show("write", track_file_write_all(path, "line one\nline two\n"));
+    show("exists", file_exists(path));
+    show("size", file_size(path));
+    show_s("read", track_file_read(path));
+    let g: i64 = file_open(path, "r");
+    show_s("read all", file_read_all(g));
+    // The C runtime buffers handle writes until exit, so the appended
+    // line is not read back here.
+    let f: i64 = file_open(path, "a");
+    show("append", file_write(f, "line three\n"));
+    show("dir", dir_exists("/tmp"));
+    show("dir file", dir_exists(path));
+    show("remove", file_remove(path));
+    show("exists after", file_exists(path));
+    show("open missing", file_open("/nonexistent/x", "r"));
+    let arr = [1, 2, 3, 4];
+    show("array_len", array_len(&arr));
+    let s = arr[1..3];
+    show("slice len", array_len(&s));
+    show("slice 0", s[0]);
+    track_out("done\n");
+    return 3;
+}

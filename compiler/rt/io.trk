@@ -1,0 +1,274 @@
+// rt/io.trk — Track runtime: entry point, exit, stdout/stderr, printing.
+//
+// stdout is buffered in the runtime (64 KiB) and flushed when full, before
+// anything is written to stderr, before a child process runs, and at exit,
+// matching the C runtime's stdio behaviour for redirected output.
+
+// The process entry. `_start` calls this with argc and argv (see
+// docs/native.md for the stack contract); it never returns.
+fn rt_start(argc: i64, argv: i64) -> i64 {
+    track_runtime_init(argc, argv);
+    let code: i64 = main();
+    return sys_exit(code);
+}
+
+fn rt_write_all(fd: i64, p: i64, n: i64) -> i64 {
+    let mut done: i64 = 0;
+    while done < n {
+        let w = sys3(SYS_WRITE, fd, p + done, n - done);
+        if w == -4 {
+            // EINTR: retry
+        } else if w <= 0 {
+            return -1;
+        } else {
+            done = done + w;
+        }
+    }
+    return 0;
+}
+
+fn rt_flush() -> i64 {
+    let n = rs(RS_OUTLEN);
+    if n > 0 {
+        rt_write_all(1, rs(RS_OUTBUF), n);
+        rs_set(RS_OUTLEN, 0);
+    }
+    return 0;
+}
+
+fn rt_out_bytes(p: i64, n: i64) -> i64 {
+    let len = rs(RS_OUTLEN);
+    if len + n > RT_OUT_CAP {
+        rt_flush();
+        if n > RT_OUT_CAP {
+            return rt_write_all(1, p, n);
+        }
+        rt_copy(rs(RS_OUTBUF), p, n);
+        rs_set(RS_OUTLEN, n);
+        return 0;
+    }
+    rt_copy(rs(RS_OUTBUF) + len, p, n);
+    rs_set(RS_OUTLEN, len + n);
+    return 0;
+}
+
+fn rt_out_str(s: i64) -> i64 { return rt_out_bytes(s, rt_strlen(s)); }
+
+fn rt_out_byte(b: i64) -> i64 {
+    let len = rs(RS_OUTLEN);
+    if len >= RT_OUT_CAP {
+        rt_flush();
+        store8(rs(RS_OUTBUF), b);
+        rs_set(RS_OUTLEN, 1);
+        return 0;
+    }
+    store8(rs(RS_OUTBUF) + len, b);
+    rs_set(RS_OUTLEN, len + 1);
+    return 0;
+}
+
+fn rt_err_bytes(p: i64, n: i64) -> i64 {
+    rt_flush();
+    return rt_write_all(2, p, n);
+}
+
+fn rt_err_str(s: i64) -> i64 { return rt_err_bytes(s, rt_strlen(s)); }
+
+fn sys_exit(code: i64) -> i64 {
+    rt_flush();
+    rt_exit_now(code);
+    return 0;
+}
+
+// Formats `val` in decimal into the number scratch; returns its address
+// and stores the length at RS_NUM + 24.
+fn rt_fmt_int(val: i64) -> i64 {
+    let end = RT_BASE + RS_NUM + 23;
+    let mut p = end;
+    let mut n = val;
+    if n == 0 {
+        p = p - 1;
+        store8(p, 48);
+    }
+    while n != 0 {
+        let q = n / 10;
+        let mut d = n - q * 10;
+        if d < 0 {
+            d = 0 - d;
+        }
+        p = p - 1;
+        store8(p, 48 + d);
+        n = q;
+    }
+    if val < 0 {
+        p = p - 1;
+        store8(p, 45);
+    }
+    store8(end, 0);
+    return p;
+}
+
+fn rt_out_int(val: i64) -> i64 { return rt_out_str(rt_fmt_int(val)); }
+
+// Readable-memory probe used by `print` and `track_abort`: write one byte
+// of `p` into a pipe; the kernel reports EFAULT for unmapped memory.
+fn rt_readable(p: i64) -> bool {
+    if p < 65536 {
+        return false;
+    }
+    if sys1(SYS_PIPE, RT_BASE + RS_PIPE) < 0 {
+        return false;
+    }
+    let fds = rs(RS_PIPE);
+    let rd = fds & 4294967295;
+    let wr = fds >> 32;
+    let res = sys3(SYS_WRITE, wr, p, 1);
+    sys1(SYS_CLOSE, rd);
+    sys1(SYS_CLOSE, wr);
+    return res == 1;
+}
+
+fn print(val: i64) -> i64 {
+    if val >= 65536 && rt_readable(val) {
+        let mut is_str = true;
+        let mut len: i64 = 0;
+        let mut going = true;
+        while going && len < 4096 {
+            let ch = load8(val + len);
+            if ch == 0 {
+                going = false;
+            } else if ch < 9 || (ch > 13 && ch < 32) || ch > 126 {
+                is_str = false;
+                going = false;
+            } else {
+                len = len + 1;
+            }
+        }
+        if is_str && len > 0 {
+            rt_out_str(val);
+            rt_out_byte(10);
+            return 0;
+        }
+    }
+    rt_out_int(val);
+    rt_out_byte(10);
+    return 0;
+}
+
+fn println(val: i64) -> i64 { return print(val); }
+
+fn print_int(val: i64) -> i64 {
+    rt_out_int(val);
+    rt_out_byte(10);
+    return 0;
+}
+
+fn print_hex(val: i64) -> i64 {
+    rt_out_bytes("0x", 2);
+    let mut shift: i64 = 60;
+    let mut started = false;
+    while shift >= 0 {
+        let d = (val >> shift) & 15;
+        if d != 0 || started || shift == 0 {
+            started = true;
+            if d < 10 {
+                rt_out_byte(48 + d);
+            } else {
+                rt_out_byte(87 + d);
+            }
+        }
+        shift = shift - 4;
+    }
+    rt_out_byte(10);
+    return 0;
+}
+
+fn print_str(s: i64) -> i64 {
+    if s != 0 {
+        rt_out_str(s);
+    }
+    rt_out_byte(10);
+    return 0;
+}
+
+fn print_err(s: i64) -> i64 {
+    if s != 0 {
+        let n = rt_strlen(s);
+        let line = rt_malloc(n + 1);
+        rt_copy(line, s, n);
+        store8(line + n, 10);
+        rt_err_bytes(line, n + 1);
+        rt_free(line);
+    }
+    return 0;
+}
+
+fn eprint(s: i64) -> i64 { return print_err(s); }
+
+// Unformatted output (no trailing newline, no int/string guessing).
+fn track_out(s: i64) -> i64 {
+    if s != 0 {
+        rt_out_str(s);
+    }
+    return 0;
+}
+
+fn track_err(s: i64) -> i64 {
+    if s != 0 {
+        rt_err_str(s);
+    }
+    return 0;
+}
+
+fn read_line() -> i64 {
+    let mut cap: i64 = 128;
+    let mut buf = rt_malloc(cap);
+    let mut len: i64 = 0;
+    let cell = RT_BASE + RS_NUM;
+    let mut going = true;
+    while going {
+        let r = sys3(SYS_READ, 0, cell, 1);
+        if r == -4 {
+            // EINTR: retry
+        } else if r <= 0 {
+            going = false;
+        } else {
+            let ch = load8(cell);
+            if ch == 10 {
+                going = false;
+            } else {
+                if len + 1 >= cap {
+                    cap = cap * 2;
+                    buf = rt_realloc(buf, cap);
+                }
+                store8(buf + len, ch);
+                len = len + 1;
+            }
+        }
+    }
+    store8(buf + len, 0);
+    return buf;
+}
+
+// Fatal abort: print message and terminate the process with status 134.
+fn track_abort(msg: i64) -> i64 {
+    rt_flush();
+    if msg != 0 && rt_readable(msg) {
+        rt_err_str("Track abort: ");
+        rt_err_str(msg);
+        rt_err_str("\n");
+    } else {
+        rt_err_str("Track abort\n");
+    }
+    rt_exit_now(134);
+    return 0;
+}
+
+// Integer division by zero or INT64_MIN / -1: SIGFPE, without flushing.
+fn track_trap_div() -> i64 {
+    let pid = sys0(SYS_GETPID);
+    sys2(SYS_KILL, pid, 8);
+    sys2(SYS_KILL, pid, 6);
+    rt_exit_now(134);
+    return 0;
+}
