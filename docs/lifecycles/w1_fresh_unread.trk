@@ -1,0 +1,7 @@
+// W-LC01: a fresh value is never read.
+struct Point { x: i64, y: i64 }
+fn main() -> void {
+    let origin = Point { x: 0, y: 0 };
+    let p = Point { x: 1, y: 2 };
+    print(p.x);
+}

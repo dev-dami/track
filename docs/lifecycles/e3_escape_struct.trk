@@ -1,0 +1,11 @@
+// E-LC02: a frame-local escapes inside a returned struct.
+struct Point { x: i64, y: i64 }
+struct Holder { p: &Point }
+fn make() -> Holder {
+    let p = Point { x: 1, y: 2 };
+    return Holder { p: &p };
+}
+fn main() -> void {
+    let h = make();
+    print(h.p.x);
+}
