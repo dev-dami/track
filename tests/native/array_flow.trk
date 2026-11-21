@@ -1,0 +1,36 @@
+// Array data flow: stores straight from the value register, reads folded
+// into add/sub/and/or, `(x & C) == 0` as a test, `x * 7` as one imul; the
+// stored value reads back and an unchecked-looking
+// index that is out of range still aborts.
+fn main() -> void {
+    let mut xs = [3, 1, 4, 1, 5, 9, 2, 6];
+    let mut i: i64 = 0;
+    let mut hits: i64 = 0;
+    let mut last: i64 = 0;
+    while i < 5000 {
+        let j: i64 = i & 7;
+        let k: i64 = (i * 7) & 7;
+        xs[j] = (xs[j] + xs[k] - i) & 4095;
+        last = last + xs[j];
+        let m: i64 = (i * 15) & 7;
+        xs[k] = (xs[k] | xs[m]) & (1000 + (xs[j] & xs[m]));
+        if (i & 63) == 0 {
+            hits = hits + 1;
+        }
+        if (i & 5) != 0 {
+            hits = hits + 2;
+        }
+        if (i * 31 & -4) == 0 {
+            hits = hits + 3;
+        }
+        i = i + 1;
+    }
+    print(hits);
+    print(last);
+    print(xs[0] + xs[1] + xs[2] + xs[3] + xs[4] + xs[5] + xs[6] + xs[7]);
+    let mut t: i64 = 0;
+    while t < 10 {
+        print(xs[t & 7] + xs[t]);
+        t = t + 1;
+    }
+}
