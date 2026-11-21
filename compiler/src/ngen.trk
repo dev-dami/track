@@ -51,7 +51,8 @@ const NG_AD = 26;      // scratch: address displacement
 const NG_ACC = 27;     // accumulator slot of an accumulator-recursive function (-1)
 const NG_ACCFN = 28;   // that function
 const NG_ACCTOP = 29;  // its loop head
-const NG_SLOTS = 30;
+const NG_CLOB = 30;    // the function runs `syscall` sequences that clobber r8/r9
+const NG_SLOTS = 31;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -948,14 +949,14 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         x_shift_cl(b, 4, 2);
         x_bytes3(b, 72, 247, 210);       // not rdx: bytes before s
         x_rm(b, 11, 2, 6, 0);            // or rdx, [rsi]
-        x_mov_ri(b, 8, 72340172838076673);
-        x_mov_ri(b, 9, 0 - 9187201950435737472);
+        x_mov_ri(b, 1, 72340172838076673);
+        x_mov_ri(b, 11, 0 - 9187201950435737472);
         let top = x_here(b);
         x_mov_rr(b, 10, 2);
-        x_rr(b, 41, 10, 8);              // sub r10, r8
+        x_rr(b, 41, 10, 1);              // sub r10, rcx (0x0101..)
         x_bytes3(b, 72, 247, 210);       // not rdx
         x_rr(b, 33, 10, 2);              // and r10, rdx
-        x_rr(b, 33, 10, 9);              // and r10, r9
+        x_rr(b, 33, 10, 11);             // and r10, r11 (0x8080..)
         let found = x_jcc(b, 5);
         x_ri(b, 0, 6, 8);                // rsi += 8
         x_rr(b, 57, 6, 7);               // cmp rsi, rdi
@@ -1672,6 +1673,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     }
     let text = name_text(c, target);
     if text_eq(text, "syscall6") {
+        ng_set(c, NG_CLOB, 1);
         return x_sys_insn(b);
     }
     let nr = ng_libc_syscall(text);
@@ -1682,6 +1684,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
             x_push_zero(b);
             k = k + 1;
         }
+        ng_set(c, NG_CLOB, 1);
         return ng_libc_call(c, nr);
     }
     if text_eq(text, "memset") {
@@ -2430,11 +2433,15 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     return x_patch32(b, frame, size);
 }
 
-const NG_CALLEE_SAVED = 5;
+const NG_CALLEE_SAVED = 7;
 
+// Registers preserved across calls, in allocation order: rbx, r12..r15,
+// r8, r9 (no other code uses r8/r9 except syscall argument set-up, and a
+// function doing that saves them).
 fn ng_saved_reg(i: i64) -> i64 {
     if i == 0 { return 3; }
-    return 11 + i; // r12..r15
+    if i <= 4 { return 11 + i; }
+    return i + 3;
 }
 
 // Two passes: the first counts slot uses (weighted by loop depth), then the
@@ -2446,6 +2453,7 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     let calls = vlen(ng(c, NG_CALLS));
     let strs = vlen(ng(c, NG_STRS));
     ng_set(c, NG_PASS, 1);
+    ng_set(c, NG_CLOB, 0);
     ng_set(c, NG_NSAVE, 0);
     vtrunc(ng(c, NG_SAVED), 0);
     vtrunc(ng(c, NG_USE), 0);
@@ -2481,6 +2489,34 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
             vpush(saved, ng_saved_reg(r));
         }
         r = r + 1;
+    }
+    if ng(c, NG_CLOB) == 1 {
+        // r8/r9 clobbered by syscall set-up: keep them out of the slots
+        // and save them for the caller
+        let mut q: i64 = 0;
+        while q < vlen(regs) {
+            let rq = vget(regs, q);
+            if rq == 8 || rq == 9 {
+                vset(regs, q, -1);
+            }
+            q = q + 1;
+        }
+        let keep = vnew();
+        let mut w: i64 = 0;
+        while w < vlen(saved) {
+            if vget(saved, w) != 8 && vget(saved, w) != 9 {
+                vpush(keep, vget(saved, w));
+            }
+            w = w + 1;
+        }
+        vtrunc(saved, 0);
+        let mut e: i64 = 0;
+        while e < vlen(keep) {
+            vpush(saved, vget(keep, e));
+            e = e + 1;
+        }
+        vpush(saved, 8);
+        vpush(saved, 9);
     }
     ng_set(c, NG_NSAVE, vlen(saved));
     ng_set(c, NG_PASS, 2);
