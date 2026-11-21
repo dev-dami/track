@@ -1,0 +1,33 @@
+// Collection get / set / push whose failure and slow paths are out-of-line
+// stubs that resume after the inline fast path: in-range and out-of-range
+// indexes, negative indexes, the null handle, pushes past the capacity, and
+// each result used as a value as well as discarded.
+fn main() -> void {
+    let v: i64 = track_i64_collection_new(2);
+    let mut i: i64 = 0;
+    let mut lens: i64 = 0;
+    while i < 20 {
+        lens = lens + track_i64_collection_push(v, i * i);
+        i = i + 1;
+    }
+    print(lens);
+    print(track_i64_collection_push(0, 5));
+    let mut ok: i64 = 0;
+    let mut j: i64 = 0 - 3;
+    while j < 25 {
+        ok = ok + track_i64_collection_set(v, j, j + 100) * 10;
+        track_i64_collection_set(v, j + 1, j);
+        j = j + 2;
+    }
+    print(ok);
+    print(track_i64_collection_set(0, 0, 1));
+    let mut sum: i64 = 0;
+    let mut k: i64 = 0 - 5;
+    while k < 30 {
+        sum = sum * 3 + track_i64_collection_get(v, k);
+        k = k + 1;
+    }
+    print(sum);
+    print(track_i64_collection_get(0, 0));
+    print(track_i64_collection_get(v, 19) + track_i64_collection_get(v, 20));
+}

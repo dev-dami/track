@@ -2311,7 +2311,15 @@ fn ng_divmod_const_at(c: i64, op: i64, d: i64, in_rcx: bool) -> i64 {
         x_shift_ri(b, 7, 2, l - 1);     // sar rdx, l - 1
     }
     x_mov_rr(b, 0, 1);
-    x_shift_ri(b, 7, 0, 63);            // rax = n >> 63 (arithmetic)
+    x_shift_ri(b, 7, 0, 63);            // rax = s = n >> 63 (arithmetic)
+    if op == OP_MOD {
+        // n - (q0 - s) * d == (n + (s & -d)) - q0 * d: the sign fix-up
+        // leaves the n -> q0 -> remainder chain
+        x_ri(b, 4, 0, 0 - d);           // and rax, -d
+        x_rr(b, 1, 0, 1);               // add rax, rcx
+        x_imul_ri(b, 2, d);
+        return x_rr(b, 41, 0, 2);       // rax = n + (s & -d) - q0 * d
+    }
     x_rr(b, 41, 2, 0);                  // sub rdx, rax: q
     if op == OP_DIV {
         return x_mov_rr(b, 0, 2);

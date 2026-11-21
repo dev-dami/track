@@ -1,0 +1,115 @@
+// While loops laid out latch first (body ends in an else-less if, then
+// assignments): the if body runs rarely, always, never and alternately;
+// nested loops where Track's missing break and continue are written as a
+// done flag in the loop condition and a skipped tail; an early return from
+// inside such a loop; and bodies that must keep the plain layout because
+// the tail uses a body `let`.
+fn first_multiple(n: i64, m: i64) -> i64 {
+    let mut i: i64 = 1;
+    let mut seen: i64 = 0;
+    while i < n {
+        seen = seen + i;
+        if i % m == 0 {
+            return i * 1000 + seen % 1000;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn nested(n: i64) -> i64 {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    let mut done: i64 = 0;
+    while i < n && done == 0 {
+        let mut j: i64 = 0;
+        let mut stop: i64 = 0;
+        while j < n && stop == 0 {
+            let v = (i * 7 + j * 3) & 31;
+            if v > 28 {
+                stop = 1;          // break
+            }
+            if (v & 3) != 0 && stop == 0 {
+                total = total + v; // continue skips this for v % 4 == 0
+            }
+            j = j + 1;
+        }
+        if total > 5000 {
+            done = 1;              // break out of the outer loop
+        }
+        i = i + 1;
+    }
+    return total * 100 + i;
+}
+
+fn shapes(n: i64) -> i64 {
+    let mut a: i64 = 0;
+    let mut b: i64 = 0;
+    let mut c: i64 = 0;
+    let mut d: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        if (i & 255) == 0 {
+            a = a + i;
+        }
+        i = i + 1;
+    }
+    let mut k: i64 = 0;
+    while k < n {
+        if k >= 0 {
+            b = b + 1;
+        }
+        k = k + 1;
+        c = c + k;
+    }
+    let mut m: i64 = 0;
+    while m < n {
+        if m < 0 {
+            d = d - 1000;
+        }
+        m = m + 1;
+    }
+    let mut p: i64 = 0;
+    while p < n {
+        if (p & 1) == 1 || p == 6 {
+            d = d + p;
+        }
+        p = p + 1;
+    }
+    return a + b * 3 + c * 5 + d * 7;
+}
+
+fn plain(n: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let t = i * 3;
+        if t % 5 == 0 {
+            s = s + 1;
+        }
+        s = s + t;
+        i = i + 1;
+    }
+    let mut z: i64 = 0;
+    while z < 0 {
+        if z == 0 {
+            s = 0;
+        }
+        z = z + 1;
+    }
+    return s;
+}
+
+fn main() -> void {
+    print(first_multiple(100, 7));
+    print(first_multiple(5, 9));
+    print(first_multiple(1, 2));
+    print(nested(10));
+    print(nested(40));
+    print(nested(0));
+    print(shapes(0));
+    print(shapes(1));
+    print(shapes(1000));
+    print(plain(0));
+    print(plain(77));
+}
