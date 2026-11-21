@@ -96,38 +96,134 @@ fn c_compiler() -> i64 {
     return "cc";
 }
 
-// Write `<exe>.c` and `<exe>.rt.c`, then compile them inside the output
+fn env_or_empty(name: i64) -> i64 {
+    if env_exists(name) != 0 {
+        return env_get(name);
+    }
+    return "";
+}
+
+// Directory holding compiled runtime objects: $TRACKC_CACHE, else
+// $XDG_CACHE_HOME/trackc, else $HOME/.cache/trackc, else /tmp.
+fn cache_dir() -> i64 {
+    let explicit = env_or_empty("TRACKC_CACHE");
+    if text_len(explicit) > 0 {
+        return explicit;
+    }
+    let xdg = env_or_empty("XDG_CACHE_HOME");
+    if text_len(xdg) > 0 {
+        return text_cat(xdg, "/trackc");
+    }
+    let home = env_or_empty("HOME");
+    if text_len(home) > 0 {
+        return text_cat(home, "/.cache/trackc");
+    }
+    return "/tmp/trackc-cache";
+}
+
+fn make_dir(dir: i64) -> i64 {
+    if path_exists(dir) {
+        return 0;
+    }
+    return shell(text_cat3("mkdir -p ", shell_quote(dir), " 2>/dev/null"));
+}
+
+fn cc_flags(opt: i64) -> i64 {
+    return text_cat3("-std=gnu99 ", opt, " -fwrapv -fno-strict-aliasing -fno-builtin -w");
+}
+
+// Compile the runtime once per (compiler, flags, source) into the cache and
+// return the object path, or "" when the cache is unusable. The object is
+// built from a file named after its key, so it never depends on which
+// program triggered the build; equal inputs still link to equal executables.
+fn runtime_object(runtime_text: i64, cc: i64) -> i64 {
+    let mut dir = cache_dir();
+    if !text_starts(dir, "/") {
+        // The link step runs from another directory.
+        dir = text_cat3(env_or_empty("PWD"), "/", dir);
+    }
+    if make_dir(dir) != 0 {
+        return "";
+    }
+    let h = text_of_int(text_hash(text_cat3(cc, cc_flags("-O2"), runtime_text)));
+    let key = text_cat3(h, "-", text_of_int(text_len(runtime_text)));
+    let obj = text_cat3(dir, "/rt-", text_cat(key, ".o"));
+    if path_exists(obj) {
+        return obj;
+    }
+    let src_name = text_cat3("rt-", key, ".c");
+    if write_text(text_cat3(dir, "/", src_name), runtime_text) != 0 {
+        return "";
+    }
+    let tmp = text_cat3("rt-", key, ".o.tmp$$");
+    let cmd = sb_new();
+    sb_add(cmd, "cd ");
+    sb_add(cmd, shell_quote(dir));
+    sb_add(cmd, " && ");
+    sb_add(cmd, cc);
+    sb_add(cmd, " ");
+    sb_add(cmd, cc_flags("-O2"));
+    sb_add(cmd, " -c -o ");
+    sb_add(cmd, tmp);
+    sb_add(cmd, " ");
+    sb_add(cmd, shell_quote(src_name));
+    sb_add(cmd, " && mv ");
+    sb_add(cmd, tmp);
+    sb_add(cmd, " ");
+    sb_add(cmd, shell_quote(text_cat3("rt-", key, ".o")));
+    if shell(sb_text(cmd)) != 0 {
+        return "";
+    }
+    return obj;
+}
+
+// Write `<exe>.c` and `<exe>.rt.c`, then compile inside the output
 // directory so the object files only record the base names; equal inputs
-// therefore produce byte-identical executables in any directory.
-fn compile_c(c_source: i64, exe: i64) -> i64 {
+// therefore produce byte-identical executables in any directory. The
+// runtime is linked from a cached object (always built at -O2) when one can
+// be had. `build` passes -O2; `run` passes -O1 for faster turnaround.
+fn compile_c(c_source: i64, exe: i64, opt: i64) -> i64 {
     let rt = sb_new();
     runtime_source(rt);
+    let runtime_text = sb_text(rt);
+    let mut dir = path_dir(exe);
+    if text_len(dir) == 0 {
+        dir = ".";
+    }
+    if make_dir(dir) != 0 {
+        err(text_cat3("trackc: cannot create directory '", dir, "'\n"));
+        quit(1);
+    }
     let program_c = text_cat(exe, ".c");
     let runtime_file = text_cat(exe, ".rt.c");
     if write_text(program_c, c_source) != 0 {
         err(text_cat3("trackc: cannot write '", program_c, "'\n"));
         quit(1);
     }
-    if write_text(runtime_file, sb_text(rt)) != 0 {
+    if write_text(runtime_file, runtime_text) != 0 {
         err(text_cat3("trackc: cannot write '", runtime_file, "'\n"));
         quit(1);
     }
-    let mut dir = path_dir(exe);
-    if text_len(dir) == 0 {
-        dir = ".";
-    }
+    let cc = c_compiler();
+    let obj = runtime_object(runtime_text, cc);
     let base = file_stem(exe);
     let cmd = sb_new();
     sb_add(cmd, "cd ");
     sb_add(cmd, shell_quote(dir));
     sb_add(cmd, " && ");
-    sb_add(cmd, c_compiler());
-    sb_add(cmd, " -std=gnu99 -O2 -fwrapv -fno-strict-aliasing -fno-builtin -w -o ");
+    sb_add(cmd, cc);
+    sb_add(cmd, " ");
+    sb_add(cmd, cc_flags(opt));
+    sb_add(cmd, " -o ");
     sb_add(cmd, shell_quote(base));
     sb_add(cmd, " ");
     sb_add(cmd, shell_quote(text_cat(base, ".c")));
     sb_add(cmd, " ");
-    sb_add(cmd, shell_quote(text_cat(base, ".rt.c")));
+    if text_len(obj) > 0 {
+        sb_add(cmd, shell_quote(obj));
+    } else {
+        sb_add(cmd, shell_quote(text_cat(base, ".rt.c")));
+    }
     let status = shell(sb_text(cmd));
     if status != 0 {
         err(text_cat3("trackc: C compiler failed (exit ", text_of_int(status), ")\n"));
@@ -150,7 +246,7 @@ fn cmd_build(path: i64) -> i64 {
     if exe == 0 {
         exe = file_stem(path);
     }
-    compile_c(generate_c(c), exe);
+    compile_c(generate_c(c), exe, "-O2");
     out(text_cat3("✓ Built: ", exe, "\n"));
     return 0;
 }
@@ -180,7 +276,7 @@ fn cmd_run(path: i64) -> i64 {
         }
     }
     let exe = text_cat3(tmp, "/trackc_run_", text_of_int(clock_ms()));
-    compile_c(generate_c(c), exe);
+    compile_c(generate_c(c), exe, "-O1");
     let cmd = sb_new();
     sb_add(cmd, shell_quote(exe));
     let mut i: i64 = 3;
