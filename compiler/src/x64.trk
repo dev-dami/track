@@ -244,3 +244,221 @@ fn x_memset(b: i64) -> i64 {
     x_bytes2(b, 243, 170);      // rep stosb
     return x_bytes2(b, 49, 192); // xor eax, eax
 }
+
+// ---------------------------------------------------------------- general
+// Register numbers: rax 0, rcx 1, rdx 2, rbx 3, rsp 4, rbp 5, rsi 6, rdi 7,
+// r8..r15 = 8..15. Locals the allocator keeps in registers use the
+// callee-saved rbx, r12..r15; rdx, rsi, rdi and r8..r11 are free scratch
+// inside one expression.
+
+fn x_fits8(v: i64) -> bool { return v >= -128 && v <= 127; }
+
+// opc r/m64(dst), r64(src)   (mov 0x89, add 0x01, sub 0x29, cmp 0x39 ...)
+fn x_rr(b: i64, opc: i64, dst: i64, src: i64) -> i64 {
+    x_byte(b, 72 + ((src >> 3) << 2) + (dst >> 3));
+    x_byte(b, opc);
+    return x_byte(b, 192 + ((src & 7) << 3) + (dst & 7));
+}
+
+// mov dst, src (skipped when equal)
+fn x_mov_rr(b: i64, dst: i64, src: i64) -> i64 {
+    if dst == src {
+        return 0;
+    }
+    return x_rr(b, 137, dst, src);
+}
+
+// ModRM (+SIB, +disp) for [base + disp] with register field `reg`.
+fn x_modrm_mem(b: i64, reg: i64, base: i64, disp: i64) -> i64 {
+    let r = (reg & 7) << 3;
+    let bl = base & 7;
+    if disp == 0 && bl != 5 {
+        x_byte(b, r + bl);
+        if bl == 4 { x_byte(b, 36); }
+        return 0;
+    }
+    if x_fits8(disp) {
+        x_byte(b, 64 + r + bl);
+        if bl == 4 { x_byte(b, 36); }
+        return x_byte(b, disp);
+    }
+    x_byte(b, 128 + r + bl);
+    if bl == 4 { x_byte(b, 36); }
+    return x_u32(b, disp);
+}
+
+// opc reg, [base + disp]  (load 0x8B, store 0x89, add 0x03, cmp 0x3B ...)
+fn x_rm(b: i64, opc: i64, reg: i64, base: i64, disp: i64) -> i64 {
+    x_byte(b, 72 + ((reg >> 3) << 2) + (base >> 3));
+    x_byte(b, opc);
+    return x_modrm_mem(b, reg, base, disp);
+}
+
+// 0F-prefixed opc reg, [base + disp]  (imul 0xAF, movzx byte 0xB6)
+fn x_rm2(b: i64, opc: i64, reg: i64, base: i64, disp: i64) -> i64 {
+    x_byte(b, 72 + ((reg >> 3) << 2) + (base >> 3));
+    x_byte(b, 15);
+    x_byte(b, opc);
+    return x_modrm_mem(b, reg, base, disp);
+}
+
+// 0F-prefixed opc reg, r/m(src) register form (imul 0xAF)
+fn x_rr2(b: i64, opc: i64, reg: i64, src: i64) -> i64 {
+    x_byte(b, 72 + ((reg >> 3) << 2) + (src >> 3));
+    x_byte(b, 15);
+    x_byte(b, opc);
+    return x_byte(b, 192 + ((reg & 7) << 3) + (src & 7));
+}
+
+// opc reg, [base + idx * 2^scale + disp]
+fn x_rmx(b: i64, pre: i64, opc: i64, reg: i64, base: i64, idx: i64, scale: i64, disp: i64) -> i64 {
+    x_byte(b, 72 + ((reg >> 3) << 2) + ((idx >> 3) << 1) + (base >> 3));
+    if pre != 0 {
+        x_byte(b, pre);
+    }
+    x_byte(b, opc);
+    let r = (reg & 7) << 3;
+    let s = (scale << 6) + ((idx & 7) << 3) + (base & 7);
+    if disp == 0 && (base & 7) != 5 {
+        x_byte(b, r + 4);
+        return x_byte(b, s);
+    }
+    if x_fits8(disp) {
+        x_byte(b, 64 + r + 4);
+        x_byte(b, s);
+        return x_byte(b, disp);
+    }
+    x_byte(b, 128 + r + 4);
+    x_byte(b, s);
+    return x_u32(b, disp);
+}
+
+// group-1 op r/m64(reg), imm (ext: add 0, or 1, and 4, sub 5, xor 6, cmp 7)
+fn x_ri(b: i64, ext: i64, reg: i64, imm: i64) -> i64 {
+    x_byte(b, 72 + (reg >> 3));
+    if x_fits8(imm) {
+        x_byte(b, 131);
+        x_byte(b, 192 + (ext << 3) + (reg & 7));
+        return x_byte(b, imm);
+    }
+    x_byte(b, 129);
+    x_byte(b, 192 + (ext << 3) + (reg & 7));
+    return x_u32(b, imm);
+}
+
+// group-1 op qword [base + disp], imm
+fn x_mi(b: i64, ext: i64, base: i64, disp: i64, imm: i64) -> i64 {
+    x_byte(b, 72 + (base >> 3));
+    if x_fits8(imm) {
+        x_byte(b, 131);
+        x_modrm_mem(b, ext, base, disp);
+        return x_byte(b, imm);
+    }
+    x_byte(b, 129);
+    x_modrm_mem(b, ext, base, disp);
+    return x_u32(b, imm);
+}
+
+// mov qword [base + disp], imm32 (sign-extended)
+fn x_mov_mi(b: i64, base: i64, disp: i64, imm: i64) -> i64 {
+    x_byte(b, 72 + (base >> 3));
+    x_byte(b, 199);
+    x_modrm_mem(b, 0, base, disp);
+    return x_u32(b, imm);
+}
+
+// imul reg, reg, imm
+fn x_imul_ri(b: i64, reg: i64, imm: i64) -> i64 {
+    x_byte(b, 72 + ((reg >> 3) << 2) + (reg >> 3));
+    if x_fits8(imm) {
+        x_byte(b, 107);
+        x_byte(b, 192 + ((reg & 7) << 3) + (reg & 7));
+        return x_byte(b, imm);
+    }
+    x_byte(b, 105);
+    x_byte(b, 192 + ((reg & 7) << 3) + (reg & 7));
+    return x_u32(b, imm);
+}
+
+// shift reg by imm8 (ext: shl 4, shr 5, sar 7)
+fn x_shift_ri(b: i64, ext: i64, reg: i64, imm: i64) -> i64 {
+    x_byte(b, 72 + (reg >> 3));
+    x_byte(b, 193);
+    x_byte(b, 192 + (ext << 3) + (reg & 7));
+    return x_byte(b, imm);
+}
+
+// shift reg by cl
+fn x_shift_cl(b: i64, ext: i64, reg: i64) -> i64 {
+    x_byte(b, 72 + (reg >> 3));
+    x_byte(b, 211);
+    return x_byte(b, 192 + (ext << 3) + (reg & 7));
+}
+
+// mov reg, imm
+fn x_mov_ri(b: i64, reg: i64, v: i64) -> i64 {
+    if v == 0 {
+        if reg >= 8 { x_byte(b, 69); }
+        x_byte(b, 49);
+        return x_byte(b, 192 + ((reg & 7) << 3) + (reg & 7)); // xor r32, r32
+    }
+    if v > 0 && v <= 2147483647 {
+        if reg >= 8 { x_byte(b, 65); }
+        x_byte(b, 184 + (reg & 7));                          // mov r32, imm32
+        return x_u32(b, v);
+    }
+    if x_fits32(v) {
+        x_byte(b, 72 + (reg >> 3));
+        x_byte(b, 199);
+        x_byte(b, 192 + (reg & 7));
+        return x_u32(b, v);
+    }
+    x_byte(b, 72 + (reg >> 3));
+    x_byte(b, 184 + (reg & 7));
+    return x_u64(b, v);
+}
+
+fn x_push_r(b: i64, reg: i64) -> i64 {
+    if reg >= 8 { x_byte(b, 65); }
+    return x_byte(b, 80 + (reg & 7));
+}
+
+fn x_pop_r(b: i64, reg: i64) -> i64 {
+    if reg >= 8 { x_byte(b, 65); }
+    return x_byte(b, 88 + (reg & 7));
+}
+
+// jcc rel32 (cc: e 4, ne 5, b 2, ae 3, be 6, a 7, s 8, l 12, ge 13, le 14, g 15)
+fn x_jcc(b: i64, cc: i64) -> i64 {
+    x_bytes2(b, 15, 128 + cc);
+    let pos = vlen(b);
+    x_u32(b, 0);
+    return pos;
+}
+
+// rax = flags cc ? 1 : 0
+fn x_setcc_rax(b: i64, cc: i64) -> i64 {
+    x_bytes3(b, 15, 144 + cc, 192); // setcc al
+    return x_bytes3(b, 15, 182, 192); // movzx eax, al
+}
+
+// condition code of a comparison operator (ast OP_EQ..OP_GTE)
+fn x_cc(op: i64) -> i64 {
+    if op == 6 { return 4; }
+    if op == 7 { return 5; }
+    if op == 8 { return 12; }
+    if op == 9 { return 15; }
+    if op == 10 { return 14; }
+    return 13;
+}
+
+// the operator with its operands swapped (a < b  ==  b > a)
+fn x_swap_op(op: i64) -> i64 {
+    if op == 8 { return 9; }
+    if op == 9 { return 8; }
+    if op == 10 { return 11; }
+    if op == 11 { return 10; }
+    return op;
+}
+
+fn x_is_cmp(op: i64) -> bool { return op >= 6 && op <= 11; }
