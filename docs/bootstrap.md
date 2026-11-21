@@ -163,7 +163,16 @@ the length of each never-reassigned local string it indexes is computed
 once before the loop, and each call is an unsigned bounds test and a byte
 load. `x * (2^k -+ 1) +- y` is a shift and two adds with the `y -+ x`
 side independent of the shift. Indexes of a never-reassigned array literal by `x & C`
-with `C` below its length skip the null and bounds checks. `syscall6`, `load64`, `store64`, `load8`,
+with `C` below its length skip the null and bounds checks. A `while` body that ends in
+an else-less `if` (then only assignments and calls that use none of the
+body's `let` names) is laid out latch first: the tail and the loop test are
+emitted a second time ahead of the body, where the `if`'s false branch
+jumps, so an iteration takes one taken branch whether or not the `if` body
+runs. The failure and slow paths of the inline collection get, set and
+push are stubs after the function that jump back, so the fast path falls
+through. `(x & C) == 0` is one `test`; an in-bounds element store whose
+value is unused needs no temporary; `n % d` by a constant adds the sign
+fix-up `s & -d` to `n` beside the quotient multiply instead of after it. `syscall6`, `load64`, `store64`, `load8`,
 `store8` compile to instructions, as do the libc names `elf.trk` uses
 (`open64`, `write`, `fchmod`, `close`, `memset`) so that the Rust
 bootstrap compiler, which knows no machine builtins, links them from libc. String

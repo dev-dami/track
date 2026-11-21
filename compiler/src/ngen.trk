@@ -1413,11 +1413,7 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         vpush(z, x_jcc(b, 3));
         x_rm(b, 139, 0, 0, 0);           // mov rax, [rax]
         x_rmx(b, 0, 139, 0, 0, 1, 3, 0); // mov rax, [rax + rcx*8]
-        let done = x_jmp(b);
-        ng_patch_all(c, z);
-        x_mov_ri(b, 0, 0);
-        x_patch_here(b, done);
-        return true;
+        return ng_cold_back(c, z, 0, -1, x_here(b)) >= 0;
     }
     if count == 3 && text_eq(text, "track_i64_collection_set") {
         let v = list_at(c, args, 2);
@@ -1444,11 +1440,7 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         x_rm(b, 139, 0, 0, 0);
         x_rmx(b, 0, 137, 2, 0, 1, 3, 0); // mov [rax + rcx*8], rdx
         x_mov_ri(b, 0, 1);
-        let done = x_jmp(b);
-        ng_patch_all(c, z);
-        x_mov_ri(b, 0, 0);
-        x_patch_here(b, done);
-        return true;
+        return ng_cold_back(c, z, 0, -1, x_here(b)) >= 0;
     }
     if count == 1 && (text_eq(text, "track_i64_collection_len") || text_eq(text, "array_len")) {
         ng_gen(c, list_at(c, args, 0));
@@ -1477,13 +1469,8 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         x_ri(b, 0, 6, 1);
         x_rm(b, 137, 6, 0, 8);           // mov [rax + 8], rsi
         x_mov_rr(b, 0, 2);
-        let done = x_jmp(b);
-        ng_patch_all(c, slow);
-        x_push_r(b, 0);
-        x_push_r(b, 1);
-        ng_call_rt(c, "track_i64_collection_push", 2);
-        x_patch_here(b, done);
-        return true;
+        ng_set(c, NG_VOLX, 1);
+        return ng_cold_back(c, slow, intern(c, "track_i64_collection_push"), 2, x_here(b)) >= 0;
     }
     if count == 2 && text_eq(text, "str_char_at") {
         return ng_charat(c, list_at(c, args, 0), list_at(c, args, 1));
@@ -2171,6 +2158,20 @@ fn ng_cmp(c: i64, n: i64) -> i64 {
     let op = na(c, n);
     let l = nb(c, n);
     let r = nc(c, n);
+    if (op == OP_EQ || op == OP_NEQ) && nk(c, r) == K_INT && na(c, r) == 0 && nk(c, l) == K_BIN && na(c, l) == OP_BAND && nk(c, nc(c, l)) == K_INT && na(c, nc(c, l)) >= 0 && x_fits32(na(c, nc(c, l))) {
+        // (x & C) == 0: one test of x against C, in place when x has a register
+        let m = na(c, nc(c, l));
+        if ng(c, NG_PASS) == 2 && ng_opnd(c, nb(c, l)) == 2 {
+            let xr = ng_reg(c, ng(c, NG_OPV));
+            if xr >= 0 {
+                x_test_ri(b, xr, m);
+                return x_cc(op);
+            }
+        }
+        ng_gen(c, nb(c, l));
+        x_test_ri(b, 0, m);
+        return x_cc(op);
+    }
     let rk = ng_opnd(c, r);
     let rv = ng(c, NG_OPV);
     if rk > 0 {
@@ -2310,7 +2311,15 @@ fn ng_divmod_const_at(c: i64, op: i64, d: i64, in_rcx: bool) -> i64 {
         x_shift_ri(b, 7, 2, l - 1);     // sar rdx, l - 1
     }
     x_mov_rr(b, 0, 1);
-    x_shift_ri(b, 7, 0, 63);            // rax = n >> 63 (arithmetic)
+    x_shift_ri(b, 7, 0, 63);            // rax = s = n >> 63 (arithmetic)
+    if op == OP_MOD {
+        // n - (q0 - s) * d == (n + (s & -d)) - q0 * d: the sign fix-up
+        // leaves the n -> q0 -> remainder chain
+        x_ri(b, 4, 0, 0 - d);           // and rax, -d
+        x_rr(b, 1, 0, 1);               // add rax, rcx
+        x_imul_ri(b, 2, d);
+        return x_rr(b, 41, 0, 2);       // rax = n + (s & -d) - q0 * d
+    }
     x_rr(b, 41, 2, 0);                  // sub rdx, rax: q
     if op == OP_DIV {
         return x_mov_rr(b, 0, 2);
@@ -2845,6 +2854,12 @@ fn ng_stmt(c: i64, n: i64) -> i64 {
         if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
             return ng_gen_into(c, nb(c, n), ni(c, na(c, target), NI_CVAR));
         }
+        if nk(c, target) == K_INDEX && ng_safe_index(c, na(c, target), nb(c, target)) >= 0 {
+            // in-bounds element store whose value is unused: no temporary
+            ng_gen(c, nb(c, n));
+            x_mov_rr(ncode(c), 2, 0);
+            return ng_index_direct(c, na(c, target), nb(c, target), true);
+        }
     }
     return ng_gen(c, n);
 }
@@ -2964,22 +2979,160 @@ fn ng_align(c: i64) -> i64 {
 fn ng_loop_enter(c: i64) -> i64 { return ng_set(c, NG_DEPTH, ng(c, NG_DEPTH) + 1); }
 fn ng_loop_leave(c: i64) -> i64 { return ng_set(c, NG_DEPTH, ng(c, NG_DEPTH) - 1); }
 
+// `n` mentions one of the names in `names`, or is a construct this check
+// does not look into.
+fn ng_mentions(c: i64, n: i64, names: i64) -> bool {
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL || k == K_STR {
+        return false;
+    }
+    if k == K_VAR {
+        return ng_vhas(names, na(c, n));
+    }
+    if k == K_BIN || k == K_ASSIGN || k == K_INDEX {
+        if k == K_BIN {
+            return ng_mentions(c, nb(c, n), names) || ng_mentions(c, nc(c, n), names);
+        }
+        return ng_mentions(c, na(c, n), names) || ng_mentions(c, nb(c, n), names);
+    }
+    if k == K_UN {
+        return ng_mentions(c, nb(c, n), names);
+    }
+    if k == K_FIELD {
+        return ng_mentions(c, na(c, n), names);
+    }
+    if k == K_CALL {
+        if ng_vhas(names, na(c, n)) {
+            return true;
+        }
+        let args = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            if ng_mentions(c, list_at(c, args, i), names) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    return true;
+}
+
+fn ng_vhas(v: i64, x: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < vlen(v) {
+        if vget(v, i) == x {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Index of the else-less `if` a loop body ends with, followed only by
+// assignments and calls that use none of the body's own `let` names (the
+// latch, generated a second time ahead of the body), or -1.
+fn ng_latch_if(c: i64, body: i64) -> i64 {
+    let n = list_len(c, body);
+    let mut t: i64 = n - 1;
+    while t >= 0 && (nk(c, list_at(c, body, t)) == K_ASSIGN || nk(c, list_at(c, body, t)) == K_CALL) {
+        t = t - 1;
+    }
+    if t < 0 {
+        return -1;
+    }
+    let st = list_at(c, body, t);
+    if nk(c, st) != K_IF || list_len(c, nc(c, st)) != 0 {
+        return -1;
+    }
+    let lets = vnew();
+    let mut i: i64 = 0;
+    while i < t {
+        let s = list_at(c, body, i);
+        if nk(c, s) == K_LETD {
+            return -1;
+        }
+        if nk(c, s) == K_LET {
+            vpush(lets, na(c, s));
+        }
+        i = i + 1;
+    }
+    let mut j: i64 = t + 1;
+    while j < n {
+        if ng_mentions(c, list_at(c, body, j), lets) {
+            return -1;
+        }
+        j = j + 1;
+    }
+    return t;
+}
+
 // while: the test sits at the bottom, entered by a jump from the top.
+// A body ending in `if c { B } T` (T: ng_latch_if) is laid out latch first,
+//     latch: T; exit unless cond     top: S; to latch unless c; B; T
+//     enter: back to top if cond
+// so an iteration takes one taken branch whether or not B runs.
 fn ng_while(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     let hoisted = ng_hoist_strlen(c, n);
+    let body = nb(c, n);
+    let t = ng_latch_if(c, body);
     ng_loop_enter(c);
     let enter = x_jmp(b);
     ng_align(c);
-    let top = x_here(b);
-    ng_block_v(c, nb(c, n), true);
-    x_patch_here(b, enter);
-    let back = vnew();
-    ng_branch(c, na(c, n), true, back);
-    let mut i: i64 = 0;
-    while i < vlen(back) {
-        x_patch_rel(b, vget(back, i), top);
-        i = i + 1;
+    let mut top = x_here(b);
+    if t >= 0 {
+        let latch = top;
+        let out = vnew();
+        let mark = ng_scope_begin(c);
+        let mut j: i64 = t + 1;
+        while j < list_len(c, body) {
+            ng_stmt(c, list_at(c, body, j));
+            j = j + 1;
+        }
+        ng_scope_end(c, mark);
+        ng_branch(c, na(c, n), false, out);
+        top = x_here(b);
+        let mark2 = ng_scope_begin(c);
+        let mut i: i64 = 0;
+        while i < t {
+            ng_stmt(c, list_at(c, body, i));
+            i = i + 1;
+        }
+        let st = list_at(c, body, t);
+        let skip = vnew();
+        ng_branch(c, na(c, st), false, skip);
+        let mut q: i64 = 0;
+        while q < vlen(skip) {
+            x_patch_rel(b, vget(skip, q), latch);
+            q = q + 1;
+        }
+        ng_block_v(c, nb(c, st), true);
+        j = t + 1;
+        while j < list_len(c, body) {
+            ng_stmt(c, list_at(c, body, j));
+            j = j + 1;
+        }
+        ng_scope_end(c, mark2);
+        x_patch_here(b, enter);
+        let back = vnew();
+        ng_branch(c, na(c, n), true, back);
+        let mut k: i64 = 0;
+        while k < vlen(back) {
+            x_patch_rel(b, vget(back, k), top);
+            k = k + 1;
+        }
+        ng_patch_all(c, out);
+    } else {
+        ng_block_v(c, body, true);
+        x_patch_here(b, enter);
+        let back = vnew();
+        ng_branch(c, na(c, n), true, back);
+        let mut i: i64 = 0;
+        while i < vlen(back) {
+            x_patch_rel(b, vget(back, i), top);
+            i = i + 1;
+        }
     }
     ng_loop_leave(c);
     vtrunc(ng(c, NG_STRLEN), vlen(ng(c, NG_STRLEN)) - 2 * hoisted);
@@ -3571,10 +3724,19 @@ fn ng_tail_frame(c: i64, nargs: i64) -> i64 {
 // function `name` with the `nargs` registers rax, rcx, rdx pushed (the
 // callee never returns: it reports and exits).
 fn ng_cold(c: i64, jumps: i64, name: i64, nargs: i64) -> i64 {
+    return ng_cold_back(c, jumps, intern(c, name), nargs, -1);
+}
+
+// An out-of-line stub that resumes at code position `back`: with `nargs`
+// >= 0 it calls runtime function `id` on the pushed rax (, rcx); with -1
+// it sets rax to the constant `id`. The hot path falls through, so the rare
+// case pays the two jumps.
+fn ng_cold_back(c: i64, jumps: i64, id: i64, nargs: i64, back: i64) -> i64 {
     let cold = ng(c, NG_COLD);
     vpush(cold, jumps);
-    vpush(cold, intern(c, name));
-    return vpush(cold, nargs);
+    vpush(cold, id);
+    vpush(cold, nargs);
+    return vpush(cold, back);
 }
 
 fn ng_emit_cold(c: i64) -> i64 {
@@ -3585,12 +3747,21 @@ fn ng_emit_cold(c: i64) -> i64 {
     while i < vlen(cold) {
         ng_patch_all(c, vget(cold, i));
         let nargs = vget(cold, i + 2);
-        x_push_r(b, 0);
-        if nargs > 1 { x_push_r(b, 1); }
-        if nargs > 2 { x_push_r(b, 2); }
-        ng_call_id(c, vget(cold, i + 1), nargs);
-        x_byte(b, 244); // hlt
-        i = i + 3;
+        let back = vget(cold, i + 3);
+        if nargs < 0 {
+            x_mov_ri(b, 0, vget(cold, i + 1));
+        } else {
+            x_push_r(b, 0);
+            if nargs > 1 { x_push_r(b, 1); }
+            if nargs > 2 { x_push_r(b, 2); }
+            ng_call_id(c, vget(cold, i + 1), nargs);
+        }
+        if back >= 0 {
+            x_patch_rel(b, x_jmp(b), back);
+        } else {
+            x_byte(b, 244); // hlt
+        }
+        i = i + 4;
     }
     ng_set(c, NG_VOLX, volx);
     return vtrunc(cold, 0);

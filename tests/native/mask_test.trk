@@ -1,0 +1,45 @@
+// `(x & C) == 0` and `!= 0` compiled as one test (register and stack
+// operands, wide and sign-bit-adjacent masks, negative x, as a value and as
+// a branch); in-bounds element stores as statements; constant modulo with
+// the sign fix-up off the dependency chain, over negative dividends.
+fn masks(x: i64) -> i64 {
+    let mut r: i64 = 0;
+    if (x & 1) == 0 { r = r + 1; }
+    if (x & 255) != 0 { r = r + 2; }
+    if (x & 2147483647) == 0 { r = r + 4; }
+    if (x & 1073741824) != 0 { r = r + 8; }
+    if (x & 0) == 0 { r = r + 16; }
+    let e = (x & 6) == 0;
+    let f = (x & 12) != 0;
+    if e { r = r + 32; }
+    if f { r = r + 64; }
+    return r;
+}
+
+fn mods(n: i64) -> i64 {
+    return (n % 3) * 1 + (n % 7) * 10 + (n % 10) * 100 + (n % 1000000007) * 1000 + (n % 2147483647) * 7 + n / 1000000007;
+}
+
+fn main() -> void {
+    let vals = [0, 1, 0 - 1, 2, 255, 256, 0 - 256, 1073741824, 2147483648, 0 - 2147483648, 9223372036854775807, 0 - 9223372036854775807 - 1];
+    let mut i: i64 = 0;
+    while i < 12 {
+        print(masks(vals[i]));
+        print(mods(vals[i]));
+        print(mods(vals[i] / 3 - 17));
+        i = i + 1;
+    }
+    let mut xs = [5, 4, 3, 2, 1, 0, 9, 8];
+    let mut k: i64 = 0;
+    while k < 100 {
+        xs[k & 7] = (xs[(k * 3) & 7] + k) % 13;
+        k = k + 1;
+    }
+    let mut s: i64 = 0;
+    let mut q: i64 = 0;
+    while q < 8 {
+        s = s * 31 + xs[q];
+        q = q + 1;
+    }
+    print(s);
+}
