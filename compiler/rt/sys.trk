@@ -1,0 +1,425 @@
+// rt/sys.trk — Track runtime: arguments, environment, processes, clock,
+// files, sockets. All through Linux x86-64 system calls.
+
+// ---------------------------------------------------------------- process
+
+fn os_args_count() -> i64 { return rs(RS_ARGC); }
+
+fn os_arg(idx: i64) -> i64 {
+    if idx >= 0 && idx < rs(RS_ARGC) {
+        return rt_dup(load64(rs(RS_ARGV) + 8 * idx));
+    }
+    return rt_dup_n("", 0);
+}
+
+// Value of environment variable `key` ("NAME=value"), or 0 when unset.
+fn rt_getenv(key: i64) -> i64 {
+    let mut e = rs(RS_ENVP);
+    while load64(e) != 0 {
+        let entry = load64(e);
+        let mut i: i64 = 0;
+        while load8(key + i) != 0 && load8(key + i) == load8(entry + i) {
+            i = i + 1;
+        }
+        if load8(key + i) == 0 && load8(entry + i) == 61 {
+            return entry + i + 1;
+        }
+        e = e + 8;
+    }
+    return 0;
+}
+
+fn env_get(key: i64) -> i64 {
+    if key == 0 {
+        return rt_dup_n("", 0);
+    }
+    let v = rt_getenv(key);
+    if v == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_dup(v);
+}
+
+fn env_exists(key: i64) -> i64 {
+    if key != 0 && rt_getenv(key) != 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// system(3): /bin/sh -c cmd; exit status, or 128 + signal.
+fn sys_exec(cmd: i64) -> i64 {
+    if cmd == 0 {
+        return -1;
+    }
+    rt_flush();
+    let pid = sys0(SYS_FORK);
+    if pid < 0 {
+        return -1;
+    }
+    if pid == 0 {
+        let argv = RT_BASE + RS_EXECV;
+        store64(argv, "sh");
+        store64(argv + 8, "-c");
+        store64(argv + 16, cmd);
+        store64(argv + 24, 0);
+        sys3(SYS_EXECVE, "/bin/sh", argv, rs(RS_ENVP));
+        rt_exit_now(127);
+    }
+    let status_at = RT_BASE + RS_WAIT;
+    store64(status_at, 0);
+    let mut r = syscall6(SYS_WAIT4, pid, status_at, 0, 0, 0, 0);
+    while r == -4 {
+        r = syscall6(SYS_WAIT4, pid, status_at, 0, 0, 0, 0);
+    }
+    if r < 0 {
+        return -1;
+    }
+    let status = load64(status_at) & 4294967295;
+    if (status & 127) == 0 {
+        return (status >> 8) & 255;
+    }
+    return 128 + (status & 127);
+}
+
+fn process_spawn(cmd: i64) -> i64 { return sys_exec(cmd); }
+
+fn clock_ms() -> i64 {
+    let ts = RT_BASE + RS_TIME;
+    sys2(SYS_CLOCK_GETTIME, 1, ts);
+    return load64(ts) * 1000 + load64(ts + 8) / 1000000;
+}
+
+// ------------------------------------------------------------------ files
+//
+// A file handle is a runtime record [fd]; 0 when the open failed.
+
+const O_RDONLY = 0;
+const O_WRONLY_CREAT_TRUNC = 577;    // O_WRONLY | O_CREAT | O_TRUNC
+const O_WRONLY_CREAT_APPEND = 1089;  // O_WRONLY | O_CREAT | O_APPEND
+const O_RDWR = 2;
+
+// open(2) flags for an fopen(3) mode string.
+fn rt_open_flags(mode: i64) -> i64 {
+    let m = load8(mode);
+    let plus = rt_find(mode, "+") >= 0;
+    if m == 114 {
+        if plus {
+            return O_RDWR;
+        }
+        return O_RDONLY;
+    }
+    if m == 119 {
+        if plus {
+            return 578;                   // O_RDWR | O_CREAT | O_TRUNC
+        }
+        return O_WRONLY_CREAT_TRUNC;
+    }
+    if m == 97 {
+        if plus {
+            return 1090;                  // O_RDWR | O_CREAT | O_APPEND
+        }
+        return O_WRONLY_CREAT_APPEND;
+    }
+    return -1;
+}
+
+fn file_open(path: i64, mode: i64) -> i64 {
+    if path == 0 || mode == 0 {
+        return 0;
+    }
+    let flags = rt_open_flags(mode);
+    if flags < 0 {
+        return 0;
+    }
+    let fd = sys3(SYS_OPEN, path, flags | 524288, 438);  // O_CLOEXEC, 0666
+    if fd < 0 {
+        return 0;
+    }
+    let h = rt_malloc(8);
+    store64(h, fd);
+    return h;
+}
+
+fn file_close(h: i64) -> i64 {
+    if h != 0 {
+        sys1(SYS_CLOSE, load64(h));
+        rt_free(h);
+    }
+    return 0;
+}
+
+// Read everything from `fd`'s current size; "" on error.
+fn rt_read_fd(fd: i64) -> i64 {
+    let end = sys3(SYS_LSEEK, fd, 0, 2);
+    if end < 0 || sys3(SYS_LSEEK, fd, 0, 0) < 0 {
+        return rt_dup_n("", 0);
+    }
+    let buf = rt_malloc(end + 1);
+    let mut got: i64 = 0;
+    let mut going = true;
+    while going && got < end {
+        let r = sys3(SYS_READ, fd, buf + got, end - got);
+        if r == -4 {
+            // EINTR: retry
+        } else if r <= 0 {
+            going = false;
+        } else {
+            got = got + r;
+        }
+    }
+    store8(buf + got, 0);
+    return buf;
+}
+
+fn file_read_all(h: i64) -> i64 {
+    if h == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_read_fd(load64(h));
+}
+
+fn file_write(h: i64, content: i64) -> i64 {
+    if h == 0 || content == 0 {
+        return -1;
+    }
+    return rt_write_all(load64(h), content, rt_strlen(content));
+}
+
+fn file_exists(path: i64) -> i64 {
+    if path != 0 && sys2(SYS_ACCESS, path, 0) == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn file_remove(path: i64) -> i64 {
+    if path != 0 && sys1(SYS_UNLINK, path) == 0 {
+        return 0;
+    }
+    return -1;
+}
+
+fn file_size(path: i64) -> i64 {
+    let st = RT_BASE + RS_STAT;
+    if path == 0 || sys2(SYS_STAT, path, st) != 0 {
+        return -1;
+    }
+    return load64(st + 48);
+}
+
+fn dir_exists(path: i64) -> bool {
+    let st = RT_BASE + RS_STAT;
+    if path == 0 || sys2(SYS_STAT, path, st) != 0 {
+        return false;
+    }
+    return (load64(st + 24) & 61440) == 16384;
+}
+
+fn file_copy(src: i64, dst: i64) -> i64 {
+    if src == 0 || dst == 0 {
+        return -1;
+    }
+    let fin = sys3(SYS_OPEN, src, O_RDONLY | 524288, 0);
+    if fin < 0 {
+        return -1;
+    }
+    let fout = sys3(SYS_OPEN, dst, O_WRONLY_CREAT_TRUNC | 524288, 438);
+    if fout < 0 {
+        sys1(SYS_CLOSE, fin);
+        return -1;
+    }
+    let buf = rt_malloc(65536);
+    let mut going = true;
+    while going {
+        let n = sys3(SYS_READ, fin, buf, 65536);
+        if n == -4 {
+            // EINTR: retry
+        } else if n <= 0 {
+            going = false;
+        } else {
+            rt_write_all(fout, buf, n);
+        }
+    }
+    rt_free(buf);
+    sys1(SYS_CLOSE, fin);
+    sys1(SYS_CLOSE, fout);
+    return 0;
+}
+
+// Whole-file helpers: open, transfer, and close in one call.
+fn track_file_read(path: i64) -> i64 {
+    if path == 0 {
+        return rt_dup_n("", 0);
+    }
+    let fd = sys3(SYS_OPEN, path, O_RDONLY | 524288, 0);
+    if fd < 0 {
+        return rt_dup_n("", 0);
+    }
+    let out = rt_read_fd(fd);
+    sys1(SYS_CLOSE, fd);
+    return out;
+}
+
+fn track_file_write_all(path: i64, content: i64) -> i64 {
+    if path == 0 {
+        return -1;
+    }
+    let fd = sys3(SYS_OPEN, path, O_WRONLY_CREAT_TRUNC | 524288, 438);
+    if fd < 0 {
+        return -1;
+    }
+    let mut status: i64 = -1;
+    if content != 0 {
+        status = rt_write_all(fd, content, rt_strlen(content));
+    }
+    if sys1(SYS_CLOSE, fd) != 0 {
+        status = -1;
+    }
+    return status;
+}
+
+// ---------------------------------------------------------------- network
+
+const SYS_SOCKET = 41;
+const SYS_CONNECT = 42;
+const SYS_ACCEPT = 43;
+const SYS_SENDTO = 44;
+const SYS_RECVFROM = 45;
+const SYS_BIND = 49;
+const SYS_LISTEN = 50;
+const SYS_SETSOCKOPT = 54;
+
+// struct sockaddr_in for AF_INET, `port`, and the IPv4 address word `addr`
+// (network byte order already packed little-endian in memory).
+fn rt_sockaddr(port: i64, addr: i64) -> i64 {
+    let sa = RT_BASE + RS_SOCK;
+    let p = port & 65535;
+    store64(sa, 2 | ((p >> 8) << 16) | ((p & 255) << 24) | ((addr & 4294967295) << 32));
+    store64(sa + 8, 0);
+    return sa;
+}
+
+// inet_pton for dotted-quad IPv4; -1 when malformed.
+fn rt_parse_ipv4(s: i64) -> i64 {
+    let mut addr: i64 = 0;
+    let mut part: i64 = 0;
+    let mut digits: i64 = 0;
+    let mut parts: i64 = 0;
+    let mut i: i64 = 0;
+    while true {
+        let ch = load8(s + i);
+        if rt_is_digit(ch) {
+            part = part * 10 + ch - 48;
+            digits = digits + 1;
+            if part > 255 || digits > 3 {
+                return -1;
+            }
+        } else if ch == 46 || ch == 0 {
+            if digits == 0 || parts == 4 {
+                return -1;
+            }
+            addr = addr | (part << (8 * parts));
+            parts = parts + 1;
+            part = 0;
+            digits = 0;
+            if ch == 0 {
+                if parts != 4 {
+                    return -1;
+                }
+                return addr;
+            }
+        } else {
+            return -1;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn net_socket_tcp_listen(port: i64) -> i64 {
+    let fd = sys3(SYS_SOCKET, 2, 1, 0);
+    if fd < 0 {
+        return -1;
+    }
+    syscall6(SYS_SETSOCKOPT, fd, 1, 2, RT_BASE + RS_ONE, 4, 0);
+    let r = sys3(SYS_BIND, fd, rt_sockaddr(port, 0), 16);
+    if r < 0 {
+        let b = track_sb_new();
+        if r == -98 {
+            track_sb_push(b, "Track Network Error: Port conflict! Port ");
+            track_sb_push_int(b, port);
+            track_sb_push(b, " is already in use by another process.\n");
+        } else {
+            track_sb_push(b, "Track Network Error: Failed to bind TCP socket on port ");
+            track_sb_push_int(b, port);
+            track_sb_push(b, " (errno: ");
+            track_sb_push_int(b, 0 - r);
+            track_sb_push(b, ").\n");
+        }
+        rt_err_bytes(load64(b), track_sb_len(b));
+        sys1(SYS_CLOSE, fd);
+        return -1;
+    }
+    if sys2(SYS_LISTEN, fd, 128) < 0 {
+        sys1(SYS_CLOSE, fd);
+        return -1;
+    }
+    return fd;
+}
+
+fn net_socket_accept(server_fd: i64) -> i64 {
+    if server_fd < 0 {
+        return -1;
+    }
+    let r = sys3(SYS_ACCEPT, server_fd, 0, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_connect(host: i64, port: i64) -> i64 {
+    if host == 0 {
+        return -1;
+    }
+    let fd = sys3(SYS_SOCKET, 2, 1, 0);
+    if fd < 0 {
+        return -1;
+    }
+    let addr = rt_parse_ipv4(host);
+    if addr < 0 || sys3(SYS_CONNECT, fd, rt_sockaddr(port, addr), 16) < 0 {
+        sys1(SYS_CLOSE, fd);
+        return -1;
+    }
+    return fd;
+}
+
+fn net_socket_send(fd: i64, data: i64, len: i64) -> i64 {
+    if fd < 0 || data == 0 {
+        return -1;
+    }
+    let r = syscall6(SYS_SENDTO, fd, data, len, 0, 0, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_recv(fd: i64, buf: i64, max_len: i64) -> i64 {
+    if fd < 0 || buf == 0 {
+        return -1;
+    }
+    let r = syscall6(SYS_RECVFROM, fd, buf, max_len, 0, 0, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_close(fd: i64) -> i64 {
+    if fd >= 0 {
+        sys1(SYS_CLOSE, fd);
+    }
+    return 0;
+}

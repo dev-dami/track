@@ -243,6 +243,12 @@ fn register_builtins(c: i64) -> i64 {
     bi(c, "sys_exit", t_i64);
     bi(c, "clock_ms", t_i64);
     bi(c, "array_len", t_i64);
+    // Machine builtins for the Track runtime (docs/native.md).
+    bi(c, "syscall6", t_i64);
+    bi(c, "load64", t_i64);
+    bi(c, "store64", t_i64);
+    bi(c, "load8", t_i64);
+    bi(c, "store8", t_i64);
     return 0;
 }
 

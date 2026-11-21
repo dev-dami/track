@@ -1,0 +1,382 @@
+// rt/vec.trk — Track runtime: Vec, word collections, string builders,
+// arrays, math.
+//
+// Handles point to three-word records `[data, len, cap]`, the same layout
+// as the C runtime's structs, so code that inlines the hot collection
+// operations keeps working on either runtime.
+
+// -------------------------------------------------------------------- Vec
+
+fn vec_init(cap: i64) -> i64 {
+    let v = alloc(24);
+    let mut n = cap;
+    if n <= 0 {
+        n = 16;
+    }
+    store64(v + 16, n);
+    store64(v, alloc(n * 8));
+    store64(v + 8, 0);
+    return v;
+}
+
+fn vec_push(v: i64, val: i64) -> i64 {
+    if v == 0 {
+        return 0;
+    }
+    let len = load64(v + 8);
+    if len == load64(v + 16) {
+        let cap = load64(v + 16) * 2;
+        store64(v + 16, cap);
+        store64(v, mem_realloc(load64(v), cap * 8));
+    }
+    store64(load64(v) + 8 * len, val);
+    store64(v + 8, len + 1);
+    return 0;
+}
+
+fn vec_get(v: i64, idx: i64) -> i64 {
+    if v != 0 && idx >= 0 && idx < load64(v + 8) {
+        return load64(load64(v) + 8 * idx);
+    }
+    return 0;
+}
+
+fn vec_set(v: i64, idx: i64, val: i64) -> i64 {
+    if v != 0 && idx >= 0 && idx < load64(v + 8) {
+        store64(load64(v) + 8 * idx, val);
+    }
+    return 0;
+}
+
+fn vec_pop(v: i64) -> i64 {
+    if v != 0 && load64(v + 8) > 0 {
+        let len = load64(v + 8) - 1;
+        store64(v + 8, len);
+        return load64(load64(v) + 8 * len);
+    }
+    return 0;
+}
+
+fn vec_len(v: i64) -> i64 {
+    if v == 0 {
+        return 0;
+    }
+    return load64(v + 8);
+}
+
+fn vec_clear(v: i64) -> i64 {
+    if v != 0 {
+        store64(v + 8, 0);
+    }
+    return 0;
+}
+
+fn vec_reserve(v: i64, cap: i64) -> i64 {
+    if v != 0 && cap > load64(v + 16) {
+        store64(v, mem_realloc(load64(v), cap * 8));
+        store64(v + 16, cap);
+    }
+    return 0;
+}
+
+fn vec_free(v: i64) -> i64 {
+    if v != 0 {
+        dealloc(load64(v));
+        dealloc(v);
+    }
+    return 0;
+}
+
+// ---------------------------------------------- opaque 64-bit collections
+
+fn track_i64_collection_new(requested_cap: i64) -> i64 {
+    let mut cap = requested_cap;
+    if cap <= 0 {
+        cap = 16;
+    }
+    let h = rt_malloc(24);
+    store64(h, rt_malloc(cap * 8));
+    store64(h + 8, 0);
+    store64(h + 16, cap);
+    return h;
+}
+
+fn track_i64_collection_len(h: i64) -> i64 {
+    if h == 0 {
+        return 0;
+    }
+    return load64(h + 8);
+}
+
+fn track_i64_collection_push(h: i64, value: i64) -> i64 {
+    if h == 0 {
+        return -1;
+    }
+    let len = load64(h + 8);
+    if len == load64(h + 16) {
+        let cap = len * 2;
+        store64(h + 16, cap);
+        store64(h, rt_realloc(load64(h), cap * 8));
+    }
+    store64(load64(h) + 8 * len, value);
+    store64(h + 8, len + 1);
+    return len;
+}
+
+fn track_i64_collection_get(h: i64, index: i64) -> i64 {
+    if h == 0 || index < 0 || index >= load64(h + 8) {
+        return 0;
+    }
+    return load64(load64(h) + 8 * index);
+}
+
+fn track_i64_collection_set(h: i64, index: i64, value: i64) -> i64 {
+    if h == 0 || index < 0 || index >= load64(h + 8) {
+        return 0;
+    }
+    store64(load64(h) + 8 * index, value);
+    return 1;
+}
+
+fn track_i64_collection_pop(h: i64) -> i64 {
+    if h == 0 || load64(h + 8) == 0 {
+        return 0;
+    }
+    let len = load64(h + 8) - 1;
+    store64(h + 8, len);
+    return load64(load64(h) + 8 * len);
+}
+
+// Shrink to `len` elements (no-op when already shorter).
+fn track_i64_collection_truncate(h: i64, len: i64) -> i64 {
+    if h != 0 && len >= 0 && len < load64(h + 8) {
+        store64(h + 8, len);
+    }
+    return 0;
+}
+
+// --------------------------------------------------------- string builder
+
+fn rt_sb_reserve(b: i64, extra: i64) -> i64 {
+    let need = load64(b + 8) + extra + 1;
+    let mut cap = load64(b + 16);
+    if need <= cap {
+        return 0;
+    }
+    while need > cap {
+        cap = cap * 2;
+    }
+    store64(b + 16, cap);
+    store64(b, rt_realloc(load64(b), cap));
+    return 0;
+}
+
+fn track_sb_new() -> i64 {
+    let b = rt_malloc(24);
+    let data = rt_malloc(256);
+    store8(data, 0);
+    store64(b, data);
+    store64(b + 8, 0);
+    store64(b + 16, 256);
+    return b;
+}
+
+fn rt_sb_bytes(b: i64, p: i64, n: i64) -> i64 {
+    rt_sb_reserve(b, n);
+    let len = load64(b + 8);
+    let data = load64(b);
+    rt_copy(data + len, p, n);
+    store8(data + len + n, 0);
+    store64(b + 8, len + n);
+    return 0;
+}
+
+fn track_sb_push(b: i64, s: i64) -> i64 {
+    if b == 0 || s == 0 {
+        return 0;
+    }
+    return rt_sb_bytes(b, s, rt_strlen(s));
+}
+
+fn track_sb_push_byte(b: i64, byte: i64) -> i64 {
+    if b == 0 {
+        return 0;
+    }
+    rt_sb_reserve(b, 1);
+    let len = load64(b + 8);
+    let data = load64(b);
+    store8(data + len, byte);
+    store8(data + len + 1, 0);
+    store64(b + 8, len + 1);
+    return 0;
+}
+
+fn track_sb_push_int(b: i64, val: i64) -> i64 {
+    return track_sb_push(b, rt_fmt_int(val));
+}
+
+fn track_sb_len(b: i64) -> i64 {
+    if b == 0 {
+        return 0;
+    }
+    return load64(b + 8);
+}
+
+// Copy the builder contents into a new string.
+fn track_sb_str(b: i64) -> i64 {
+    if b == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_dup_n(load64(b), load64(b + 8));
+}
+
+fn track_sb_clear(b: i64) -> i64 {
+    if b != 0 {
+        store64(b + 8, 0);
+        store8(load64(b), 0);
+    }
+    return 0;
+}
+
+// ----------------------------------------------------------------- arrays
+
+// Array values are cells [length, elements...]; indexing is bounds checked.
+fn rt_bounds(a: i64, i: i64) -> i64 {
+    if a == 0 {
+        track_abort("index into a null array");
+    }
+    if i < 0 || i >= load64(a) {
+        track_abort("array index out of bounds");
+    }
+    return 0;
+}
+
+fn track_array_get(a: i64, i: i64) -> i64 {
+    rt_bounds(a, i);
+    return load64(a + 8 + 8 * i);
+}
+
+fn track_array_set(a: i64, i: i64, v: i64) -> i64 {
+    rt_bounds(a, i);
+    store64(a + 8 + 8 * i, v);
+    return v;
+}
+
+// Copy of a[from..to]; `to` of -1 means the end of the array.
+fn track_array_slice(a: i64, from: i64, to: i64) -> i64 {
+    let mut len: i64 = 0;
+    if a != 0 {
+        len = load64(a);
+    }
+    let mut end = to;
+    if end < 0 {
+        end = len;
+    }
+    if from < 0 || from > end || end > len {
+        track_abort("array slice out of bounds");
+    }
+    let out = alloc((end - from + 1) * 8);
+    store64(out, end - from);
+    if end > from {
+        rt_copy(out + 8, a + 8 + 8 * from, (end - from) * 8);
+    }
+    return out;
+}
+
+fn array_len(a: i64) -> i64 {
+    if a == 0 {
+        return 0;
+    }
+    return load64(a);
+}
+
+// A field access whose struct tag matched none of the declaring structs.
+fn track_bad_field() -> i64 {
+    return track_abort("field access on a value of the wrong struct type");
+}
+
+// ------------------------------------------------------------------- math
+
+fn math_abs(x: i64) -> i64 {
+    if x < 0 {
+        return 0 - x;
+    }
+    return x;
+}
+
+fn math_min(a: i64, b: i64) -> i64 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+fn math_max(a: i64, b: i64) -> i64 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn math_clamp(v: i64, lo: i64, hi: i64) -> i64 {
+    if v < lo {
+        return lo;
+    }
+    if v > hi {
+        return hi;
+    }
+    return v;
+}
+
+fn math_floor(x: i64) -> i64 { return x; }
+fn math_ceil(x: i64) -> i64 { return x; }
+fn math_round(x: i64) -> i64 { return x; }
+
+fn math_pow(base: i64, exp: i64) -> i64 {
+    if exp < 0 {
+        return 0;
+    }
+    let mut result: i64 = 1;
+    let mut b = base;
+    let mut e = exp;
+    while e > 0 {
+        if (e & 1) != 0 {
+            result = result * b;
+        }
+        b = b * b;
+        e = e >> 1;
+    }
+    return result;
+}
+
+fn math_sqrt(x: i64) -> i64 {
+    if x <= 0 {
+        return 0;
+    }
+    let mut lo: i64 = 0;
+    let mut hi: i64 = 3037000499;
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        if mid * mid <= x {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return lo;
+}
+
+fn rt_xor(a: i64, b: i64) -> i64 { return (a | b) - (a & b); }
+
+fn math_random() -> i64 {
+    let mut x = rs(RS_RNG);
+    x = rt_xor(x, x << 13);
+    x = rt_xor(x, x >> 7);
+    x = rt_xor(x, x << 17);
+    rs_set(RS_RNG, x);
+    return x;
+}
+
+fn add(a: i64, b: i64) -> i64 { return a + b; }
+fn sum(a: i64, b: i64) -> i64 { return a + b; }
+fn sub(a: i64, b: i64) -> i64 { return a - b; }
