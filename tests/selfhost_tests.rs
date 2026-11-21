@@ -303,6 +303,32 @@ const VERDICTS: &[(&str, &str, bool)] = &[
         "fn main() -> void { let mut a = [1, 2]; a[1] = 7; print(a[1]); }",
         true,
     ),
+    // Branch merges only revisit slots a branch wrote (undo-log checker).
+    (
+        "shadow_in_then_keeps_outer",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { let s = 1; } else { eat(s); } }",
+        false,
+    ),
+    (
+        "if_inside_loop_consumes",
+        "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); let mut i: i64 = 0; while i < 3 { if i == 1 { eat(s); } else { eat(s); } i = i + 1; } }",
+        false,
+    ),
+    (
+        "nested_if_second_resource",
+        "fn eat(s: Str) -> void { } fn main() -> void { let a = str_concat(\"a\", \"b\"); let b = str_concat(\"a\", \"b\"); if true { eat(b); eat(a); } else { if false { eat(a); } else { eat(a); } } }",
+        false,
+    ),
+    (
+        "global_const_spent_in_branch",
+        "const K = \"hi\"; fn main() -> void { if true { let a = K; } else { } }",
+        false,
+    ),
+    (
+        "reassign_after_move_in_loop",
+        "fn eat(s: Str) -> void { } fn main() -> void { let mut s = str_concat(\"a\", \"b\"); let mut i: i64 = 0; while i < 2 { eat(s); s = str_concat(\"x\", \"y\"); i = i + 1; } }",
+        true,
+    ),
 ];
 
 #[test]
