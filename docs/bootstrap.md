@@ -138,18 +138,31 @@ operands wait on the machine stack; locals and temporaries are
 `rbx`, `r12`-`r15`, `r8`, `r9`, which a function saves when it uses them.
 Functions of at most six parameters take them in `rdi`, `rsi`, `r10`,
 `r11`, `rdx`, `rcx`; with more, the caller pushes the arguments left to
-right and the callee reads argument `i` of `n` at `[rbp + 16 + 8(n-1-i)]`.
+right, the callee reads argument `i` of `n` at `[rbp + 16 + 8(n-1-i)]` and
+pops them on return (`ret 8n`).
 A function that makes no calls, syscalls or scratch-heavy inline
 expansions is a leaf: parameters stay in their argument registers, other
 hot locals use the free ones of `rdi`, `rsi`, `r10`, `r11` at no save
 cost, and with every used slot in a register it gets no frame at all.
-`return f(args)` is a jump (a tail call) when both caller and callee take
-at most six parameters, so it neither grows the stack nor stops its
-function from being a leaf. With more than six parameters on either side
-it is still an ordinary call. Accumulator recursion
+`return f(args)` is a jump (a tail call), so it never grows the stack;
+between functions of at most six parameters it does not stop its function
+from being a leaf. With more than six parameters on either side the frame
+is rebuilt in place: stack arguments move up over the caller's own (a
+top-down copy, as the areas may overlap) with the return address below
+them, so the callee's `ret 8n` leaves the stack as the caller's return
+would have. Accumulator recursion
 (`return f(a) + f(b)`) becomes a loop and inlines into itself three levels
 deep, testing a leading `if cond { return e; }` guard before each
-remaining call. Indexes of a never-reassigned array literal by `x & C`
+remaining call (its arguments computed straight into argument registers).
+Each such loop tests its guard at the bottom, with the guarded return out
+of line, so an iteration takes one branch. `str_char_at` is inline: an
+SSE2 scan of aligned 16-byte windows that touches only `rax`, `rcx`,
+`rdx`, `xmm0`, `xmm1`; in a loop that writes no memory (arithmetic, local
+assignments, `str_char_at`, `str_len` and calls of functions that qualify)
+the length of each never-reassigned local string it indexes is computed
+once before the loop, and each call is an unsigned bounds test and a byte
+load. `x * (2^k -+ 1) +- y` is a shift and two adds with the `y -+ x`
+side independent of the shift. Indexes of a never-reassigned array literal by `x & C`
 with `C` below its length skip the null and bounds checks. `syscall6`, `load64`, `store64`, `load8`,
 `store8` compile to instructions, as do the libc names `elf.trk` uses
 (`open64`, `write`, `fchmod`, `close`, `memset`) so that the Rust
@@ -175,9 +188,8 @@ rejects exactly what `trackc check` rejects.
 The image carries a `PT_GNU_STACK` header (read/write, no execute) and
 runs on the kernel's default stack (usually 8 MiB). Only leaf frames
 and tail calls are optimised away, so very deep non-tail recursion (about
-a million calls), including tail recursion through functions with more
-than six parameters, overflows the stack and dies with SIGSEGV where the
-C build at `-O2` may survive.
+a million calls) overflows the stack and dies with SIGSEGV where the C
+build at `-O2` may survive.
 The natively built `trackc` compiles itself to a byte-identical fixed
 point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
 compares native and C builds of the examples.

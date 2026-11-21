@@ -1,0 +1,24 @@
+// The memory limit stops a program that keeps allocating: exit 137 with
+// the same message (allocated, requested, limit) on every runtime, after
+// a block grew page by page. (Nothing is printed first: the C runtime's
+// buffered stdout would come out after the message when both streams
+// share a pipe.)
+fn main() -> i64 {
+    sys_set_memory_limit(3000000);
+    let v: i64 = vec_init(1);
+    let mut i: i64 = 0;
+    while i < 100000 {
+        vec_push(v, i);
+        i = i + 1;
+    }
+    let b: i64 = track_sb_new();
+    track_sb_push(b, "kept");
+    let mut n: i64 = 0;
+    while n < 1000 {
+        let p: i64 = alloc(200000);
+        n = n + p - p;
+        n = n + 1;
+    }
+    print(track_sb_len(b));
+    return 0;
+}

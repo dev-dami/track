@@ -18,12 +18,14 @@ const RS_ARGC = 0;
 const RS_ARGV = 8;
 const RS_ENVP = 16;
 const RS_HEAP = 24;               // bump pointer of the current arena
-const RS_HEAP_END = 32;
+const RS_HEAP_END = 32;            // end of the populated part of the arena
 const RS_USED = 40;               // bytes handed out by `alloc`
 const RS_LIMIT = 48;              // `alloc` limit (sys_set_memory_limit)
 const RS_RNG = 56;                // math_random state
 const RS_OUTBUF = 64;             // stdout buffer
 const RS_OUTLEN = 72;
+const RS_ARENA_END = 80;          // end of the current arena mapping
+const RS_POP_STEP = 88;           // bytes populated at the next step
 const RS_NUM = 128;               // 32-byte scratch for number formatting
 const RS_PIPE = 160;              // pipe(2) result: two 32-bit fds
 const RS_TIME = 176;              // struct timespec
@@ -36,6 +38,8 @@ const RS_EXECV = 2048;            // argv for execve: 4 words
 
 const RT_OUT_CAP = 65536;
 const RT_ARENA = 67108864;        // grow the heap 64 MiB at a time
+const RT_SMALL_MAX = 65528;        // larger payloads get a mapping of their own
+const RT_LARGE_TAG = 64;          // header class of such a block
 
 const SYS_READ = 0;
 const SYS_WRITE = 1;
@@ -44,6 +48,12 @@ const SYS_CLOSE = 3;
 const SYS_STAT = 4;
 const SYS_LSEEK = 8;
 const SYS_MMAP = 9;
+const SYS_MUNMAP = 11;
+const SYS_MREMAP = 25;
+const SYS_MADVISE = 28;
+const MADV_POPULATE_WRITE = 23;
+const RT_POP_MIN = 65536;
+const RT_POP_MAX = 2097152;
 const SYS_PIPE = 22;
 const SYS_ACCESS = 21;
 const SYS_GETPID = 39;
@@ -102,10 +112,24 @@ fn track_runtime_init(argc: i64, argv: i64) -> i64 {
 
 // ------------------------------------------------------------ allocator
 //
-// Blocks are powers of two from 32 bytes up, with one header word before
-// the payload: `requested_size << 8 | class`. Freed blocks go on a
-// per-class free list (the next pointer lives in the first payload word);
-// new blocks are carved from 64 MiB arenas.
+// Every block has one header word before the payload:
+// `requested_size << 8 | class`.
+//
+// Small blocks (up to 64 KiB with the header) are powers of two from 32
+// bytes, class k = log2 of the block size. Freed ones go on a per-class
+// free list (the next pointer lives in the first payload word). They are
+// carved from 64 MiB arenas that are faulted in ahead of the bump pointer
+// with MADV_POPULATE_WRITE (one call per step, not one fault per page);
+// fresh arena memory is already zero.
+//
+// Large blocks get a mapping of their own, sized to the page, with class
+// RT_LARGE_TAG and the mapping length in the word before the header.
+// Growing one is an mremap that moves pages, not bytes; freeing one gives
+// it back to the kernel.
+//
+// trackc --native inlines the arena bump path for constant sizes
+// (ngen.trk ng_alloc_const): keep RS_HEAP, RS_HEAP_END, RS_FREE, RS_USED,
+// RS_LIMIT, the header layout and the power-of-two classes in step with it.
 
 fn rt_class(need: i64) -> i64 {
     let mut k: i64 = 5;
@@ -115,8 +139,27 @@ fn rt_class(need: i64) -> i64 {
     return k;
 }
 
+fn rt_page_up(n: i64) -> i64 { return (n + 4095) & (0 - 4096); }
+
+// Fault in [from, to) now, in one call: the pages are about to be written.
+fn rt_prefault(from: i64, to: i64) -> i64 {
+    if to > from {
+        syscall6(SYS_MADVISE, from, to - from, MADV_POPULATE_WRITE, 0, 0, 0);
+    }
+    return 0;
+}
+
 // Payload of at least `size` bytes; zeroed when `zero` is true.
 fn rt_block(size: i64, zero: bool) -> i64 {
+    if size > RT_SMALL_MAX {
+        // [mapping length][header][payload ...], already zero.
+        let len = rt_page_up(size + 16);
+        let big = rt_mmap(len);
+        rt_prefault(big, big + len);
+        store64(big, len);
+        store64(big + 8, (size << 8) | RT_LARGE_TAG);
+        return big + 16;
+    }
     let k = rt_class(size + 8);
     let slot = RS_FREE + 8 * k;
     let head = rs(slot);
@@ -124,23 +167,48 @@ fn rt_block(size: i64, zero: bool) -> i64 {
         rs_set(slot, load64(head));
         store64(head - 8, k);
         if zero {
-            rt_zero(head, (1 << k) - 8);
+            memset(head, 0, (1 << k) - 8);
         }
         return head;
     }
     let bsize = 1 << k;
     let mut cur = rs(RS_HEAP);
     if cur + bsize > rs(RS_HEAP_END) || cur == 0 {
-        let mut chunk: i64 = RT_ARENA;
-        if bsize > chunk {
-            chunk = bsize;
+        if cur == 0 || cur + bsize > rs(RS_ARENA_END) {
+            cur = rt_mmap(RT_ARENA);
+            rs_set(RS_ARENA_END, cur + RT_ARENA);
+            rs_set(RS_HEAP_END, cur);
         }
-        cur = rt_mmap(chunk);
-        rs_set(RS_HEAP_END, cur + chunk);
+        rt_populate(cur + bsize);
     }
     rs_set(RS_HEAP, cur + bsize);
     store64(cur, k);
     return cur + 8;
+}
+
+// Fault in the arena ahead of the bump pointer, past at least `need`.
+// Steps double from 64 KiB to 2 MiB, so small programs do not pay for
+// memory they never touch. RS_HEAP_END marks the populated end: the
+// inlined bump path falls back to `alloc` when it reaches it.
+fn rt_populate(need: i64) -> i64 {
+    let mut step = rs(RS_POP_STEP);
+    if step < RT_POP_MIN {
+        step = RT_POP_MIN;
+    }
+    let from = rs(RS_HEAP_END);
+    let mut to = from + step;
+    if to < need {
+        to = rt_page_up(need);
+    }
+    if to > rs(RS_ARENA_END) {
+        to = rs(RS_ARENA_END);
+    }
+    rt_prefault(from, to);
+    rs_set(RS_HEAP_END, to);
+    if step < RT_POP_MAX {
+        rs_set(RS_POP_STEP, step * 2);
+    }
+    return 0;
 }
 
 fn rt_malloc(size: i64) -> i64 { return rt_block(size, false); }
@@ -150,6 +218,10 @@ fn rt_free(p: i64) -> i64 {
         return 0;
     }
     let k = load64(p - 8) & 255;
+    if k == RT_LARGE_TAG {
+        syscall6(SYS_MUNMAP, p - 16, load64(p - 16), 0, 0, 0, 0);
+        return 0;
+    }
     let slot = RS_FREE + 8 * k;
     store64(p, rs(slot));
     rs_set(slot, p);
@@ -158,7 +230,11 @@ fn rt_free(p: i64) -> i64 {
 
 // Usable bytes of block `p`.
 fn rt_capacity(p: i64) -> i64 {
-    return (1 << (load64(p - 8) & 255)) - 8;
+    let k = load64(p - 8) & 255;
+    if k == RT_LARGE_TAG {
+        return load64(p - 16) - 16;
+    }
+    return (1 << k) - 8;
 }
 
 fn rt_realloc(p: i64, size: i64) -> i64 {
@@ -169,6 +245,19 @@ fn rt_realloc(p: i64, size: i64) -> i64 {
     if size <= cap {
         return p;
     }
+    if (load64(p - 8) & 255) == RT_LARGE_TAG {
+        // A mapping of its own: the kernel moves the pages, and the grown
+        // part (zero, and about to be filled) is faulted in in one call.
+        let old = load64(p - 16);
+        let len = rt_page_up(size + 16);
+        let q = syscall6(SYS_MREMAP, p - 16, old, len, 1, 0, 0);
+        if q < 0 && q > -4096 {
+            rt_oom("\nTrack Runtime Error: Out of memory allocation failure!\n");
+        }
+        rt_prefault(q + old, q + len);
+        store64(q, len);
+        return q + 16;
+    }
     let q = rt_malloc(size);
     rt_copy(q, p, cap);
     rt_free(p);
@@ -177,9 +266,22 @@ fn rt_realloc(p: i64, size: i64) -> i64 {
 
 // ------------------------------------------------------- raw memory ops
 
-// x86-64 allows unaligned word access, so copy words whatever the alignment.
+// x86-64 allows unaligned word access, so copy words whatever the
+// alignment, four at a time in the bulk.
 fn rt_copy(dst: i64, src: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
+    let quads = n & (0 - 32);
+    while i < quads {
+        let a = load64(src + i);
+        let b = load64(src + i + 8);
+        let c = load64(src + i + 16);
+        let d = load64(src + i + 24);
+        store64(dst + i, a);
+        store64(dst + i + 8, b);
+        store64(dst + i + 16, c);
+        store64(dst + i + 24, d);
+        i = i + 32;
+    }
     let words = n & (0 - 8);
     while i < words {
         store64(dst + i, load64(src + i));
@@ -193,25 +295,60 @@ fn rt_copy(dst: i64, src: i64, n: i64) -> i64 {
 }
 
 fn rt_zero(dst: i64, n: i64) -> i64 {
-    let mut i: i64 = 0;
-    if (dst & 7) == 0 {
-        let words = n & (0 - 8);
-        while i < words {
-            store64(dst + i, 0);
-            i = i + 8;
-        }
-    }
-    while i < n {
-        store8(dst + i, 0);
-        i = i + 1;
+    if n > 0 {
+        memset(dst, 0, n);
     }
     return dst;
 }
 
-// strlen, a word at a time once aligned.
+// strlen, two words at a time once aligned (an aligned 16-byte pair
+// holding a byte of the string never crosses into another page).
 fn rt_strlen(s: i64) -> i64 {
     let mut p = s;
+    while (p & 15) != 0 {
+        if load8(p) == 0 {
+            return p - s;
+        }
+        p = p + 1;
+    }
+    // One statement per operation with simple right operands, so the
+    // native backend keeps everything in registers.
+    let ones = 72340172838076673;          // 0x0101010101010101
+    let highs = 0 - 9187201950435737472;   // 0x8080808080808080
+    let m1: i64 = -1;
+    let mut hit: i64 = 0;
+    while hit == 0 {
+        let v = load64(p);
+        let u = load64(p + 8);
+        let nv = m1 - v;
+        let nu = m1 - u;
+        let mut x = v - ones;
+        x = x & nv;
+        let mut y = u - ones;
+        y = y & nu;
+        x = x | y;
+        hit = x & highs;
+        p = p + 16;
+    }
+    p = p - 16;
+    while load8(p) != 0 {
+        p = p + 1;
+    }
+    return p - s;
+}
+
+// strnlen, a word at a time once aligned. An aligned word holding a byte
+// of the string never crosses into another page, so reading it is safe.
+fn rt_strnlen(s: i64, max: i64) -> i64 {
+    if max <= 0 {
+        return 0;
+    }
+    let end = s + max;
+    let mut p = s;
     while (p & 7) != 0 {
+        if p >= end {
+            return max;
+        }
         if load8(p) == 0 {
             return p - s;
         }
@@ -219,24 +356,20 @@ fn rt_strlen(s: i64) -> i64 {
     }
     let ones = 72340172838076673;          // 0x0101010101010101
     let highs = 0 - 9187201950435737472;   // 0x8080808080808080
-    let mut v = load64(p);
-    while ((v - ones) & (0 - v - 1) & highs) == 0 {
+    while p < end {
+        let v = load64(p);
+        if ((v - ones) & (0 - v - 1) & highs) != 0 {
+            while load8(p) != 0 {
+                p = p + 1;
+            }
+            if p - s < max {
+                return p - s;
+            }
+            return max;
+        }
         p = p + 8;
-        v = load64(p);
     }
-    while load8(p) != 0 {
-        p = p + 1;
-    }
-    return p - s;
-}
-
-// strnlen
-fn rt_strnlen(s: i64, max: i64) -> i64 {
-    let mut i: i64 = 0;
-    while i < max && load8(s + i) != 0 {
-        i = i + 1;
-    }
-    return i;
+    return max;
 }
 
 // New NUL-terminated copy of `n` bytes at `s`.
