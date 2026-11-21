@@ -138,6 +138,41 @@ tk_w sys_set_memory_limit(tk_w bytes) {
 
 tk_w sys_get_memory_used(void) { return (tk_w)g_allocated_bytes; }
 
+/* Small cells (struct values, tuples) come from 64 KiB zeroed chunks,
+ * carved in 16-byte steps; freed ones go on a per-size free list and are
+ * re-zeroed on reuse. The header keeps the size, tagged with TK_BUMP_BIT. */
+#define TK_BUMP_MAX 240
+#define TK_BUMP_CHUNK (64 * 1024)
+#define TK_BUMP_BIT ((size_t)1 << 63)
+static char *g_bump_cur, *g_bump_end;
+static size_t *g_bump_free[TK_BUMP_MAX / 16 + 2];
+
+static size_t tk_bump_span(size_t size) { return (size + sizeof(size_t) + 15) & ~(size_t)15; }
+
+static size_t *tk_bump_cell(size_t size) {
+    size_t span = tk_bump_span(size);
+    size_t *cell = g_bump_free[span / 16];
+    if (cell) {
+        g_bump_free[span / 16] = *(size_t **)(cell + 1);
+        memset(cell, 0, span);
+    } else {
+        if ((size_t)(g_bump_end - g_bump_cur) < span) {
+            g_bump_cur = (char *)calloc(1, TK_BUMP_CHUNK);
+            if (!g_bump_cur) return NULL;
+            g_bump_end = g_bump_cur + TK_BUMP_CHUNK;
+        }
+        cell = (size_t *)g_bump_cur;
+        g_bump_cur += span;
+    }
+    return cell;
+}
+
+static void tk_bump_release(size_t *raw) {
+    size_t span = tk_bump_span(*raw & ~TK_BUMP_BIT);
+    *(size_t **)(raw + 1) = g_bump_free[span / 16];
+    g_bump_free[span / 16] = raw;
+}
+
 tk_w alloc(tk_w size_w) {
     size_t size = (size_t)size_w;
     if (size_w <= 0) return 0;
@@ -146,13 +181,13 @@ tk_w alloc(tk_w size_w) {
         fflush(stderr);
         exit(137);
     }
-    size_t *ptr = (size_t *)calloc(1, size + sizeof(size_t));
+    size_t *ptr = size <= TK_BUMP_MAX ? tk_bump_cell(size) : (size_t *)calloc(1, size + sizeof(size_t));
     if (!ptr) {
         fprintf(stderr, "\nTrack Runtime Error: Out of memory allocation failure!\n");
         fflush(stderr);
         exit(137);
     }
-    *ptr = size;
+    *ptr = size <= TK_BUMP_MAX ? size | TK_BUMP_BIT : size;
     g_allocated_bytes += size;
     return TK_WORD(ptr + 1);
 }
@@ -160,9 +195,10 @@ tk_w alloc(tk_w size_w) {
 tk_w dealloc(tk_w p) {
     if (!p) return 0;
     size_t *raw = (size_t *)TK_PTR(p) - 1;
-    size_t size = *raw;
+    size_t size = *raw & ~TK_BUMP_BIT;
     g_allocated_bytes = g_allocated_bytes >= size ? g_allocated_bytes - size : 0;
-    free(raw);
+    if (*raw & TK_BUMP_BIT) tk_bump_release(raw);
+    else free(raw);
     return 0;
 }
 
@@ -171,11 +207,19 @@ tk_w mem_realloc(tk_w p, tk_w new_size_w) {
     if (new_size_w <= 0) return dealloc(p);
     size_t new_size = (size_t)new_size_w;
     size_t *raw = (size_t *)TK_PTR(p) - 1;
-    size_t old_size = *raw;
+    size_t old_size = *raw & ~TK_BUMP_BIT;
     if (g_allocated_bytes - old_size + new_size > g_max_memory_limit) {
         fprintf(stderr, "\nTrack Runtime Error: Process memory boundary limit exceeded! (Allocated: %zu bytes, Requested: %zu bytes, Limit: %zu bytes)\n", g_allocated_bytes, new_size, g_max_memory_limit);
         fflush(stderr);
         exit(137);
+    }
+    if (*raw & TK_BUMP_BIT) {
+        /* Move out of the small-cell arena: copy into a fresh cell. */
+        g_allocated_bytes -= old_size;
+        tk_w q = alloc(new_size_w);
+        memcpy(TK_PTR(q), TK_PTR(p), old_size < new_size ? old_size : new_size);
+        tk_bump_release(raw);
+        return q;
     }
     size_t *new_raw = (size_t *)realloc(raw, new_size + sizeof(size_t));
     if (!new_raw) {
