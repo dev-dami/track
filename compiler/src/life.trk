@@ -2664,3 +2664,719 @@ fn life_warnings(c: i64) -> i64 {
     }
     return 0;
 }
+
+// ------------------------------------------------------ placement (L7)
+//
+// The placement plan (docs/lifecycles.md §1.5, §3.1): for every
+// allocation site (tuple, struct, array or payload-union literal, and a
+// call whose result is exactly `fresh`) a PLACE and an ENDS point. Both
+// backends read it; neither re-derives it. Nothing here changes code yet:
+// cgen reads only the tuple decisions, which are K2's rule unchanged.
+//   stack          life ends in this frame. Literals only, by K2's rule: a
+//                  `let x = lit` block statement whose `x` is afterwards
+//                  only indexed, destructured, matched without binding the
+//                  whole value, or reassigned; and `x = (..)` reassigning
+//                  such an `x`.
+//   ret-slot       the literal is returned directly and the function's
+//                  result origin is exactly `fresh` with a fixed-size type.
+//   heap-autofree  `let x = site` where `x` may also be read through its
+//                  fields or lent to calls whose parameter neither escapes
+//                  nor flows into the result: freed at ENDS (card L9).
+//   heap           everything else, including anything uncertain.
+// ENDS is the position of the last mention of `x` (stack and autofree),
+// the `return` (ret-slot), or -1 (heap: no end is planned).
+// Names resolve as cgen's scopes do (`bind`/`scope_end`), so the
+// reassignment rule matches the local cgen binds.
+
+const PL_NONE = 0;
+const PL_STACK = 1;
+const PL_RET = 2;
+const PL_HEAP = 3;
+const PL_AUTO = 4;
+
+const LT_PLACE = 13; // by node: PL_*, 0 when not a site
+const LT_SITES = 14; // [fn node, site node, PL_*, ends pos]*, in walk order
+
+const PS_FLAG = 0;  // by name: ENDS pos + 1 when bound to a stack-tuple local, else 0
+const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
+const PS_FN = 2;    // function being walked (-1 for top-level statements)
+const PS_RET = 3;   // 1 when its literal returns can use the caller's slot
+const PS_WIDTH = 4;
+
+fn life_place_of(c: i64, n: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    if vlen(table) <= LT_PLACE || n < 0 {
+        return PL_NONE;
+    }
+    let place = vget(table, LT_PLACE);
+    if n >= vlen(place) {
+        return PL_NONE;
+    }
+    return vget(place, n);
+}
+
+fn pl_record(c: i64, p: i64, n: i64, place: i64, ends: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    vset(vget(table, LT_PLACE), n, place);
+    let sites = vget(table, LT_SITES);
+    vpush(sites, vget(p, PS_FN));
+    vpush(sites, n);
+    vpush(sites, place);
+    vpush(sites, ends);
+    return 0;
+}
+
+fn pl_bind(c: i64, p: i64, name: i64, flag: i64) -> i64 {
+    let flags = vget(p, PS_FLAG);
+    if name < 0 || name >= vlen(flags) {
+        return 0;
+    }
+    let bound = vget(p, PS_BOUND);
+    vpush(bound, name);
+    vpush(bound, vget(flags, name));
+    vset(flags, name, flag);
+    return 0;
+}
+
+fn pl_flag(c: i64, p: i64, name: i64) -> i64 {
+    let flags = vget(p, PS_FLAG);
+    if name < 0 || name >= vlen(flags) {
+        return 0;
+    }
+    return vget(flags, name);
+}
+
+fn pl_scope_end(p: i64, mark: i64) -> i64 {
+    let bound = vget(p, PS_BOUND);
+    let flags = vget(p, PS_FLAG);
+    while vlen(bound) > mark {
+        let prev = vpop(bound);
+        let name = vpop(bound);
+        vset(flags, name, prev);
+    }
+    return 0;
+}
+
+// The kind of allocation site `n` is, or 0: 1 tuple, 2 struct, 3 array,
+// 4 payload-union literal, 5 call with a fresh result.
+fn pl_site_kind(c: i64, n: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_TUPLE { return 1; }
+    if k == K_SINIT { return 2; }
+    if k == K_ARRAY { return 3; }
+    if k != K_CALL {
+        return 0;
+    }
+    let name = na(c, n);
+    if is_qualified(c, name) && variant_disc(c, name) >= 0 {
+        if is_payload_variant(c, name) {
+            return 4;
+        }
+        return 0;
+    }
+    let callee = life_callee(c, name);
+    let mut r: i64 = 0;
+    if callee >= 0 {
+        r = vget(vget(ck(c, CK_LIFE), LT_RECS), callee + LR_RES);
+    } else if callee <= C_RT0 {
+        r = vget(vget(ck(c, CK_LIFE), LT_RTRECS), C_RT0 - callee + LR_RES);
+    }
+    if r == O_FRESH && life_tracked(c, call_type(c, name, nb(c, n))) {
+        return 5;
+    }
+    return 0;
+}
+
+fn pl_kind_text(kind: i64) -> i64 {
+    if kind == 1 { return "tuple"; }
+    if kind == 2 { return "struct"; }
+    if kind == 3 { return "array"; }
+    if kind == 4 { return "union"; }
+    return "call";
+}
+
+fn pl_place_text(place: i64) -> i64 {
+    if place == PL_STACK { return "stack"; }
+    if place == PL_RET { return "ret-slot"; }
+    if place == PL_AUTO { return "heap-autofree"; }
+    return "heap";
+}
+
+// True when argument `i` of call `n` may be the plain local (or `&local`)
+// without the value outliving this frame: the callee's summary of that
+// parameter neither escapes nor returns it, and a by-value parameter ends
+// it (`die`, so the caller ends it). Unknown callees never qualify.
+fn pl_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
+    let name = na(c, n);
+    if is_qualified(c, name) && variant_disc(c, name) >= 0 {
+        return false;
+    }
+    let callee = life_callee(c, name);
+    let mut recs: i64 = -1;
+    let mut at: i64 = 0;
+    if callee >= 0 {
+        recs = vget(ck(c, CK_LIFE), LT_RECS);
+        at = callee;
+    } else if callee <= C_RT0 {
+        recs = vget(ck(c, CK_LIFE), LT_RTRECS);
+        at = C_RT0 - callee;
+    }
+    if recs < 0 || i >= vget(recs, at + LR_NP) || i >= O_MAXPARAMS {
+        return false;
+    }
+    let pe = vget(recs, at + LR_PARAMS + i * 2 + 1);
+    if (pe & (E_ESC | E_RET)) != 0 {
+        return false;
+    }
+    if ((vget(recs, at + LR_RES) >> i) & 1) == 1 {
+        return false;
+    }
+    return is_addr || pe != 0;
+}
+
+fn pl_uses_ok(c: i64, l: i64, name: i64, refined: bool) -> bool {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        if !pl_use_ok(c, list_at(c, l, i), name, refined) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn pl_use_opt(c: i64, n: i64, name: i64, refined: bool) -> bool {
+    if n < 0 {
+        return true;
+    }
+    return pl_use_ok(c, n, name, refined);
+}
+
+fn pl_is_name(c: i64, n: i64, name: i64) -> bool {
+    if n < 0 {
+        return false;
+    }
+    return nk(c, n) == K_VAR && na(c, n) == name;
+}
+
+// K2's escape rule (`refined` false) for the statements after `let name`:
+// `name` stays local when it is only read by tuple indexing (`name.0`),
+// destructured (`let (a, b) = name`), matched against patterns that never
+// bind the whole value, or reassigned. Any other mention (returned,
+// passed, stored, copied, borrowed, lens target, block value) escapes. A
+// shadowing `let name` only makes it stricter. `refined` also accepts
+// field reads and lending to calls `pl_arg_ok` allows (heap-autofree).
+fn pl_use_ok(c: i64, n: i64, name: i64, refined: bool) -> bool {
+    let k = nk(c, n);
+    if k == K_INT || k == K_STR || k == K_BOOL { return true; }
+    if k == K_VAR { return na(c, n) != name; }
+    if k == K_BIN { return pl_use_ok(c, nb(c, n), name, refined) && pl_use_ok(c, nc(c, n), name, refined); }
+    if k == K_UN { return pl_use_ok(c, nb(c, n), name, refined); }
+    if k == K_ADDR { return pl_use_ok(c, na(c, n), name, refined); }
+    if k == K_ARRAY || k == K_TUPLE { return pl_uses_ok(c, na(c, n), name, refined); }
+    if k == K_TINDEX {
+        if pl_is_name(c, na(c, n), name) {
+            return true;
+        }
+        return pl_use_ok(c, na(c, n), name, refined);
+    }
+    if k == K_INDEX || k == K_RANGE { return pl_use_ok(c, na(c, n), name, refined) && pl_use_ok(c, nb(c, n), name, refined); }
+    if k == K_SLICE { return pl_use_ok(c, na(c, n), name, refined) && pl_use_opt(c, nb(c, n), name, refined) && pl_use_opt(c, nc(c, n), name, refined); }
+    if k == K_FIELD {
+        if refined && pl_is_name(c, na(c, n), name) {
+            return true;
+        }
+        return pl_use_ok(c, na(c, n), name, refined);
+    }
+    if k == K_SINIT {
+        let fields = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, fields) {
+            if !pl_use_ok(c, list_at(c, fields, i + 1), name, refined) {
+                return false;
+            }
+            i = i + 2;
+        }
+        return true;
+    }
+    if k == K_LENS { return na(c, n) != name && pl_uses_ok(c, nc(c, n), name, refined); }
+    if k == K_CALL {
+        if !refined {
+            return pl_uses_ok(c, nb(c, n), name, refined);
+        }
+        let args = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            let a = list_at(c, args, i);
+            if pl_is_name(c, a, name) {
+                if !pl_arg_ok(c, n, i, false) {
+                    return false;
+                }
+            } else if nk(c, a) == K_ADDR && pl_is_name(c, na(c, a), name) {
+                if !pl_arg_ok(c, n, i, true) {
+                    return false;
+                }
+            } else if !pl_use_ok(c, a, name, refined) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    if k == K_MACROCALL { return pl_uses_ok(c, nb(c, n), name, refined) && pl_uses_ok(c, nc(c, n), name, refined); }
+    if k == K_IF { return pl_use_ok(c, na(c, n), name, refined) && pl_uses_ok(c, nb(c, n), name, refined) && pl_uses_ok(c, nc(c, n), name, refined); }
+    if k == K_WHILE { return pl_use_ok(c, na(c, n), name, refined) && pl_uses_ok(c, nb(c, n), name, refined); }
+    if k == K_FOR { return pl_use_ok(c, nb(c, n), name, refined) && pl_uses_ok(c, nc(c, n), name, refined); }
+    if k == K_RETURN { return pl_use_opt(c, na(c, n), name, refined); }
+    if k == K_ASSIGN {
+        if pl_is_name(c, na(c, n), name) {
+            return pl_use_ok(c, nb(c, n), name, refined);
+        }
+        return pl_use_ok(c, na(c, n), name, refined) && pl_use_ok(c, nb(c, n), name, refined);
+    }
+    if k == K_LET { return pl_use_ok(c, nd(c, n), name, refined); }
+    if k == K_LETD {
+        if pl_is_name(c, nc(c, n), name) && nk(c, na(c, n)) != P_IDENT {
+            return true;
+        }
+        return pl_use_ok(c, nc(c, n), name, refined);
+    }
+    if k == K_MATCH {
+        let arms = nb(c, n);
+        if pl_is_name(c, na(c, n), name) {
+            let mut j: i64 = 0;
+            while j < list_len(c, arms) {
+                if nk(c, list_at(c, arms, j)) == P_IDENT {
+                    return false;
+                }
+                j = j + 3;
+            }
+        } else if !pl_use_ok(c, na(c, n), name, refined) {
+            return false;
+        }
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            if !pl_use_opt(c, list_at(c, arms, i + 1), name, refined) || !pl_use_ok(c, list_at(c, arms, i + 2), name, refined) {
+                return false;
+            }
+            i = i + 3;
+        }
+        return true;
+    }
+    if k == K_FN || k == K_MACRODEF || k == K_USE || k == K_CONST || k == K_TYPEDEF || k == K_ENUM || k == K_UNION || k == K_STRUCT {
+        return true;
+    }
+    return false;
+}
+
+fn pl_rest_ok(c: i64, body: i64, from: i64, name: i64, refined: bool) -> bool {
+    let mut i = from;
+    while i < list_len(c, body) {
+        if !pl_use_ok(c, list_at(c, body, i), name, refined) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn pl_max(a: i64, b: i64) -> i64 {
+    if b > a {
+        return b;
+    }
+    return a;
+}
+
+fn pl_last_list(c: i64, l: i64, name: i64, from: i64, step: i64) -> i64 {
+    let mut best: i64 = -1;
+    let mut i = from;
+    while i < list_len(c, l) {
+        best = pl_max(best, pl_last(c, list_at(c, l, i), name));
+        i = i + step;
+    }
+    return best;
+}
+
+// Position of the last node in `n` that names `name` (a variable read, a
+// reassignment or lens target), or -1.
+fn pl_last(c: i64, n: i64, name: i64) -> i64 {
+    if n < 0 {
+        return -1;
+    }
+    let k = nk(c, n);
+    let mut best: i64 = -1;
+    if (k == K_VAR || k == K_LENS) && na(c, n) == name {
+        best = npos(c, n);
+    }
+    if k == K_BIN { return pl_max(pl_last(c, nb(c, n), name), pl_last(c, nc(c, n), name)); }
+    if k == K_UN { return pl_last(c, nb(c, n), name); }
+    if k == K_ADDR || k == K_TINDEX || k == K_FIELD || k == K_RETURN { return pl_last(c, na(c, n), name); }
+    if k == K_INDEX || k == K_RANGE || k == K_ASSIGN { return pl_max(pl_last(c, na(c, n), name), pl_last(c, nb(c, n), name)); }
+    if k == K_SLICE { return pl_max(pl_last(c, na(c, n), name), pl_max(pl_last(c, nb(c, n), name), pl_last(c, nc(c, n), name))); }
+    if k == K_IF { return pl_max(pl_last(c, na(c, n), name), pl_max(pl_last_list(c, nb(c, n), name, 0, 1), pl_last_list(c, nc(c, n), name, 0, 1))); }
+    if k == K_WHILE { return pl_max(pl_last(c, na(c, n), name), pl_last_list(c, nb(c, n), name, 0, 1)); }
+    if k == K_FOR { return pl_max(pl_last(c, nb(c, n), name), pl_last_list(c, nc(c, n), name, 0, 1)); }
+    if k == K_LET { return pl_last(c, nd(c, n), name); }
+    if k == K_LETD { return pl_last(c, nc(c, n), name); }
+    if k == K_ARRAY || k == K_TUPLE { return pl_last_list(c, na(c, n), name, 0, 1); }
+    if k == K_SINIT { return pl_last_list(c, nb(c, n), name, 1, 2); }
+    if k == K_LENS { return pl_max(best, pl_last_list(c, nc(c, n), name, 0, 1)); }
+    if k == K_CALL { return pl_last_list(c, nb(c, n), name, 0, 1); }
+    if k == K_MACROCALL { return pl_max(pl_last_list(c, nb(c, n), name, 0, 1), pl_last_list(c, nc(c, n), name, 0, 1)); }
+    if k == K_MATCH {
+        let arms = nb(c, n);
+        return pl_max(pl_last(c, na(c, n), name), pl_max(pl_last_list(c, arms, name, 1, 3), pl_last_list(c, arms, name, 2, 3)));
+    }
+    return best;
+}
+
+// True when a result of type `t` has a size known at compile time.
+fn pl_fixed_size(c: i64, t: i64) -> bool {
+    if t < 0 {
+        return false;
+    }
+    let k = nk(c, t);
+    if k == T_TUPLE {
+        return true;
+    }
+    if k == T_ARRAY {
+        return nb(c, t) >= 0;
+    }
+    if k == T_CUSTOM {
+        return struct_def(c, na(c, t)) >= 0 || is_payload_union(c, na(c, t));
+    }
+    return false;
+}
+
+// Plan every site in expression `n` that no context places: heap.
+fn pl_walk(c: i64, p: i64, n: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    if pl_site_kind(c, n) != 0 {
+        pl_record(c, p, n, PL_HEAP, -1);
+    }
+    return pl_parts(c, p, n);
+}
+
+fn pl_walk_list(c: i64, p: i64, l: i64, from: i64, step: i64) -> i64 {
+    let mut i = from;
+    while i < list_len(c, l) {
+        pl_walk(c, p, list_at(c, l, i));
+        i = i + step;
+    }
+    return 0;
+}
+
+// Plan for `let name = v`, statement `i` of `body` (body < 0: not a block
+// statement cgen's `gen_block` emits, so never stack). Returns the flag
+// `name` is bound with.
+fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
+    let kind = pl_site_kind(c, v);
+    if kind == 0 {
+        pl_walk(c, p, v);
+        return 0;
+    }
+    let mut place = PL_HEAP;
+    if body >= 0 && kind != 5 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, false) {
+        place = PL_STACK;
+    } else if body >= 0 && pl_rest_ok(c, body, i + 1, name, true) {
+        place = PL_AUTO;
+    }
+    let mut ends: i64 = -1;
+    if place != PL_HEAP {
+        ends = npos(c, list_at(c, body, i));
+        let mut j = i + 1;
+        while j < list_len(c, body) {
+            ends = pl_max(ends, pl_last(c, list_at(c, body, j), name));
+            j = j + 1;
+        }
+    }
+    pl_record(c, p, v, place, ends);
+    pl_parts(c, p, v);
+    if place == PL_STACK && kind == 1 {
+        return ends + 1;
+    }
+    return 0;
+}
+
+// Bind a pattern's names as cgen's `bind_pattern_value` does.
+fn pl_bind_pattern(c: i64, p: i64, pat: i64) -> i64 {
+    let k = nk(c, pat);
+    if k == P_IDENT {
+        return pl_bind(c, p, na(c, pat), 0);
+    }
+    if k == P_TUPLE {
+        let pats = na(c, pat);
+        let mut i: i64 = 0;
+        while i < list_len(c, pats) {
+            pl_bind_pattern(c, p, list_at(c, pats, i));
+            i = i + 1;
+        }
+        return 0;
+    }
+    if k == P_VARIANT {
+        let bindings = nc(c, pat);
+        let mut i: i64 = 0;
+        while i < list_len(c, bindings) {
+            pl_bind_pattern(c, p, list_at(c, bindings, i));
+            i = i + 1;
+        }
+        return 0;
+    }
+    if k == P_STRUCT {
+        let decl = struct_def(c, na(c, pat));
+        if decl < 0 {
+            return 0;
+        }
+        let fields = nb(c, pat);
+        let mut i: i64 = 0;
+        while i < list_len(c, fields) {
+            if struct_field_index(c, decl, list_at(c, fields, i)) >= 0 {
+                pl_bind_pattern(c, p, list_at(c, fields, i + 1));
+            }
+            i = i + 2;
+        }
+    }
+    return 0;
+}
+
+// A block cgen emits with `gen_block`: its own scope, and its `let`
+// statements may be stack.
+fn pl_block(c: i64, p: i64, body: i64) -> i64 {
+    let mark = vlen(vget(p, PS_BOUND));
+    let mut i: i64 = 0;
+    while i < list_len(c, body) {
+        pl_stmt(c, p, body, i, list_at(c, body, i));
+        i = i + 1;
+    }
+    return pl_scope_end(p, mark);
+}
+
+// Statement `n`; `body`/`i` locate it when it is a block statement.
+fn pl_stmt(c: i64, p: i64, body: i64, i: i64, n: i64) -> i64 {
+    if nk(c, n) == K_LET {
+        let flag = pl_let(c, p, body, i, na(c, n), nd(c, n));
+        return pl_bind(c, p, na(c, n), flag);
+    }
+    return pl_walk(c, p, n);
+}
+
+// The children of `n`, in cgen's order, with cgen's scopes.
+fn pl_parts(c: i64, p: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_BIN { pl_walk(c, p, nb(c, n)); return pl_walk(c, p, nc(c, n)); }
+    if k == K_UN { return pl_walk(c, p, nb(c, n)); }
+    if k == K_ADDR || k == K_TINDEX || k == K_FIELD { return pl_walk(c, p, na(c, n)); }
+    if k == K_CALL || k == K_MACROCALL { return pl_walk_list(c, p, nb(c, n), 0, 1); }
+    if k == K_TUPLE || k == K_ARRAY { return pl_walk_list(c, p, na(c, n), 0, 1); }
+    if k == K_SINIT { return pl_walk_list(c, p, nb(c, n), 1, 2); }
+    if k == K_INDEX || k == K_RANGE { pl_walk(c, p, na(c, n)); return pl_walk(c, p, nb(c, n)); }
+    if k == K_SLICE { pl_walk(c, p, na(c, n)); pl_walk(c, p, nb(c, n)); return pl_walk(c, p, nc(c, n)); }
+    if k == K_LET {
+        pl_let(c, p, -1, 0, na(c, n), nd(c, n));
+        return pl_bind(c, p, na(c, n), 0);
+    }
+    if k == K_ASSIGN {
+        let target = na(c, n);
+        let v = nb(c, n);
+        if nk(c, target) == K_VAR && nk(c, v) == K_TUPLE && pl_flag(c, p, na(c, target)) > 0 {
+            pl_record(c, p, v, PL_STACK, pl_flag(c, p, na(c, target)) - 1);
+            pl_parts(c, p, v);
+        } else {
+            pl_walk(c, p, v);
+        }
+        return pl_walk(c, p, target);
+    }
+    if k == K_RETURN {
+        let v = na(c, n);
+        let kind = pl_site_kind(c, v);
+        if kind != 0 && kind != 5 && vget(p, PS_RET) == 1 {
+            pl_record(c, p, v, PL_RET, npos(c, n));
+            return pl_parts(c, p, v);
+        }
+        return pl_walk(c, p, v);
+    }
+    if k == K_IF {
+        pl_walk(c, p, na(c, n));
+        pl_block(c, p, nb(c, n));
+        return pl_block(c, p, nc(c, n));
+    }
+    if k == K_WHILE {
+        pl_walk(c, p, na(c, n));
+        return pl_block(c, p, nb(c, n));
+    }
+    if k == K_FOR {
+        let iter = nb(c, n);
+        if nk(c, iter) == K_RANGE {
+            pl_walk(c, p, na(c, iter));
+            pl_walk(c, p, nb(c, iter));
+        } else {
+            pl_walk(c, p, iter);
+        }
+        let mark = vlen(vget(p, PS_BOUND));
+        pl_bind(c, p, na(c, n), 0);
+        pl_block(c, p, nc(c, n));
+        return pl_scope_end(p, mark);
+    }
+    if k == K_LETD {
+        let pat = na(c, n);
+        let v = nc(c, n);
+        if nk(c, v) == K_TUPLE && nk(c, pat) == P_TUPLE && list_len(c, na(c, v)) == list_len(c, na(c, pat)) {
+            // Destructured on the spot: cgen never builds the cell.
+            pl_parts(c, p, v);
+        } else {
+            pl_walk(c, p, v);
+        }
+        return pl_bind_pattern(c, p, pat);
+    }
+    if k == K_MATCH {
+        pl_walk(c, p, na(c, n));
+        let arms = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            let mark = vlen(vget(p, PS_BOUND));
+            pl_bind_pattern(c, p, list_at(c, arms, i));
+            pl_walk(c, p, list_at(c, arms, i + 1));
+            pl_stmt(c, p, -1, 0, list_at(c, arms, i + 2));
+            pl_scope_end(p, mark);
+            i = i + 3;
+        }
+        return 0;
+    }
+    if k == K_LENS {
+        let mark = vlen(vget(p, PS_BOUND));
+        pl_bind(c, p, nb(c, n), pl_flag(c, p, na(c, n)));
+        pl_block(c, p, nc(c, n));
+        return pl_scope_end(p, mark);
+    }
+    return 0;
+}
+
+// Plan one function (or macro) cgen emits; `prelude` (or -1) holds the
+// top-level statements cgen runs at the start of `main`.
+fn pl_function(c: i64, p: i64, f: i64, prelude: i64) -> i64 {
+    vset(p, PS_FN, f);
+    vset(p, PS_RET, 0);
+    let at = life_summary(c, na(c, f));
+    if nk(c, f) == K_FN && at >= 0 && pl_fixed_size(c, nd(c, f)) {
+        if vget(life_records(c), at + LR_RES) == O_FRESH {
+            vset(p, PS_RET, 1);
+        }
+    }
+    let mark = vlen(vget(p, PS_BOUND));
+    let params = nc(c, f);
+    let mut i: i64 = 0;
+    while i < list_len(c, params) {
+        pl_bind(c, p, list_at(c, params, i), 0);
+        i = i + 2;
+    }
+    if prelude >= 0 {
+        let mut j: i64 = 0;
+        while j < vlen(prelude) {
+            pl_stmt(c, p, -1, 0, vget(prelude, j));
+            j = j + 1;
+        }
+    }
+    pl_block(c, p, ne(c, f));
+    return pl_scope_end(p, mark);
+}
+
+// Build the plan for every function in the program. Run after
+// `life_program`, and again once more items are loaded (the Track
+// runtime). Items, top-level statements and `main` are found as
+// `generate_c` finds them.
+fn life_place_program(c: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    while vlen(table) <= LT_SITES {
+        vpush(table, 0);
+    }
+    vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
+    vset(table, LT_SITES, vnew_cap(256));
+    let p = vfill(vnew_cap(PS_WIDTH), PS_WIDTH, 0);
+    vset(p, PS_FLAG, vfill(vnew_cap(name_count(c) + 1), name_count(c), 0));
+    vset(p, PS_BOUND, vnew_cap(64));
+    let items = cx(c, CX_ITEMS);
+    let files = cx(c, CX_ITEMFILE);
+    let root = cx(c, CX_MAINFILE);
+    let prelude = vnew();
+    let mut main_fn: i64 = -1;
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        let k = nk(c, n);
+        if vget(files, i) == root && k != K_FN && k != K_MACRODEF {
+            vpush(prelude, n);
+        }
+        if k == K_FN && text_eq(name_text(c, na(c, n)), "main") {
+            main_fn = n;
+        }
+        i = i + 1;
+    }
+    let mut j: i64 = 0;
+    while j < vlen(items) {
+        let n = vget(items, j);
+        let k = nk(c, n);
+        if k == K_FN || k == K_MACRODEF {
+            if n == main_fn {
+                pl_function(c, p, n, prelude);
+            } else {
+                pl_function(c, p, n, -1);
+            }
+        }
+        j = j + 1;
+    }
+    if main_fn < 0 {
+        vset(p, PS_FN, -1);
+        vset(p, PS_RET, 0);
+        let mut q: i64 = 0;
+        while q < vlen(prelude) {
+            pl_stmt(c, p, -1, 0, vget(prelude, q));
+            q = q + 1;
+        }
+    }
+    return 0;
+}
+
+// `trackc life --place`: one block per function with sites, in load order:
+//   fn <name>                        (`<top>` for top-level statements)
+//     L<line> <kind> <place> ends L<line>|-
+fn life_place_dump(c: i64) -> i64 {
+    let sites = vget(ck(c, CK_LIFE), LT_SITES);
+    let b = sb_new();
+    let mut cur: i64 = -2;
+    let mut i: i64 = 0;
+    while i < vlen(sites) {
+        let f = vget(sites, i);
+        let n = vget(sites, i + 1);
+        if f != cur {
+            sb_add(b, "fn ");
+            if f < 0 {
+                sb_add(b, "<top>");
+            } else {
+                sb_add(b, name_text(c, na(c, f)));
+            }
+            sb_byte(b, 10);
+            cur = f;
+        }
+        sb_add(b, "  L");
+        sb_int(b, life_line(c, npos(c, n)));
+        sb_add(b, " ");
+        sb_add(b, pl_kind_text(pl_site_kind(c, n)));
+        sb_add(b, " ");
+        sb_add(b, pl_place_text(vget(sites, i + 2)));
+        sb_add(b, " ends ");
+        if vget(sites, i + 3) < 0 {
+            sb_add(b, "-");
+        } else {
+            sb_add(b, "L");
+            sb_int(b, life_line(c, vget(sites, i + 3)));
+        }
+        sb_byte(b, 10);
+        i = i + 4;
+    }
+    return sb_text(b);
+}

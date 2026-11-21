@@ -1331,3 +1331,58 @@ fn life_dumps_match_goldens() {
         checked
     );
 }
+
+/// `trackc life --place` dumps the placement plan (card L7,
+/// docs/lifecycles.md §3.1): one line per allocation site with its line,
+/// kind, PLACE and ENDS. Each program in tests/life/place/ has a golden
+/// `<stem>.place`; `UPDATE_LIFE=1` rewrites them. place.trk pins one site
+/// per rule, so the asserts below name the rule each line checks.
+#[test]
+fn life_place_dumps_match_goldens() {
+    let root = repo();
+    let update = env::var("UPDATE_LIFE").is_ok();
+    let dir = root.join("tests/life/place");
+    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "trk"))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "no programs in tests/life/place");
+    for file in files {
+        let rel = file.strip_prefix(&root).unwrap().to_str().unwrap();
+        let out = run_trackc(&["life", "--place", rel], &root);
+        assert!(
+            out.status.success(),
+            "{}: trackc life --place failed: {}",
+            rel,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let golden = file.with_extension("place");
+        if update {
+            fs::write(&golden, &out.stdout).unwrap();
+        }
+        let want = fs::read_to_string(&golden)
+            .unwrap_or_else(|_| panic!("missing golden {}", golden.display()));
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{}: placement plan differs from {}",
+            rel,
+            golden.display()
+        );
+    }
+    let got = String::from_utf8_lossy(
+        &run_trackc(&["life", "--place", "tests/life/place/place.trk"], &root).stdout,
+    )
+    .into_owned();
+    for (line, why) in [
+        ("L20 tuple stack ends L21", "a tuple only destructured lives on the stack"),
+        ("L8 tuple ret-slot ends L8", "a returned tuple goes to the caller's slot"),
+        ("L24 struct heap ends -", "a value stored into a collection is heap"),
+        ("L26 call heap ends -", "a value passed to an esc param is heap"),
+        ("L28 call heap-autofree ends L29", "a fresh Str dying locally is auto-freed"),
+    ] {
+        assert!(got.contains(line), "{}: missing `{}` in\n{}", why, line, got);
+    }
+}
