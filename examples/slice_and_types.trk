@@ -1,7 +1,7 @@
 // Test: v0.1.6 Slice syntax ([]u8), sub-slicing (a[0..5]), and u8/i8 types
 
 fn main() -> void {
-    let buf: ptr<u8> = alloc(16);
+    let _buf: ptr<u8> = alloc(16);
 
     let val1: u8 = 42;
     let val2: i8 = -10;

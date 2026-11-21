@@ -618,25 +618,15 @@ fn trackc_on_the_track_runtime_self_compiles() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-fn run_trackc_warn_test(args: &[&str], cwd: &Path) -> Output {
-    Command::new(trackc())
-        .args(args)
-        .env("TRACKC_WARN_TEST", "1")
-        .current_dir(cwd)
-        .output()
-        .expect("failed to run trackc")
-}
-
-// L2 warnings channel. `TRACKC_WARN_TEST=1` is a hidden test-only trigger:
-// trackc emits `warning[W0000]` at every top-level item, in reverse order,
-// so the output also shows that diagnostics are sorted by position.
+// L2 warnings channel, driven by real lifecycle warnings (L6): two unused
+// bindings, so the output also shows that diagnostics are sorted by position.
 #[test]
-fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
+fn warnings_print_sorted_and_only_deny_warnings_fails() {
     let dir = scratch("warnings");
     let src = dir.join("w.trk");
     fs::write(
         &src,
-        "fn helper() -> i64 { return 2; }\nfn main() -> void { print(helper()); }\n",
+        "fn helper() -> i64 { let a = 1; return 2; }\nfn main() -> void { let b = 3; print(helper()); }\n",
     )
     .unwrap();
     let path = src.to_str().unwrap();
@@ -647,34 +637,34 @@ fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
         vec!["build", path],
         vec!["build", "--native", path],
     ] {
-        let out = run_trackc_warn_test(&args, &dir);
+        let out = run_trackc(&args, &dir);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(out.status.success(), "{:?}: {}", args, stderr);
         assert_eq!(
-            stderr.matches("warning[W0000]").count(),
+            stderr.matches("warning[W0301]").count(),
             2,
             "{:?}: {}",
             args,
             stderr
         );
         assert!(
-            at(&stderr, "w.trk:1:1") < at(&stderr, "w.trk:2:1"),
+            at(&stderr, "w.trk:1:") < at(&stderr, "w.trk:2:"),
             "{:?}: warnings not sorted by position:\n{}",
             args,
             stderr
         );
     }
-    let out = run_trackc_warn_test(&["check", path], &dir);
+    let out = run_trackc(&["check", path], &dir);
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("(2 warnings)"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
 
-    let out = run_trackc_warn_test(&["run", path], &dir);
+    let out = run_trackc(&["run", path], &dir);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("warning[W0000]"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("warning[W0301]"));
 
     // --deny-warnings in any position turns warnings into a failure.
     for args in [
@@ -683,14 +673,20 @@ fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
         vec!["build", "--native", path, "--deny-warnings"],
         vec!["run", "--deny-warnings", path],
     ] {
-        let out = run_trackc_warn_test(&args, &dir);
+        let out = run_trackc(&args, &dir);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{:?}: {}", args, stderr);
-        assert!(stderr.contains("warning[W0000]"), "{:?}: {}", args, stderr);
+        assert!(stderr.contains("warning[W0301]"), "{:?}: {}", args, stderr);
     }
 
-    // Without the trigger there are no warnings, and --deny-warnings passes.
-    let out = run_trackc(&["check", "--deny-warnings", path], &dir);
+    // `_`-prefixed names are silent, and --deny-warnings then passes.
+    let quiet = dir.join("quiet.trk");
+    fs::write(
+        &quiet,
+        "fn helper() -> i64 { let _a = 1; return 2; }\nfn main() -> void { print(helper()); }\n",
+    )
+    .unwrap();
+    let out = run_trackc(&["check", "--deny-warnings", quiet.to_str().unwrap()], &dir);
     assert!(out.status.success());
     assert!(!String::from_utf8_lossy(&out.stderr).contains("warning"));
 
@@ -698,17 +694,98 @@ fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
     let bad = dir.join("bad.trk");
     fs::write(
         &bad,
-        "fn main() -> void {\n    print(nope);\n}\nfn later() -> i64 { return 1; }\n",
+        "fn first() -> i64 { let u = 1; return 0; }\nfn main() -> void {\n    print(nope);\n}\n",
     )
     .unwrap();
-    let out = run_trackc_warn_test(&["check", bad.to_str().unwrap()], &dir);
+    let out = run_trackc(&["check", bad.to_str().unwrap()], &dir);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{}", stderr);
-    let w1 = at(&stderr, "bad.trk:1:1");
-    let e = at(&stderr, "error[");
-    let w2 = at(&stderr, "bad.trk:4:1");
-    assert!(w1 < e && e < w2, "not sorted by position:\n{}", stderr);
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Lifecycle warnings W0301-W0305 (card L6, docs/lifecycles.md §2): each
+/// docs/lifecycles/wN example gives exactly its warning, with the §2 text,
+/// exits 0, and fails under --deny-warnings.
+#[test]
+fn lifecycle_warnings_match_the_catalogue() {
+    let root = repo();
+    let cases = [
+        (
+            "w1_fresh_unread",
+            "warning[W0301]: 'origin' is created and never read; remove it or name it '_origin'.",
+        ),
+        (
+            "w2_write_only",
+            "warning[W0302]: write to 'p.y' is never read; 'p' ends at line 7.",
+        ),
+        (
+            "w3_mutated_unread",
+            "warning[W0303]: 'bump' mutates 'c', but 'c' is never read afterwards.",
+        ),
+        (
+            "w4_discarded_result",
+            "warning[W0304]: result of 'vadd' is discarded, and 'vadd' has no other effect (it only reads its parameters and returns a fresh value).",
+        ),
+        (
+            "w5_consume_only_reads",
+            "warning[W0305]: 'norm1' takes 'p' by value but only reads it; take '&Point' so callers keep it.",
+        ),
+    ];
+    for (stem, want) in cases {
+        let rel = format!("docs/lifecycles/{}.trk", stem);
+        let out = run_trackc(&["check", &rel], &root);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{}: {}", rel, stderr);
+        assert!(
+            stderr.contains(want),
+            "{}: want {:?}, got:\n{}",
+            rel,
+            want,
+            stderr
+        );
+        assert_eq!(stderr.matches("warning[").count(), 1, "{}: {}", rel, stderr);
+        let out = run_trackc(&["check", "--deny-warnings", &rel], &root);
+        assert_eq!(out.status.code(), Some(1), "{}", rel);
+    }
+    // Near misses stay warning-free.
+    let dir = scratch("lifewarn");
+    let clean = [
+        // read after the write
+        "struct P { x: i64, y: i64 }\nfn main() -> void { let mut p = P { x: 1, y: 2 }; p.y = 9; print(p.y); }\n",
+        // mutated, then read
+        "struct C { n: i64 }\nfn bump(c: &C) -> i64 { with c -> l { l.n = l.n + 1; } return 0; }\nfn main() -> void { let c = C { n: 0 }; bump(&c); print(c.n); }\n",
+        // pure result used
+        "struct V { x: i64 }\nfn mk(a: &V) -> V { return V { x: a.x }; }\nfn main() -> void { let a = V { x: 1 }; let b = mk(&a); print(b.x); }\n",
+        // by-value parameter handed back
+        "struct P { x: i64 }\nfn get(p: &P) -> i64 { return p.x; }\nfn eat(p: P) -> P { return p; }\nfn main() -> void { let p = P { x: 1 }; print(get(&p)); let q = eat(p); print(q.x); }\n",
+        // a write read on the next loop iteration
+        "struct P { x: i64 }\nfn main() -> void { let mut p = P { x: 0 }; let mut i = 0; while i < 3 { print(p.x); p.x = i; i = i + 1; } }\n",
+        // a discarded call with an effect
+        "struct V { x: i64 }\nfn show(a: &V) -> V { print(a.x); return V { x: a.x }; }\nfn main() -> void { let a = V { x: 1 }; show(&a); }\n",
+    ];
+    for (i, src) in clean.iter().enumerate() {
+        let f = dir.join(format!("clean{}.trk", i));
+        fs::write(&f, src).unwrap();
+        let out = run_trackc(&["check", f.to_str().unwrap()], &dir);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "clean{}: {}", i, stderr);
+        assert!(!stderr.contains("warning["), "clean{}: {}", i, stderr);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The compiler's own sources stay warning-clean (CI runs the same check).
+#[test]
+fn compiler_sources_are_warning_clean() {
+    let out = run_trackc(
+        &["check", "--deny-warnings", "compiler/src/main.trk"],
+        &repo(),
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// (name, source, accepted) for trackc alone: holes the review found where
