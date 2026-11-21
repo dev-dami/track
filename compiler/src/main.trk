@@ -6,6 +6,7 @@
 //   --deny-warnings (any command, any position) makes warnings exit 1
 //   trackc emit-c <file.trk> [-o <file.c>] write the generated C
 //   trackc tokens <file.trk>              dump the token stream
+//   trackc life <file.trk>                dump inferred lifecycle summaries
 //   trackc --version
 //
 // Pipeline: loader (lexer + parser for every imported module) → checker →
@@ -19,6 +20,7 @@ import "parser";
 import "loader";
 import "symbols";
 import "checker";
+import "life";
 import "cgen";
 import "ngen";
 import "runtime_c";
@@ -35,6 +37,7 @@ fn usage() -> i64 {
     err("    trackc check <file.trk>                Parse and ownership-check only\n");
     err("    trackc emit-c <file.trk> [-o <out.c>]  Write the generated C\n");
     err("    trackc tokens <file.trk>               Dump the token stream\n");
+    err("    trackc life <file.trk>                 Dump inferred lifecycle summaries\n");
     err("    trackc --version                       Show version info\n");
     err("\nOPTIONS:\n");
     err("    --rt=track   link the runtime written in Track (compiler/rt/)\n");
@@ -75,6 +78,7 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
         force_test_warnings(c);
     }
     check_program(c);
+    life_program(c);
     finish_warnings(c);
     if with_rt {
         let from = vlen(cx(c, CX_ITEMS));
@@ -535,6 +539,10 @@ fn main() -> i64 {
     }
     if text_eq(command, "emit-c") {
         cmd_emit(require_file());
+        return 0;
+    }
+    if text_eq(command, "life") {
+        out(life_dump(front_end(require_file())));
         return 0;
     }
     if text_eq(command, "tokens") {

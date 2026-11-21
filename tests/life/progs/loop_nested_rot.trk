@@ -1,0 +1,69 @@
+// Rotation in the inner loop of a nested pair: the inner loop needs its
+// own fixpoint, and the outer loop re-runs it until nothing changes.
+// p must end by `ret` and the result must be derived(p) fresh (card L3b).
+struct Point { x: i64, y: i64 }
+fn nested_while(p: Point, n: i64) -> Point {
+    let mut a = Point { x: 0, y: 0 };
+    let mut b = Point { x: 0, y: 0 };
+    let mut c = Point { x: 0, y: 0 };
+    let mut d = p;
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j < n {
+            let t = a;
+            a = b;
+            b = c;
+            c = d;
+            d = t;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return a;
+}
+fn nested_for(p: Point, n: i64) -> Point {
+    let mut a = Point { x: 0, y: 0 };
+    let mut b = Point { x: 0, y: 0 };
+    let mut c = Point { x: 0, y: 0 };
+    let mut d = p;
+    for i in 0..n {
+        for j in 0..1 {
+            let t = a;
+            a = b;
+            b = c;
+            c = d;
+            d = t;
+        }
+    }
+    return a;
+}
+// The outer loop shifts d -> c -> b and the inner loop swaps a and b:
+// p reaches `a` only through both loops together.
+fn nested_split(p: Point, n: i64) -> Point {
+    let mut a = Point { x: 0, y: 0 };
+    let mut b = Point { x: 0, y: 0 };
+    let mut c = Point { x: 0, y: 0 };
+    let mut d = p;
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j < 1 {
+            let t = a;
+            a = b;
+            b = t;
+            j = j + 1;
+        }
+        let u = b;
+        b = c;
+        c = d;
+        d = u;
+        i = i + 1;
+    }
+    return a;
+}
+fn main() -> void {
+    print(nested_while(Point { x: 1, y: 2 }, 3).x);
+    print(nested_for(Point { x: 1, y: 2 }, 3).x);
+    print(nested_split(Point { x: 1, y: 2 }, 3).x);
+}

@@ -1,0 +1,34 @@
+// 3-variable rotation: p reaches `a` after 2 iterations, so the
+// loop needs 2 passes plus one to confirm the fixpoint. p must end by
+// `ret` and the result must be derived(p) fresh (card L3b).
+struct Point { x: i64, y: i64 }
+fn rot3_while(p: Point, n: i64) -> Point {
+    let mut a = Point { x: 0, y: 0 };
+    let mut b = Point { x: 0, y: 0 };
+    let mut c = p;
+    let mut i = 0;
+    while i < n {
+        let t = a;
+        a = b;
+        b = c;
+        c = t;
+        i = i + 1;
+    }
+    return a;
+}
+fn rot3_for(p: Point, n: i64) -> Point {
+    let mut a = Point { x: 0, y: 0 };
+    let mut b = Point { x: 0, y: 0 };
+    let mut c = p;
+    for i in 0..n {
+        let t = a;
+        a = b;
+        b = c;
+        c = t;
+    }
+    return a;
+}
+fn main() -> void {
+    print(rot3_while(Point { x: 1, y: 2 }, 2).x);
+    print(rot3_for(Point { x: 1, y: 2 }, 2).x);
+}

@@ -1,0 +1,11 @@
+fn take
+  param p owned use=read end=die
+  result copy
+  effects none
+fn peek
+  param r ref use=read end=esc
+  result copy
+  effects calls
+fn main
+  result void
+  effects calls

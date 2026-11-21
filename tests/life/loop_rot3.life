@@ -1,0 +1,13 @@
+fn rot3_while
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn rot3_for
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn main
+  result void
+  effects calls

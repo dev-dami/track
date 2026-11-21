@@ -1,0 +1,19 @@
+fn ret_it
+  param p owned use=none end=ret
+  result derived(p)
+  effects none
+fn ret_tail
+  param p owned use=none end=ret
+  result derived(p)
+  effects none
+fn ret_let
+  param p owned use=none end=ret
+  result derived(p)
+  effects none
+fn ret_read
+  param p owned use=read end=ret
+  result derived(p)
+  effects calls
+fn main
+  result void
+  effects calls

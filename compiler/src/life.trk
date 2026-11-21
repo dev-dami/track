@@ -1,0 +1,851 @@
+// life.trk — value lifecycles: origin sets and per-function summaries.
+//
+// Runs after `check_program` on accepted programs (docs/lifecycles.md §1).
+// One forward walk per function keeps an origin set per variable slot
+// (checker field V_ORIGIN) and records, per parameter, how the function
+// uses it (none < read < mutate) and how its life ends ({die, ret, esc}),
+// plus the origin of the result.
+//
+// An origin set is one word: bits 0..59 are parameters ("derived from
+// parameter k"), then FRESH, STATIC and UNKNOWN. Joins are `|`. Copy
+// values (integers, bools) have the empty origin.
+//
+// Calls are conservative here: a callee may mutate every `&` argument,
+// every by-value argument escapes, and a non-copy result is UNKNOWN (plus
+// whatever its arguments carry). Card L4 replaces that with the callee's
+// summary from the table this pass fills (`life_summary`).
+
+import "base";
+import "ast";
+import "symbols";
+import "checker";
+
+const O_FRESH = 1152921504606846976;   // 1 << 60
+const O_STATIC = 2305843009213693952;  // 1 << 61
+const O_UNKNOWN = 4611686018427387904; // 1 << 62
+const O_PARAMS = 1152921504606846975;  // bits 0..59
+const O_MAXPARAMS = 60;
+
+const U_NONE = 0;
+const U_READ = 1;
+const U_MUT = 2;
+
+const E_DIE = 1;
+const E_RET = 2;
+const E_ESC = 4;
+
+const LF_EFFECT = 1; // the function calls something (L4 refines to effects)
+
+// Per-function walk state.
+const LS_BASE = 0;   // first slot of the function (its first parameter)
+const LS_NP = 1;     // parameter count
+const LS_USE = 2;    // vector: use level per parameter
+const LS_END = 3;    // vector: end set per parameter
+const LS_OWNED = 4;  // bits of by-value, non-copy parameters
+const LS_REFS = 5;   // bits of `&T` parameters
+const LS_LIVE = 6;   // owned parameter bits still owned on the current path
+const LS_RES = 7;    // result origin
+const LS_FLAGS = 8;
+const LS_RTRACK = 9; // 1 when the result type carries an origin
+const LS_WIDTH = 10;
+
+// Summary table (checker slot CK_LIFE): [records, record offset by name].
+// A record is [fn node, param count, result, flags, (use, end) per param].
+const LR_FN = 0;
+const LR_NP = 1;
+const LR_RES = 2;
+const LR_FLAGS = 3;
+const LR_PARAMS = 4;
+
+fn lsg(s: i64, i: i64) -> i64 { return vget(s, i); }
+fn lsg_set(s: i64, i: i64, x: i64) -> i64 { return vset(s, i, x); }
+
+fn bit_clear(x: i64, m: i64) -> i64 { return x - (x & m); }
+
+// True when values of type `ty` carry an origin: non-copy values and
+// references. Unknown types are tracked, so nothing is lost.
+fn life_tracked(c: i64, ty: i64) -> bool {
+    if ty < 0 || ty == ck(c, CK_TY_UNK) {
+        return true;
+    }
+    if ty_is_ref(c, ty) {
+        return true;
+    }
+    return !ty_is_copy(c, ty);
+}
+
+fn param_bit(k: i64) -> i64 {
+    if k >= O_MAXPARAMS {
+        return O_UNKNOWN;
+    }
+    return 1 << k;
+}
+
+// Raise the use level of every parameter in `o` to at least `level`.
+fn touch(s: i64, o: i64, level: i64) -> i64 {
+    if (o & O_PARAMS) == 0 {
+        return 0;
+    }
+    let uses = lsg(s, LS_USE);
+    let mut k: i64 = 0;
+    while k < lsg(s, LS_NP) && k < O_MAXPARAMS {
+        if ((o >> k) & 1) == 1 && vget(uses, k) < level {
+            vset(uses, k, level);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn end_add(s: i64, o: i64, e: i64) -> i64 {
+    if (o & O_PARAMS) == 0 {
+        return 0;
+    }
+    let ends = lsg(s, LS_END);
+    let mut k: i64 = 0;
+    while k < lsg(s, LS_NP) && k < O_MAXPARAMS {
+        if ((o >> k) & 1) == 1 {
+            vset(ends, k, vget(ends, k) | e);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// `o` leaves the frame for good (stored in caller-owned memory, or moved
+// into a callee that may keep it).
+fn sink_esc(s: i64, o: i64) -> i64 {
+    end_add(s, o, E_ESC);
+    lsg_set(s, LS_LIVE, bit_clear(lsg(s, LS_LIVE), o));
+    return 0;
+}
+
+// The function exits returning `o`: those origins end by `ret`, every
+// other owned parameter still live dies here.
+fn exit_with(s: i64, value: i64) -> i64 {
+    let mut o = value;
+    if lsg(s, LS_RTRACK) == 0 {
+        o = 0;
+    }
+    lsg_set(s, LS_RES, lsg(s, LS_RES) | o);
+    end_add(s, o, E_RET);
+    end_add(s, bit_clear(lsg(s, LS_LIVE), o), E_DIE);
+    return 0;
+}
+
+// ------------------------------------------------------------ path state
+
+fn slot_origin(c: i64, slot: i64) -> i64 { return vf(c, slot, V_ORIGIN); }
+fn slot_origin_set(c: i64, slot: i64, o: i64) -> i64 { return vf_set(c, slot, V_ORIGIN, o); }
+
+// [live bits, origin of each function slot]
+fn life_save(c: i64, s: i64) -> i64 {
+    let base = lsg(s, LS_BASE);
+    let n = var_count(c);
+    let st = vnew_cap(n - base + 1);
+    vpush(st, lsg(s, LS_LIVE));
+    let mut slot = base;
+    while slot < n {
+        vpush(st, slot_origin(c, slot));
+        slot = slot + 1;
+    }
+    return st;
+}
+
+fn life_restore(c: i64, s: i64, st: i64) -> i64 {
+    let base = lsg(s, LS_BASE);
+    lsg_set(s, LS_LIVE, vget(st, 0));
+    let mut i: i64 = 1;
+    while i < vlen(st) {
+        slot_origin_set(c, base + i - 1, vget(st, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn life_join(c: i64, s: i64, st: i64) -> i64 {
+    let base = lsg(s, LS_BASE);
+    lsg_set(s, LS_LIVE, lsg(s, LS_LIVE) | vget(st, 0));
+    let mut i: i64 = 1;
+    while i < vlen(st) {
+        let slot = base + i - 1;
+        slot_origin_set(c, slot, slot_origin(c, slot) | vget(st, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------- the walk
+
+fn var_origin(c: i64, s: i64, name: i64) -> i64 {
+    let slot = lookup(c, name);
+    if slot < 0 {
+        return 0;
+    }
+    if slot < lsg(s, LS_BASE) {
+        // A global: constants and variants live forever.
+        if life_tracked(c, vf(c, slot, V_TYPE)) {
+            return O_STATIC;
+        }
+        return 0;
+    }
+    return slot_origin(c, slot);
+}
+
+// A value in a move position (returned, bound, stored, passed by value).
+// A bare variable there is moved, not used (docs/lifecycles.md §1.1:
+// `read` is a field load or a `&` pass), so it raises no use level.
+fn ev_move(c: i64, s: i64, n: i64) -> i64 {
+    if n >= 0 && nk(c, n) == K_VAR {
+        return var_origin(c, s, na(c, n));
+    }
+    return ev(c, s, n);
+}
+
+// Origin of a value whose type is `ty`, given the origin of what holds it.
+fn through(c: i64, n: i64, o: i64) -> i64 {
+    if life_tracked(c, infer_type(c, n)) {
+        return o;
+    }
+    return 0;
+}
+
+// Origin of the walked block's last value. Block-local slots are dropped.
+fn walk_block(c: i64, s: i64, body: i64) -> i64 {
+    let count = var_count(c);
+    let mut v: i64 = 0;
+    let mut i: i64 = 0;
+    while i < list_len(c, body) {
+        let n = list_at(c, body, i);
+        v = ev_move(c, s, n);
+        if nk(c, n) == K_RETURN {
+            i = list_len(c, body);
+        }
+        i = i + 1;
+    }
+    truncate_vars(c, count);
+    return v;
+}
+
+// Bind a pattern's names as `bind_pattern` does, all sharing origin `o`.
+fn bind_origin(c: i64, p: i64, ty: i64, mutable: i64, o: i64) -> i64 {
+    let first = var_count(c);
+    bind_pattern(c, p, ty, mutable);
+    let mut slot = first;
+    while slot < var_count(c) {
+        if life_tracked(c, vf(c, slot, V_TYPE)) {
+            slot_origin_set(c, slot, o);
+        }
+        slot = slot + 1;
+    }
+    return 0;
+}
+
+fn ev_list(c: i64, s: i64, l: i64, from: i64, step: i64) -> i64 {
+    let mut o: i64 = 0;
+    let mut i = from;
+    while i < list_len(c, l) {
+        o = o | ev_move(c, s, list_at(c, l, i));
+        i = i + step;
+    }
+    return o;
+}
+
+fn ev_call(c: i64, s: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    let args = nb(c, n);
+    let mut f = ni(c, name, NI_FN);
+    if f < 0 {
+        f = ni(c, last_segment(c, name), NI_FN);
+    }
+    let mut params: i64 = -1;
+    if f >= 0 && nk(c, f) == K_FN {
+        params = nc(c, f);
+    }
+    lsg_set(s, LS_FLAGS, lsg(s, LS_FLAGS) | LF_EFFECT);
+    let mut res: i64 = 0;
+    let mut i: i64 = 0;
+    while i < list_len(c, args) {
+        let a = list_at(c, args, i);
+        let mut pty: i64 = -1;
+        if params >= 0 && i * 2 + 1 < list_len(c, params) {
+            pty = list_at(c, params, i * 2 + 1);
+        } else {
+            pty = infer_type(c, a);
+        }
+        let mut o: i64 = 0;
+        if ty_is_ref(c, pty) {
+            o = ev(c, s, a);
+        } else {
+            o = ev_move(c, s, a);
+        }
+        if ty_is_ref(c, pty) {
+            touch(s, o, U_MUT);
+            res = res | o;
+        } else if life_tracked(c, pty) {
+            // A moved owned value is the callee's now, but a borrowed one
+            // stays the lender's: the callee may read through it.
+            touch(s, o & lsg(s, LS_REFS), U_READ);
+            sink_esc(s, o);
+            res = res | o;
+        }
+        i = i + 1;
+    }
+    if !life_tracked(c, call_type(c, name, args)) {
+        return 0;
+    }
+    return res | O_UNKNOWN;
+}
+
+// Variable at the base of a place (`a.b.0[i]`, `*r`), or -1.
+fn place_var(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_VAR {
+        return na(c, n);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_INDEX {
+        return place_var(c, na(c, n));
+    }
+    if k == K_UN && na(c, n) == OP_DEREF {
+        return place_var(c, nb(c, n));
+    }
+    return -1;
+}
+
+// Index expressions inside a place are plain reads.
+fn ev_place_indices(c: i64, s: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_INDEX {
+        ev(c, s, nb(c, n));
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_INDEX {
+        return ev_place_indices(c, s, na(c, n));
+    }
+    if k == K_UN {
+        return ev_place_indices(c, s, nb(c, n));
+    }
+    return 0;
+}
+
+fn ev_assign(c: i64, s: i64, n: i64) -> i64 {
+    let target = na(c, n);
+    let o = ev_move(c, s, nb(c, n));
+    let name = place_var(c, target);
+    if name < 0 {
+        sink_esc(s, o);
+        return 0;
+    }
+    let slot = lookup(c, name);
+    if slot < lsg(s, LS_BASE) {
+        sink_esc(s, o);
+        return 0;
+    }
+    let ro = slot_origin(c, slot);
+    if nk(c, target) == K_VAR && vf(c, slot, V_LENS) == 0 {
+        // Rebinding: the old value dies (it stays in LIVE until the exit).
+        if life_tracked(c, vf(c, slot, V_TYPE)) {
+            slot_origin_set(c, slot, o);
+        }
+        return 0;
+    }
+    // A store through the place (or a whole write through a lens).
+    ev_place_indices(c, s, target);
+    touch(s, ro, U_MUT);
+    if (ro & (lsg(s, LS_REFS) | O_STATIC | O_UNKNOWN)) != 0 {
+        sink_esc(s, o);
+    } else {
+        slot_origin_set(c, slot, ro | o);
+    }
+    return 0;
+}
+
+fn ev_if(c: i64, s: i64, n: i64) -> i64 {
+    ev(c, s, na(c, n));
+    let pre = life_save(c, s);
+    let vt = walk_block(c, s, nb(c, n));
+    let then_div = body_diverges(c, nb(c, n));
+    let post_then = life_save(c, s);
+    life_restore(c, s, pre);
+    let ve = walk_block(c, s, nc(c, n));
+    let else_div = body_diverges(c, nc(c, n));
+    if else_div && !then_div {
+        life_restore(c, s, post_then);
+        return vt;
+    }
+    if then_div && !else_div {
+        return ve;
+    }
+    life_join(c, s, post_then);
+    return vt | ve;
+}
+
+fn ev_match(c: i64, s: i64, n: i64) -> i64 {
+    let target = na(c, n);
+    let ot = ev(c, s, target);
+    let mut tt = infer_type(c, target);
+    if tt < 0 {
+        tt = ck(c, CK_TY_UNK);
+    }
+    let arms = nb(c, n);
+    let pre = life_save(c, s);
+    let mut joined: i64 = -1;
+    let mut v: i64 = 0;
+    let mut i: i64 = 0;
+    while i < list_len(c, arms) {
+        life_restore(c, s, pre);
+        let count = var_count(c);
+        bind_origin(c, list_at(c, arms, i), tt, 0, ot);
+        let guard = list_at(c, arms, i + 1);
+        if guard >= 0 {
+            ev(c, s, guard);
+        }
+        let body = list_at(c, arms, i + 2);
+        let vb = ev(c, s, body);
+        truncate_vars(c, count);
+        if !node_diverges(c, body) {
+            v = v | vb;
+            if joined < 0 {
+                joined = life_save(c, s);
+            } else {
+                life_join(c, s, joined);
+                joined = life_save(c, s);
+            }
+        }
+        i = i + 3;
+    }
+    if joined >= 0 {
+        life_restore(c, s, joined);
+    } else {
+        life_restore(c, s, pre);
+    }
+    return v;
+}
+
+// True when the current path state equals the saved `st`.
+fn life_same(c: i64, s: i64, st: i64) -> bool {
+    if lsg(s, LS_LIVE) != vget(st, 0) {
+        return false;
+    }
+    let base = lsg(s, LS_BASE);
+    let mut i: i64 = 1;
+    while i < vlen(st) {
+        if slot_origin(c, base + i - 1) != vget(st, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Loops: each pass walks the body from the join of the state before the
+// loop (zero iterations) and every earlier pass, until a pass changes
+// nothing. A value can need one pass per hop to reach a slot (an n-way
+// rotation needs n - 1), so no fixed pass count is enough. Joins only add
+// bits, so the passes are bounded by slots x bits; once the state repeats,
+// another pass would record the same use and end facts again.
+fn ev_while(c: i64, s: i64, n: i64) -> i64 {
+    let mut done = false;
+    while !done {
+        let pre = life_save(c, s);
+        ev(c, s, na(c, n));
+        walk_block(c, s, nb(c, n));
+        life_join(c, s, pre);
+        done = life_same(c, s, pre);
+    }
+    return 0;
+}
+
+fn ev_for(c: i64, s: i64, n: i64) -> i64 {
+    let iter = nb(c, n);
+    let oi = ev(c, s, iter);
+    let elem = for_elem_type(c, infer_type(c, iter));
+    let mut done = false;
+    while !done {
+        let pre = life_save(c, s);
+        let count = var_count(c);
+        let slot = declare(c, na(c, n), elem, 0);
+        if life_tracked(c, elem) {
+            slot_origin_set(c, slot, oi);
+        }
+        walk_block(c, s, nc(c, n));
+        truncate_vars(c, count);
+        life_join(c, s, pre);
+        done = life_same(c, s, pre);
+    }
+    return 0;
+}
+
+fn ev_lens(c: i64, s: i64, n: i64) -> i64 {
+    let target = lookup(c, na(c, n));
+    let mut o: i64 = 0;
+    let mut ty: i64 = -1;
+    if target >= 0 {
+        o = var_origin(c, s, na(c, n));
+        ty = vf(c, target, V_TYPE);
+    }
+    let count = var_count(c);
+    let lens = declare(c, nb(c, n), ty, 0);
+    vf_set(c, lens, V_LENS, 1);
+    slot_origin_set(c, lens, o);
+    let v = walk_block(c, s, nc(c, n));
+    let grown = slot_origin(c, lens);
+    truncate_vars(c, count);
+    if target >= lsg(s, LS_BASE) {
+        slot_origin_set(c, target, slot_origin(c, target) | grown);
+    }
+    return v;
+}
+
+fn ev(c: i64, s: i64, n: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL {
+        return 0;
+    }
+    if k == K_STR {
+        return O_STATIC;
+    }
+    if k == K_VAR {
+        let o = var_origin(c, s, na(c, n));
+        touch(s, o, U_READ);
+        return o;
+    }
+    if k == K_BIN {
+        ev(c, s, nb(c, n));
+        ev(c, s, nc(c, n));
+        if is_comparison_op(na(c, n)) || na(c, n) == OP_AND || na(c, n) == OP_OR {
+            return 0;
+        }
+        if life_tracked(c, infer_type(c, n)) {
+            return O_UNKNOWN;
+        }
+        return 0;
+    }
+    if k == K_UN {
+        let o = ev(c, s, nb(c, n));
+        if na(c, n) == OP_DEREF {
+            return through(c, n, o);
+        }
+        return 0;
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return O_FRESH | ev_list(c, s, na(c, n), 0, 1);
+    }
+    if k == K_SINIT {
+        return O_FRESH | ev_list(c, s, nb(c, n), 1, 2);
+    }
+    if k == K_FIELD || k == K_TINDEX {
+        return through(c, n, ev(c, s, na(c, n)));
+    }
+    if k == K_INDEX {
+        let o = ev(c, s, na(c, n));
+        ev(c, s, nb(c, n));
+        return through(c, n, o);
+    }
+    if k == K_SLICE {
+        ev(c, s, na(c, n));
+        ev(c, s, nb(c, n));
+        ev(c, s, nc(c, n));
+        return O_FRESH;
+    }
+    if k == K_RANGE {
+        ev(c, s, na(c, n));
+        ev(c, s, nb(c, n));
+        return 0;
+    }
+    if k == K_ADDR {
+        return ev(c, s, na(c, n));
+    }
+    if k == K_CALL {
+        return ev_call(c, s, n);
+    }
+    if k == K_MACROCALL {
+        lsg_set(s, LS_FLAGS, lsg(s, LS_FLAGS) | LF_EFFECT);
+        let args = nb(c, n);
+        let mut o: i64 = 0;
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            o = o | ev(c, s, list_at(c, args, i));
+            i = i + 1;
+        }
+        sink_esc(s, o);
+        if nc(c, n) >= 0 {
+            walk_block(c, s, nc(c, n));
+        }
+        if life_tracked(c, infer_type(c, n)) {
+            return o | O_UNKNOWN;
+        }
+        return 0;
+    }
+    if k == K_LENS {
+        return ev_lens(c, s, n);
+    }
+    if k == K_IF {
+        return ev_if(c, s, n);
+    }
+    if k == K_MATCH {
+        return ev_match(c, s, n);
+    }
+    if k == K_WHILE {
+        return ev_while(c, s, n);
+    }
+    if k == K_FOR {
+        return ev_for(c, s, n);
+    }
+    if k == K_RETURN {
+        let o = ev_move(c, s, na(c, n));
+        exit_with(s, o);
+        return 0;
+    }
+    if k == K_ASSIGN {
+        return ev_assign(c, s, n);
+    }
+    if k == K_LET {
+        let o = ev_move(c, s, nd(c, n));
+        let mut ty = nc(c, n);
+        if ty < 0 {
+            ty = infer_type(c, nd(c, n));
+        }
+        let slot = declare(c, na(c, n), ty, nb(c, n));
+        if life_tracked(c, ty) {
+            slot_origin_set(c, slot, o);
+        }
+        return 0;
+    }
+    if k == K_LETD {
+        let o = ev_move(c, s, nc(c, n));
+        let mut ty = infer_type(c, nc(c, n));
+        if ty < 0 {
+            ty = ck(c, CK_TY_UNK);
+        }
+        bind_origin(c, na(c, n), ty, nb(c, n), o);
+        return 0;
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------ functions
+
+fn fn_returns_value(c: i64, f: i64) -> bool {
+    let ret = nd(c, f);
+    return ret >= 0 && !is_prim(c, ret, PRIM_VOID);
+}
+
+// Analyze one function and append its record to the summary table.
+fn life_function(c: i64, f: i64) -> i64 {
+    let params = nc(c, f);
+    let np = list_len(c, params) / 2;
+    let s = vfill(vnew_cap(LS_WIDTH), LS_WIDTH, 0);
+    let base = var_count(c);
+    lsg_set(s, LS_BASE, base);
+    lsg_set(s, LS_NP, np);
+    lsg_set(s, LS_USE, vfill(vnew_cap(np + 1), np, U_NONE));
+    lsg_set(s, LS_END, vfill(vnew_cap(np + 1), np, 0));
+    let mut owned: i64 = 0;
+    let mut refs: i64 = 0;
+    let mut k: i64 = 0;
+    while k < np {
+        let ty = list_at(c, params, k * 2 + 1);
+        let slot = declare(c, list_at(c, params, k * 2), ty, 0);
+        if ty_is_ref(c, ty) {
+            refs = refs | param_bit(k);
+            slot_origin_set(c, slot, param_bit(k));
+        } else if life_tracked(c, ty) {
+            owned = owned | param_bit(k);
+            slot_origin_set(c, slot, param_bit(k));
+        }
+        k = k + 1;
+    }
+    owned = owned & O_PARAMS;
+    refs = refs & O_PARAMS;
+    lsg_set(s, LS_OWNED, owned);
+    lsg_set(s, LS_REFS, refs);
+    lsg_set(s, LS_LIVE, owned);
+    if fn_returns_value(c, f) && life_tracked(c, nd(c, f)) {
+        lsg_set(s, LS_RTRACK, 1);
+    }
+    let body = ne(c, f);
+    let v = walk_block(c, s, body);
+    if !body_diverges(c, body) {
+        exit_with(s, v);
+    }
+    truncate_vars(c, base);
+    let table = ck(c, CK_LIFE);
+    let recs = vget(table, 0);
+    let at = vlen(recs);
+    vpush(recs, f);
+    vpush(recs, np);
+    vpush(recs, lsg(s, LS_RES));
+    vpush(recs, lsg(s, LS_FLAGS));
+    let uses = lsg(s, LS_USE);
+    let ends = lsg(s, LS_END);
+    let mut j: i64 = 0;
+    while j < np {
+        vpush(recs, vget(uses, j));
+        let mut e = vget(ends, j);
+        if (e & E_ESC) != 0 {
+            e = E_ESC; // esc absorbs
+        }
+        vpush(recs, e);
+        j = j + 1;
+    }
+    let byname = vget(table, 1);
+    let name = na(c, f);
+    while vlen(byname) <= name {
+        vpush(byname, -1);
+    }
+    vset(byname, name, at);
+    return 0;
+}
+
+// Summaries for every function of the checked program, in load order.
+fn life_program(c: i64) -> i64 {
+    let table = vnew_cap(2);
+    vpush(table, vnew_cap(4096));
+    vpush(table, vfill(vnew_cap(name_count(c) + 1), name_count(c), -1));
+    ck_set(c, CK_LIFE, table);
+    let items = cx(c, CX_ITEMS);
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        if nk(c, n) == K_FN {
+            life_function(c, n);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Record offset of the summary of function `name`, or -1.
+fn life_summary(c: i64, name: i64) -> i64 {
+    let byname = vget(ck(c, CK_LIFE), 1);
+    if name < 0 || name >= vlen(byname) {
+        return -1;
+    }
+    return vget(byname, name);
+}
+
+fn life_records(c: i64) -> i64 { return vget(ck(c, CK_LIFE), 0); }
+
+// ----------------------------------------------------------------- dump
+
+fn use_text(u: i64) -> i64 {
+    if u == U_MUT { return "mutate"; }
+    if u == U_READ { return "read"; }
+    return "none";
+}
+
+fn end_text(e: i64) -> i64 {
+    if e == 0 {
+        return "-";
+    }
+    let b = sb_new();
+    let mut sep = false;
+    if (e & E_DIE) != 0 {
+        sb_add(b, "die");
+        sep = true;
+    }
+    if (e & E_RET) != 0 {
+        if sep { sb_add(b, ","); }
+        sb_add(b, "ret");
+        sep = true;
+    }
+    if (e & E_ESC) != 0 {
+        if sep { sb_add(b, ","); }
+        sb_add(b, "esc");
+    }
+    return sb_text(b);
+}
+
+fn origin_text(c: i64, f: i64, o: i64) -> i64 {
+    if o == 0 {
+        return "none";
+    }
+    let params = nc(c, f);
+    let b = sb_new();
+    let mut sep = false;
+    let mut k: i64 = 0;
+    while k < list_len(c, params) / 2 && k < O_MAXPARAMS {
+        if ((o >> k) & 1) == 1 {
+            if sep { sb_add(b, " "); }
+            sb_add(b, "derived(");
+            sb_add(b, name_text(c, list_at(c, params, k * 2)));
+            sb_add(b, ")");
+            sep = true;
+        }
+        k = k + 1;
+    }
+    if (o & O_FRESH) != 0 {
+        if sep { sb_add(b, " "); }
+        sb_add(b, "fresh");
+        sep = true;
+    }
+    if (o & O_STATIC) != 0 {
+        if sep { sb_add(b, " "); }
+        sb_add(b, "static");
+        sep = true;
+    }
+    if (o & O_UNKNOWN) != 0 {
+        if sep { sb_add(b, " "); }
+        sb_add(b, "unknown");
+    }
+    return sb_text(b);
+}
+
+// One block per function, in load order:
+//   fn <name>
+//     param <name> owned|ref|copy [use=<use> end=<ends>]
+//     result void|copy|<origin set>
+//     effects none|calls
+fn life_dump(c: i64) -> i64 {
+    let recs = life_records(c);
+    let b = sb_new();
+    let mut at: i64 = 0;
+    while at < vlen(recs) {
+        let f = vget(recs, at + LR_FN);
+        let np = vget(recs, at + LR_NP);
+        let params = nc(c, f);
+        sb_add(b, "fn ");
+        sb_add(b, name_text(c, na(c, f)));
+        sb_byte(b, 10);
+        let mut k: i64 = 0;
+        while k < np {
+            let ty = list_at(c, params, k * 2 + 1);
+            sb_add(b, "  param ");
+            sb_add(b, name_text(c, list_at(c, params, k * 2)));
+            if ty_is_ref(c, ty) {
+                sb_add(b, " ref");
+            } else if life_tracked(c, ty) {
+                sb_add(b, " owned");
+            } else {
+                sb_add(b, " copy");
+            }
+            if life_tracked(c, ty) {
+                sb_add(b, " use=");
+                sb_add(b, use_text(vget(recs, at + LR_PARAMS + k * 2)));
+                sb_add(b, " end=");
+                sb_add(b, end_text(vget(recs, at + LR_PARAMS + k * 2 + 1)));
+            }
+            sb_byte(b, 10);
+            k = k + 1;
+        }
+        sb_add(b, "  result ");
+        if !fn_returns_value(c, f) {
+            sb_add(b, "void");
+        } else if !life_tracked(c, nd(c, f)) {
+            sb_add(b, "copy");
+        } else {
+            sb_add(b, origin_text(c, f, vget(recs, at + LR_RES)));
+        }
+        sb_byte(b, 10);
+        if (vget(recs, at + LR_FLAGS) & LF_EFFECT) != 0 {
+            sb_add(b, "  effects calls\n");
+        } else {
+            sb_add(b, "  effects none\n");
+        }
+        at = at + LR_PARAMS + np * 2;
+    }
+    return sb_text(b);
+}

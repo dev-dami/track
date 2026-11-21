@@ -1,0 +1,18 @@
+fn nested_while
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn nested_for
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn nested_split
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn main
+  result void
+  effects calls

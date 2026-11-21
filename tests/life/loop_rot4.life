@@ -1,0 +1,13 @@
+fn rot4_while
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn rot4_for
+  param p owned use=none end=ret
+  param n copy
+  result derived(p) fresh
+  effects none
+fn main
+  result void
+  effects calls

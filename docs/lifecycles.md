@@ -28,6 +28,9 @@ born ──> used* ──> ended
   (a string literal or a global).
 - **used**: `read` (fields loaded, passed as `&`) or `mutate` (field
   store, lens body writes, a runtime mutator such as `vec_push`).
+  Moving the value whole (binding, returning, storing it, passing it by
+  value) is not a use. A borrowed value passed by value to a callee
+  counts as `read`, since the callee may read through it.
 - **ended**, exactly once on every path, by one of:
   - `die`: the last owner's scope exits. The frame ends the value.
   - `ret`: it flows into the function's result.
@@ -101,9 +104,16 @@ At a call `f(a0, a1, ...)`:
      argument applies the callee's end set;
    - if/match: origin sets join at the merge. K2 already drops diverging
      branches from the merge, so `return` inside an arm contributes `ret`
-     and nothing else. Loops run the body twice. The second pass reaches
-     the fixpoint because the domain only grows and loops may not consume
-     outer resources (SPEC §5).
+     and nothing else. Loops re-walk the body, each pass starting from
+     the join of the pre-loop state and every earlier pass, until a pass
+     leaves every slot's origin set (and the live set) unchanged. A fixed
+     pass count is not enough: a value moves one slot per iteration, so
+     an n-way rotation (`t = a; a = b; ...; d = t`) needs n - 1 passes
+     before the origin reaches its last slot, plus one to see nothing
+     change. Joins only add bits, so the passes are bounded by slots x
+     bits; use and end facts come from the origins, so once the state
+     repeats they are complete too. Nested loops run the inner fixpoint
+     inside every outer pass.
 4. **Fixpoint within an SCC**: start every member at bottom and re-run
    the members until no summary changes. The height bound above limits
    the iterations. In practice there are 2 passes, 3 for mutual
