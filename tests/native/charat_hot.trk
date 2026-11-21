@@ -1,0 +1,94 @@
+// str_char_at in hot loops: the inline SSE2 scan keeps register homes
+// intact, and store-free loops hoist the string's length so each call is a
+// bounds test and a load. Covers many live locals, negative and past-end
+// indices, empty strings, constant indices, strings reassigned or rebound
+// inside the loop, and loops that run zero times.
+fn is_alpha(c: i64) -> bool {
+    return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95;
+}
+
+fn scan(s: &str, lim: i64) -> i64 {
+    let mut a: i64 = 1;
+    let mut b: i64 = 2;
+    let mut d: i64 = 3;
+    let mut e: i64 = 4;
+    let mut f: i64 = 5;
+    let mut g: i64 = 6;
+    let mut h: i64 = 7;
+    let mut k: i64 = 8;
+    let mut i: i64 = 0 - 3;
+    while i < lim {
+        let ch = str_char_at(s, i);
+        a = a + ch;
+        b = b | (ch * 3);
+        d = d + str_char_at(s, i + 1) * 5;
+        e = e + str_char_at(s, 2);
+        f = f + str_char_at(s, 0 - 1) + str_char_at(s, 40);
+        if is_alpha(ch) {
+            g = g + 1;
+        } else {
+            h = h + str_char_at(s, i - 1);
+        }
+        k = (k * 31 + a + b + d) % 1000003;
+        i = i + 1;
+    }
+    return a + b * 3 + d * 5 + e * 7 + f * 11 + g * 13 + h * 17 + k * 19;
+}
+
+fn rebind(x: i64) -> i64 {
+    let s = "outer string";
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 5 {
+        let s = "in";
+        t = t + str_char_at(s, i) + x;
+        i = i + 1;
+    }
+    return t + str_char_at(s, 3);
+}
+
+fn reassign() -> i64 {
+    let mut s: &str = "abc";
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 6 {
+        t = t * 7 + str_char_at(s, i);
+        if i == 2 {
+            s = "longer string here";
+        }
+        i = i + 1;
+    }
+    return t;
+}
+
+fn main() -> void {
+    print(scan("hello_World 123 + x*y;", 30));
+    print(scan("", 4));
+    print(scan("a", 3));
+    print(scan("0123456789abcdef0123456789abcdef!", 40));
+    print(scan("never", 0 - 10));
+    print(rebind(2));
+    print(reassign());
+    let b: i64 = track_sb_new();
+    let mut line: i64 = 0;
+    let mut total: i64 = 0;
+    while line < 2000 {
+        track_sb_clear(b);
+        track_sb_push(b, "id_");
+        track_sb_push_int(b, line * 7919);
+        track_sb_push(b, " += q;");
+        let src: i64 = track_sb_str(b);
+        let n: i64 = str_len(src);
+        let mut p: i64 = 0;
+        while p < n {
+            if is_alpha(str_char_at(src, p)) {
+                total = total + p;
+            } else {
+                total = total + str_char_at(src, p) % 7;
+            }
+            p = p + 1;
+        }
+        line = line + 1;
+    }
+    print(total);
+}

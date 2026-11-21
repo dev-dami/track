@@ -1,0 +1,77 @@
+// Accumulator recursion (`return f(a) + x`) becomes a loop inlined into
+// itself; its guard is tested at the bottom of each loop and the guarded
+// return sits out of line. Covers several acc returns, two parameters,
+// compound guards, guard-only calls, and arguments computed straight into
+// argument registers for guarded self-calls.
+fn fib(n: i64) -> i64 {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+// two accumulator returns on different paths
+fn split(n: i64) -> i64 {
+    if n < 3 {
+        return n * 7;
+    }
+    if n % 3 == 0 {
+        return split(n - 1) + split(n - 3);
+    }
+    return split(n - 2) + n;
+}
+
+// two parameters, compound guard, return value uses both
+fn walk(n: i64, k: i64) -> i64 {
+    if n <= 0 || k <= 0 {
+        return n * 100 + k;
+    }
+    return walk(n - 1, k) + walk(n - 2, k - 1);
+}
+
+// guard value is an expression of the parameter
+fn tri(n: i64) -> i64 {
+    if n < 1 {
+        return 0 - n + 5;
+    }
+    return tri(n - 1) + tri(n - 3) * 2;
+}
+
+// argument expressions with multiply and mask
+fn mixed(n: i64, m: i64) -> i64 {
+    if n < 2 {
+        return m & 1023;
+    }
+    return mixed(n - 1, m * 3 + 1) + mixed(n - 2, (m | 5) - n);
+}
+
+// guard return immediately (loop body never entered)
+fn shallow(n: i64) -> i64 {
+    if n < 100 {
+        return n + 1;
+    }
+    return shallow(n - 1) + shallow(n - 2);
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    while i < 25 {
+        print(fib(i));
+        i = i + 1;
+    }
+    print(fib(30));
+    let mut j: i64 = 0;
+    while j < 20 {
+        print(split(j));
+        print(walk(j, j / 2));
+        print(tri(j));
+        print(mixed(j, j * 37));
+        j = j + 1;
+    }
+    print(walk(22, 11));
+    print(tri(24));
+    print(mixed(22, 99));
+    print(shallow(5));
+    print(shallow(0 - 3));
+    print(shallow(102));
+}
