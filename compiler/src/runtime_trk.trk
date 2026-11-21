@@ -3,7 +3,7 @@
 
 import "base";
 
-fn rt_module_count() -> i64 { return 5; }
+fn rt_module_count() -> i64 { return 6; }
 
 fn rt_module_name(i: i64) -> i64 {
     if i == 0 { return "rt/mem.trk"; }
@@ -11,6 +11,7 @@ fn rt_module_name(i: i64) -> i64 {
     if i == 2 { return "rt/str.trk"; }
     if i == 3 { return "rt/vec.trk"; }
     if i == 4 { return "rt/sys.trk"; }
+    if i == 5 { return "rt/libc.trk"; }
     return "";
 }
 
@@ -1763,6 +1764,39 @@ fn rt_module_source_4(b: i64) -> i64 {
     return 0;
 }
 
+fn rt_module_source_5(b: i64) -> i64 {
+    sb_line(b, "// libc.trk — the few libc entry points trackc's ELF writer (elf.trk)");
+    sb_line(b, "// calls by their libc names, so the Rust bootstrap compiler can link them");
+    sb_line(b, "// from libc. With the Track runtime (--rt=track, --native) these");
+    sb_line(b, "// definitions stand in for libc.");
+    sb_line(b, "");
+    sb_line(b, "fn open64(path: i64, flags: i64, mode: i64) -> i64 {");
+    sb_line(b, "    return syscall6(2, path, flags, mode, 0, 0, 0);");
+    sb_line(b, "}");
+    sb_line(b, "");
+    sb_line(b, "fn write(fd: i64, buf: i64, n: i64) -> i64 {");
+    sb_line(b, "    return syscall6(1, fd, buf, n, 0, 0, 0);");
+    sb_line(b, "}");
+    sb_line(b, "");
+    sb_line(b, "fn fchmod(fd: i64, mode: i64) -> i64 {");
+    sb_line(b, "    return syscall6(91, fd, mode, 0, 0, 0, 0);");
+    sb_line(b, "}");
+    sb_line(b, "");
+    sb_line(b, "fn close(fd: i64) -> i64 {");
+    sb_line(b, "    return syscall6(3, fd, 0, 0, 0, 0, 0);");
+    sb_line(b, "}");
+    sb_line(b, "");
+    sb_line(b, "fn memset(p: i64, v: i64, n: i64) -> i64 {");
+    sb_line(b, "    let mut i: i64 = 0;");
+    sb_line(b, "    while i < n {");
+    sb_line(b, "        store8(p + i, v);");
+    sb_line(b, "        i = i + 1;");
+    sb_line(b, "    }");
+    sb_line(b, "    return 0;");
+    sb_line(b, "}");
+    return 0;
+}
+
 fn rt_module_source(i: i64) -> i64 {
     let b = sb_new();
     if i == 0 { rt_module_source_0(b); }
@@ -1770,5 +1804,6 @@ fn rt_module_source(i: i64) -> i64 {
     if i == 2 { rt_module_source_2(b); }
     if i == 3 { rt_module_source_3(b); }
     if i == 4 { rt_module_source_4(b); }
+    if i == 5 { rt_module_source_5(b); }
     return sb_text(b);
 }

@@ -1,0 +1,10 @@
+struct H { t: (i64, i64) }
+fn mk(n: i64) -> H { return H { t: (n, n + 1) }; }
+fn clob(n: i64) -> i64 { let z = (n, n, n, n); let y = (n, n, n, n); if n > 0 { return clob(n - 1) + z.0 + y.3; } return 0; }
+fn main() -> void {
+    let h = mk(7);
+    print(clob(5));
+    print(str_concat("x", "y"));
+    let t = h.t;
+    print(t.1);
+}

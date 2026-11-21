@@ -1,0 +1,17 @@
+fn strlen(s: i64) -> i64 {
+    let mut n: i64 = 0;
+    while load8(s + n) != 0 {
+        n = n + 1;
+    }
+    return n;
+}
+
+fn say(s: i64) -> i64 {
+    return syscall6(1, 1, s, strlen(s), 0, 0, 0);
+}
+
+fn main() -> i64 {
+    let msg: i64 = "Hello, native world!\n";
+    say(msg);
+    return 42;
+}

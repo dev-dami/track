@@ -1,0 +1,246 @@
+// x64.trk — x86-64 instruction encoder for the native backend.
+//
+// The code buffer is a word vector holding one byte per element. Only the
+// handful of instructions the backend needs are encoded: rax/rcx scratch
+// arithmetic, rbp-relative frame slots, rel32 jumps and calls patched in
+// place, and the Linux `syscall` register shuffle.
+
+import "base";
+
+fn x_byte(b: i64, v: i64) -> i64 { return vpush(b, v & 255); }
+
+fn x_bytes2(b: i64, p: i64, q: i64) -> i64 {
+    x_byte(b, p);
+    return x_byte(b, q);
+}
+
+fn x_bytes3(b: i64, p: i64, q: i64, r: i64) -> i64 {
+    x_byte(b, p);
+    x_byte(b, q);
+    return x_byte(b, r);
+}
+
+fn x_u32(b: i64, v: i64) -> i64 {
+    x_byte(b, v);
+    x_byte(b, v >> 8);
+    x_byte(b, v >> 16);
+    return x_byte(b, v >> 24);
+}
+
+fn x_u64(b: i64, v: i64) -> i64 {
+    x_u32(b, v);
+    return x_u32(b, v >> 32);
+}
+
+fn x_here(b: i64) -> i64 { return vlen(b); }
+
+fn x_patch32(b: i64, pos: i64, v: i64) -> i64 {
+    vset(b, pos, v & 255);
+    vset(b, pos + 1, (v >> 8) & 255);
+    vset(b, pos + 2, (v >> 16) & 255);
+    return vset(b, pos + 3, (v >> 24) & 255);
+}
+
+// Point the rel32 field at `pos` to `target` (both code offsets).
+fn x_patch_rel(b: i64, pos: i64, target: i64) -> i64 {
+    return x_patch32(b, pos, target - (pos + 4));
+}
+
+fn x_patch_here(b: i64, pos: i64) -> i64 { return x_patch_rel(b, pos, vlen(b)); }
+
+fn x_fits32(v: i64) -> bool {
+    return v >= -2147483648 && v <= 2147483647;
+}
+
+// mov rax, imm
+fn x_mov_rax_imm(b: i64, v: i64) -> i64 {
+    if v == 0 {
+        return x_bytes2(b, 49, 192); // xor eax, eax
+    }
+    if x_fits32(v) {
+        x_bytes3(b, 72, 199, 192); // mov rax, imm32 (sign-extended)
+        return x_u32(b, v);
+    }
+    x_bytes2(b, 72, 184); // movabs rax, imm64
+    return x_u64(b, v);
+}
+
+// mov rax, [rbp + d]
+fn x_load_local(b: i64, d: i64) -> i64 {
+    x_bytes3(b, 72, 139, 133);
+    return x_u32(b, d);
+}
+
+// mov [rbp + d], rax
+fn x_store_local(b: i64, d: i64) -> i64 {
+    x_bytes3(b, 72, 137, 133);
+    return x_u32(b, d);
+}
+
+// lea rax, [rbp + d]
+fn x_lea_local(b: i64, d: i64) -> i64 {
+    x_bytes3(b, 72, 141, 133);
+    return x_u32(b, d);
+}
+
+// lea rax, [rip + rel32]; returns the position of the rel32 field.
+fn x_lea_rip(b: i64) -> i64 {
+    x_bytes3(b, 72, 141, 5);
+    let pos = vlen(b);
+    x_u32(b, 0);
+    return pos;
+}
+
+// mov rax, [rax + d]
+fn x_load_at(b: i64, d: i64) -> i64 {
+    x_bytes3(b, 72, 139, 128);
+    return x_u32(b, d);
+}
+
+// mov [rcx + d], rax
+fn x_store_at_rcx(b: i64, d: i64) -> i64 {
+    x_bytes3(b, 72, 137, 129);
+    return x_u32(b, d);
+}
+
+fn x_push_rax(b: i64) -> i64 { return x_byte(b, 80); }
+fn x_pop_rax(b: i64) -> i64 { return x_byte(b, 88); }
+fn x_pop_rcx(b: i64) -> i64 { return x_byte(b, 89); }
+fn x_push_zero(b: i64) -> i64 { return x_bytes2(b, 106, 0); }
+fn x_mov_rcx_rax(b: i64) -> i64 { return x_bytes3(b, 72, 137, 193); }
+fn x_ret(b: i64) -> i64 { return x_byte(b, 195); }
+fn x_leave_ret(b: i64) -> i64 { return x_bytes2(b, 201, 195); }
+
+// push rbp; mov rbp, rsp; sub rsp, imm32 — returns the imm32 position.
+fn x_prologue(b: i64) -> i64 {
+    x_byte(b, 85);
+    x_bytes3(b, 72, 137, 229);
+    x_bytes3(b, 72, 129, 236);
+    let pos = vlen(b);
+    x_u32(b, 0);
+    return pos;
+}
+
+// add rsp, imm32
+fn x_add_rsp(b: i64, n: i64) -> i64 {
+    if n == 0 {
+        return 0;
+    }
+    x_bytes3(b, 72, 129, 196);
+    return x_u32(b, n);
+}
+
+// call rel32 / jmp rel32 / jz rel32 / jnz rel32: return the rel32 position.
+fn x_call(b: i64) -> i64 {
+    x_byte(b, 232);
+    let pos = vlen(b);
+    x_u32(b, 0);
+    return pos;
+}
+
+fn x_jmp(b: i64) -> i64 {
+    x_byte(b, 233);
+    let pos = vlen(b);
+    x_u32(b, 0);
+    return pos;
+}
+
+fn x_jz(b: i64) -> i64 {
+    x_bytes2(b, 15, 132);
+    let pos = vlen(b);
+    x_u32(b, 0);
+    return pos;
+}
+
+fn x_jnz(b: i64) -> i64 {
+    x_bytes2(b, 15, 133);
+    let pos = vlen(b);
+    x_u32(b, 0);
+    return pos;
+}
+
+fn x_test_rax(b: i64) -> i64 { return x_bytes3(b, 72, 133, 192); }
+
+// rax = (rax != 0)
+fn x_bool_rax(b: i64) -> i64 {
+    x_test_rax(b);
+    x_bytes3(b, 15, 149, 192); // setne al
+    x_bytes3(b, 72, 15, 182);  // movzx rax, al
+    return x_byte(b, 192);
+}
+
+// rax = (rax == 0)
+fn x_not_rax(b: i64) -> i64 {
+    x_test_rax(b);
+    x_bytes3(b, 15, 148, 192); // sete al
+    x_bytes3(b, 72, 15, 182);
+    return x_byte(b, 192);
+}
+
+fn x_neg_rax(b: i64) -> i64 { return x_bytes3(b, 72, 247, 216); }
+
+// rax = rax <op> rcx for a binary operator code (ast OP_*).
+fn x_binop(b: i64, op: i64) -> i64 {
+    if op == 1 { return x_bytes3(b, 72, 1, 200); }    // add rax, rcx
+    if op == 2 { return x_bytes3(b, 72, 41, 200); }   // sub rax, rcx
+    if op == 3 {                                      // imul rax, rcx
+        x_bytes2(b, 72, 15);
+        return x_bytes2(b, 175, 193);
+    }
+    if op == 4 || op == 5 {                           // cqo; idiv rcx
+        x_bytes2(b, 72, 153);
+        x_bytes3(b, 72, 247, 249);
+        if op == 5 {
+            return x_bytes3(b, 72, 137, 208);         // mov rax, rdx
+        }
+        return 0;
+    }
+    if op == 14 { return x_bytes3(b, 72, 33, 200); }  // and rax, rcx
+    if op == 15 { return x_bytes3(b, 72, 9, 200); }   // or rax, rcx
+    if op == 16 { return x_bytes3(b, 72, 211, 224); } // shl rax, cl
+    if op == 17 { return x_bytes3(b, 72, 211, 232); } // shr rax, cl
+    // comparisons: cmp rax, rcx; setcc al; movzx rax, al
+    x_bytes3(b, 72, 57, 200);
+    let mut cc: i64 = 148;
+    if op == 7 { cc = 149; }
+    if op == 8 { cc = 156; }
+    if op == 9 { cc = 159; }
+    if op == 10 { cc = 158; }
+    if op == 11 { cc = 157; }
+    x_bytes3(b, 15, cc, 192);
+    x_bytes3(b, 72, 15, 182);
+    return x_byte(b, 192);
+}
+
+// Pop syscall arguments (pushed nr, a1..a6 in order) into registers and
+// execute `syscall`; the result is left in rax.
+fn x_sys_insn(b: i64) -> i64 {
+    x_bytes2(b, 65, 89);  // pop r9
+    x_bytes2(b, 65, 88);  // pop r8
+    x_bytes2(b, 65, 90);  // pop r10
+    x_byte(b, 90);        // pop rdx
+    x_byte(b, 94);        // pop rsi
+    x_byte(b, 95);        // pop rdi
+    x_byte(b, 88);        // pop rax
+    return x_bytes2(b, 15, 5);
+}
+
+// rax = [rax] (64-bit) / zero-extended byte
+fn x_mov_load(b: i64) -> i64 { return x_bytes3(b, 72, 139, 0); }
+fn x_movzx_load(b: i64) -> i64 {
+    x_bytes3(b, 72, 15, 182);
+    return x_byte(b, 0);
+}
+
+// [rcx] = rax (64-bit) / al
+fn x_mov_store(b: i64) -> i64 { return x_bytes3(b, 72, 137, 1); }
+fn x_movb_store(b: i64) -> i64 { return x_bytes2(b, 136, 1); }
+
+// Pop (dest, byte, count) pushed in order; rep stosb; rax = 0.
+fn x_memset(b: i64) -> i64 {
+    x_byte(b, 89);              // pop rcx (count)
+    x_byte(b, 88);              // pop rax (byte)
+    x_byte(b, 95);              // pop rdi (dest)
+    x_bytes2(b, 243, 170);      // rep stosb
+    return x_bytes2(b, 49, 192); // xor eax, eax
+}

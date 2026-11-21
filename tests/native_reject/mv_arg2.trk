@@ -1,0 +1,5 @@
+fn two(a: Str, b: Str) -> void { }
+fn main() -> void {
+    let s = str_concat("a", "b");
+    two(s, s);
+}

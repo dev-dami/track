@@ -116,8 +116,13 @@ fn variant_name(c: i64, owner: i64, variant: i64) -> i64 {
 // Record enum/union/alias/struct/function/constant declarations of every
 // item. Later definitions of the same type name replace earlier ones.
 fn collect_symbols(c: i64) -> i64 {
+    return collect_symbols_from(c, 0);
+}
+
+// collect_symbols for the items loaded at index `from` onwards.
+fn collect_symbols_from(c: i64, from: i64) -> i64 {
     let items = cx(c, CX_ITEMS);
-    let mut i: i64 = 0;
+    let mut i: i64 = from;
     while i < vlen(items) {
         let n = vget(items, i);
         let k = nk(c, n);
