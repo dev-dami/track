@@ -52,7 +52,10 @@ const NG_ACC = 27;     // accumulator slot of an accumulator-recursive function 
 const NG_ACCFN = 28;   // that function
 const NG_ACCTOP = 29;  // its loop head
 const NG_CLOB = 30;    // the function runs `syscall` sequences that clobber r8/r9
-const NG_SLOTS = 31;
+const NG_VOLX = 31;    // the function clobbers volatile registers (calls, syscalls, scratch-heavy prims)
+const NG_STACKARGS = 32; // the current function takes its arguments on the stack (> 6 parameters)
+const NG_FRAMELESS = 33; // the current function has no rbp frame
+const NG_SLOTS = 34;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -69,7 +72,10 @@ fn ng_slot(c: i64) -> i64 {
 // Frame offset of a memory slot: parameters stay where the caller pushed
 // them; other slots sit below the callee-saved register save area.
 fn ng_disp(c: i64, k: i64) -> i64 {
-    let np = ng(c, NG_NPARAM);
+    let mut np = ng(c, NG_NPARAM);
+    if ng(c, NG_STACKARGS) == 0 {
+        np = 0;
+    }
     if k < np {
         return 16 + 8 * (np - 1 - k);
     }
@@ -150,13 +156,39 @@ fn ng_scope_end(c: i64, mark: i64) -> i64 {
 
 // ------------------------------------------------------------ calls
 
+// Argument registers of the internal convention for functions of at most
+// six parameters: rdi, rsi, r10, r11, rdx, rcx (the first four are never
+// expression scratch, so a leaf function keeps them as its locals).
+fn ng_arg_reg(i: i64) -> i64 {
+    if i == 0 { return 7; }
+    if i == 1 { return 6; }
+    if i == 2 { return 10; }
+    if i == 3 { return 11; }
+    if i == 4 { return 2; }
+    return 1;
+}
+
 // Call function `name` (id) with `nargs` words already pushed.
 fn ng_call_id(c: i64, name: i64, nargs: i64) -> i64 {
+    if nargs <= 6 {
+        let mut i: i64 = nargs - 1;
+        while i >= 0 {
+            x_pop_r(ncode(c), ng_arg_reg(i));
+            i = i - 1;
+        }
+        return ng_call_regs(c, name, nargs);
+    }
+    ng_call_regs(c, name, nargs);
+    return x_add_rsp(ncode(c), nargs * 8);
+}
+
+// The call itself: arguments already in registers (or pushed, > 6).
+fn ng_call_regs(c: i64, name: i64, nargs: i64) -> i64 {
+    ng_set(c, NG_VOLX, 1);
     let pos = x_call(ncode(c));
     let fix = ng(c, NG_CALLS);
     vpush(fix, pos);
-    vpush(fix, name);
-    return x_add_rsp(ncode(c), nargs * 8);
+    return vpush(fix, name);
 }
 
 // Call a runtime function by name text with `nargs` words pushed.
@@ -918,6 +950,7 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         x_rm(b, 139, 2, 0, 8);           // mov rdx, [rax + 8]
         x_rm(b, 59, 2, 0, 16);           // cmp rdx, [rax + 16]
         vpush(slow, x_jcc(b, 4));
+        ng_set(c, NG_VOLX, 1);
         x_rm(b, 139, 6, 0, 0);           // mov rsi, [rax]
         x_rmx(b, 0, 137, 1, 6, 2, 3, 0); // mov [rsi + rdx*8], rcx
         x_mov_rr(b, 6, 2);
@@ -934,6 +967,7 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
     }
     if count == 2 && text_eq(text, "str_char_at") {
         ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
+        ng_set(c, NG_VOLX, 1);
         let z = vnew();
         x_test_rax(b);
         vpush(z, x_jcc(b, 4));
@@ -1674,6 +1708,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     let text = name_text(c, target);
     if text_eq(text, "syscall6") {
         ng_set(c, NG_CLOB, 1);
+        ng_set(c, NG_VOLX, 1);
         return x_sys_insn(b);
     }
     let nr = ng_libc_syscall(text);
@@ -1685,9 +1720,11 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
             k = k + 1;
         }
         ng_set(c, NG_CLOB, 1);
+        ng_set(c, NG_VOLX, 1);
         return ng_libc_call(c, nr);
     }
     if text_eq(text, "memset") {
+        ng_set(c, NG_VOLX, 1);
         return x_memset(b);
     }
     if text_eq(text, "load64") {
@@ -2333,6 +2370,9 @@ fn ng_gen(c: i64, n: i64) -> i64 {
 // Restore the callee-saved registers and return.
 fn ng_epilogue(c: i64) -> i64 {
     let b = ncode(c);
+    if ng(c, NG_FRAMELESS) == 1 {
+        return x_ret(b);
+    }
     let saved = ng(c, NG_SAVED);
     let mut i: i64 = 0;
     while i < vlen(saved) {
@@ -2354,6 +2394,7 @@ fn ng_cold(c: i64, jumps: i64, name: i64, nargs: i64) -> i64 {
 
 fn ng_emit_cold(c: i64) -> i64 {
     let b = ncode(c);
+    let volx = ng(c, NG_VOLX);
     let cold = ng(c, NG_COLD);
     let mut i: i64 = 0;
     while i < vlen(cold) {
@@ -2366,6 +2407,7 @@ fn ng_emit_cold(c: i64) -> i64 {
         x_byte(b, 244); // hlt
         i = i + 3;
     }
+    ng_set(c, NG_VOLX, volx);
     return vtrunc(cold, 0);
 }
 
@@ -2384,7 +2426,16 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     let params = nc(c, f);
     let count = list_len(c, params) / 2;
     ng_set(c, NG_NPARAM, count);
-    let frame = x_prologue(b);
+    let stackargs = count > 6;
+    if stackargs {
+        ng_set(c, NG_STACKARGS, 1);
+    } else {
+        ng_set(c, NG_STACKARGS, 0);
+    }
+    let mut frame: i64 = -1;
+    if ng(c, NG_FRAMELESS) == 0 {
+        frame = x_prologue(b);
+    }
     let saved = ng(c, NG_SAVED);
     let mut s: i64 = 0;
     while s < vlen(saved) {
@@ -2392,14 +2443,31 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         s = s + 1;
     }
     let mark = ng_scope_begin(c);
+    let pass = ng(c, NG_PASS);
+    let uses = ng(c, NG_USE);
     let mut i: i64 = 0;
     while i < count {
         let id = ng_new_local(c, list_at(c, params, i * 2));
         let r = ng_reg(c, id);
-        if r >= 0 {
-            x_rm(b, 139, r, 5, ng_disp(c, id));
+        if stackargs {
+            if r >= 0 {
+                x_rm(b, 139, r, 5, ng_disp(c, id));
+            }
+        } else if r < 0 && (pass == 1 || (id < vlen(uses) && vget(uses, id) > 1)) {
+            // memory home: store before any argument register is reused
+            x_rm(b, 137, ng_arg_reg(i), 5, ng_disp(c, id));
         }
         i = i + 1;
+    }
+    if !stackargs {
+        let mut j: i64 = 0;
+        while j < count {
+            let r = ng_reg(c, j);
+            if r >= 0 {
+                x_mov_rr(b, r, ng_arg_reg(j));
+            }
+            j = j + 1;
+        }
     }
     ng_set(c, NG_ACC, -1);
     if returns == 1 && !is_main && ng_find_acc(c, f, ne(c, f)) {
@@ -2425,9 +2493,15 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     ng_epilogue(c);
     ng_scope_end(c, mark);
     ng_emit_cold(c);
-    let mut locals = ng(c, NG_NSLOT) - count;
+    let mut locals = ng(c, NG_NSLOT);
+    if stackargs {
+        locals = locals - count;
+    }
     if locals < 0 {
         locals = 0;
+    }
+    if frame < 0 {
+        return 0;
     }
     let size = ((locals + vlen(saved)) * 8 + 15) / 16 * 16;
     return x_patch32(b, frame, size);
@@ -2454,6 +2528,8 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     let strs = vlen(ng(c, NG_STRS));
     ng_set(c, NG_PASS, 1);
     ng_set(c, NG_CLOB, 0);
+    ng_set(c, NG_VOLX, 0);
+    ng_set(c, NG_FRAMELESS, 0);
     ng_set(c, NG_NSAVE, 0);
     vtrunc(ng(c, NG_SAVED), 0);
     vtrunc(ng(c, NG_USE), 0);
@@ -2468,6 +2544,43 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     let regs = ng(c, NG_REG);
     vfill(regs, nslot, -1);
     let saved = ng(c, NG_SAVED);
+    let leaf = ng(c, NG_VOLX) == 0 && np <= 6;
+    if leaf {
+        // no calls: the argument registers rdi, rsi, r10, r11 are free
+        // homes; parameters keep theirs, other hot slots take the rest
+        let taken = vfill(vnew(), 4, 0);
+        let mut p: i64 = 0;
+        while p < np && p < 4 {
+            if vget(uses, p) > 1 {
+                vset(regs, p, ng_arg_reg(p));
+                vset(taken, p, 1);
+            }
+            p = p + 1;
+        }
+        let mut v: i64 = 0;
+        while v < 4 {
+            if vget(taken, v) == 0 {
+                let mut best: i64 = -1;
+                let mut bw: i64 = 0;
+                let mut k: i64 = 0;
+                while k < vlen(uses) {
+                    let mut w = vget(uses, k);
+                    if k < np {
+                        w = w - 1;
+                    }
+                    if vget(regs, k) < 0 && w > 0 && w > bw {
+                        best = k;
+                        bw = w;
+                    }
+                    k = k + 1;
+                }
+                if best >= 0 {
+                    vset(regs, best, ng_arg_reg(v));
+                }
+            }
+            v = v + 1;
+        }
+    }
     let mut r: i64 = 0;
     while r < NG_CALLEE_SAVED {
         let mut best: i64 = -1;
@@ -2519,6 +2632,24 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
         vpush(saved, 9);
     }
     ng_set(c, NG_NSAVE, vlen(saved));
+    if leaf && vlen(saved) == 0 {
+        // every used slot in a register: no frame at all
+        let mut fl = true;
+        let mut k: i64 = 0;
+        while k < vlen(uses) {
+            let mut w = vget(uses, k);
+            if k < np {
+                w = w - 1;
+            }
+            if w > 0 && vget(regs, k) < 0 {
+                fl = false;
+            }
+            k = k + 1;
+        }
+        if fl {
+            ng_set(c, NG_FRAMELESS, 1);
+        }
+    }
     ng_set(c, NG_PASS, 2);
     if env_exists("TRACKC_NATIVE_MAP") == 1 {
         err(text_cat3(int_to_str(vlen(b) + 176), " ", text_cat(name_text(c, na(c, f)), "\n")));
