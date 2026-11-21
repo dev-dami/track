@@ -41,7 +41,8 @@ const NG_SAVED = 16;   // registers saved in the prologue, in order
 const NG_OPV = 17;     // scratch: value of the last classified operand
 const NG_INL = 18;     // name id -> 0 unknown, 1 inlinable, 2 not
 const NG_COLD = 19;    // out-of-line stubs: (jump list, runtime name id, nargs)
-const NG_SLOTS = 20;
+const NG_CBIND = 20;   // constants bound to inlined parameters (NI_CVAR -2 - i)
+const NG_SLOTS = 21;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -207,6 +208,382 @@ fn ng_string(c: i64, s: i64) -> i64 {
 
 // ------------------------------------------------------------ expressions
 
+
+// ------------------------------------------------------------ inlining
+
+// Nodes in expression `n` if it is made only of inlinable expression kinds,
+// else a number over any budget.
+fn ng_expr_size(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL || k == K_VAR || k == K_STR {
+        return 1;
+    }
+    if k == K_BIN {
+        return 1 + ng_expr_size(c, nb(c, n)) + ng_expr_size(c, nc(c, n));
+    }
+    if k == K_UN {
+        return 1 + ng_expr_size(c, nb(c, n));
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR {
+        return 1 + ng_expr_size(c, na(c, n));
+    }
+    if k == K_INDEX {
+        return 1 + ng_expr_size(c, na(c, n)) + ng_expr_size(c, nb(c, n));
+    }
+    if k == K_CALL {
+        let args = nb(c, n);
+        let mut total: i64 = 2;
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            total = total + ng_expr_size(c, list_at(c, args, i));
+            i = i + 1;
+        }
+        return total;
+    }
+    return 1000;
+}
+
+// Every variable in `n` is a parameter of `f` or unbound at this site, so
+// the callee's names cannot be captured by the caller's locals.
+fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
+    let k = nk(c, n);
+    if k == K_VAR {
+        let name = na(c, n);
+        if ni(c, name, NI_CVAR) == -1 {
+            return true;
+        }
+        let params = nc(c, f);
+        let mut i: i64 = 0;
+        while i < list_len(c, params) {
+            if list_at(c, params, i) == name {
+                return true;
+            }
+            i = i + 2;
+        }
+        return false;
+    }
+    if k == K_BIN {
+        return ng_free_ok(c, nb(c, n), f) && ng_free_ok(c, nc(c, n), f);
+    }
+    if k == K_UN {
+        return ng_free_ok(c, nb(c, n), f);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR {
+        return ng_free_ok(c, na(c, n), f);
+    }
+    if k == K_INDEX {
+        return ng_free_ok(c, na(c, n), f) && ng_free_ok(c, nb(c, n), f);
+    }
+    if k == K_CALL {
+        let args = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            if !ng_free_ok(c, list_at(c, args, i), f) {
+                return false;
+            }
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+// The returned expression of a function whose body is `return e;` with a
+// small pure expression e and a value result, else -1.
+fn ng_inline_body(c: i64, f: i64) -> i64 {
+    if nk(c, f) != K_FN {
+        return -1;
+    }
+    let name = na(c, f);
+    let map = ng(c, NG_INL);
+    if vlen(map) <= name {
+        vfill(map, name + 1 - vlen(map), 0);
+    }
+    let known = vget(map, name);
+    if known == 2 {
+        return -1;
+    }
+    let body = ne(c, f);
+    if known == 0 {
+        let mut ok = list_len(c, body) == 1;
+        let ret = nd(c, f);
+        if ret < 0 || is_prim(c, ret, PRIM_VOID) || text_eq(name_text(c, name), "main") {
+            ok = false;
+        }
+        if ok {
+            let st = list_at(c, body, 0);
+            ok = nk(c, st) == K_RETURN && na(c, st) >= 0 && ng_expr_size(c, na(c, st)) <= 24;
+        }
+        if ok {
+            vset(map, name, 1);
+        } else {
+            vset(map, name, 2);
+            return -1;
+        }
+    }
+    return na(c, list_at(c, body, 0));
+}
+
+// Bind the parameters of inlinable `f` to the evaluated `args`; returns
+// the scope mark, or -1 when the call is not inlined here.
+fn ng_inline_begin(c: i64, f: i64, args: i64) -> i64 {
+    let e = ng_inline_body(c, f);
+    if e < 0 || ng(c, NG_INLDEPTH) >= 4 {
+        return -1;
+    }
+    let params = nc(c, f);
+    let count = list_len(c, args);
+    if count * 2 != list_len(c, params) || !ng_free_ok(c, e, f) {
+        return -1;
+    }
+    let vals = vnew();
+    let kinds = vnew();
+    let mut i: i64 = 0;
+    while i < count {
+        let a = list_at(c, args, i);
+        if ng_fold(c, a) {
+            vpush(kinds, 1);
+            vpush(vals, ng(c, NG_OPV));
+        } else if ng_opnd(c, a) == 2 {
+            vpush(kinds, 2);
+            vpush(vals, ng(c, NG_OPV));
+        } else {
+            ng_gen(c, a);
+            vpush(kinds, 2);
+            vpush(vals, ng_temp(c));
+        }
+        i = i + 1;
+    }
+    let mark = ng_scope_begin(c);
+    let mut j: i64 = 0;
+    while j < count {
+        let pname = list_at(c, params, j * 2);
+        if vget(kinds, j) == 1 {
+            let cb = ng(c, NG_CBIND);
+            vpush(cb, vget(vals, j));
+            ng_bind(c, pname, -1 - vlen(cb));
+        } else {
+            ng_bind(c, pname, vget(vals, j));
+        }
+        j = j + 1;
+    }
+    ng_set(c, NG_INLDEPTH, ng(c, NG_INLDEPTH) + 1);
+    return mark;
+}
+
+fn ng_inline_end(c: i64, mark: i64) -> i64 {
+    ng_set(c, NG_INLDEPTH, ng(c, NG_INLDEPTH) - 1);
+    return ng_scope_end(c, mark);
+}
+
+// The function a call node resolves to (-1 for builtins / variants).
+fn ng_call_target(c: i64, n: i64) -> i64 {
+    let name = na(c, n);
+    if is_qualified(c, name) && variant_disc(c, name) >= 0 {
+        return -1;
+    }
+    let mut target = name;
+    if ni(c, name, NI_FN) < 0 {
+        target = last_segment(c, name);
+    }
+    return ni(c, target, NI_FN);
+}
+
+
+// ------------------------------------------------------------ primitives
+
+// Generate address expression `n` as base (in rax) + constant; returns the
+// constant displacement.
+fn ng_addr(c: i64, n: i64) -> i64 {
+    if nk(c, n) == K_BIN && na(c, n) == OP_ADD && ng_fold(c, nc(c, n)) {
+        let d = ng(c, NG_OPV);
+        if x_fits32(d) {
+            let inner = ng_addr(c, nb(c, n));
+            if x_fits32(inner + d) {
+                return inner + d;
+            }
+            x_ri(ncode(c), 0, 0, d);
+            return inner;
+        }
+    }
+    ng_gen(c, n);
+    return 0;
+}
+
+// load64/load8/store64/store8 with folded displacements.
+fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
+    let b = ncode(c);
+    if text_eq(text, "load64") || text_eq(text, "load8") {
+        if list_len(c, args) != 1 {
+            return false;
+        }
+        let d = ng_addr(c, list_at(c, args, 0));
+        if text_eq(text, "load64") {
+            x_rm(b, 139, 0, 0, d);
+        } else {
+            x_rm2(b, 182, 0, 0, d);
+        }
+        return true;
+    }
+    if !(text_eq(text, "store64") || text_eq(text, "store8")) || list_len(c, args) != 2 {
+        return false;
+    }
+    let v = list_at(c, args, 1);
+    let vk = ng_opnd(c, v);
+    let vv = ng(c, NG_OPV);
+    let mut d: i64 = 0;
+    if vk > 0 {
+        d = ng_addr(c, list_at(c, args, 0));
+        ng_opnd_to(c, vk, vv, 1);
+    } else {
+        d = ng_addr(c, list_at(c, args, 0));
+        x_push_rax(b);
+        ng_gen(c, v);
+        x_mov_rcx_rax(b);
+        x_pop_rax(b);
+    }
+    if text_eq(text, "store64") {
+        x_rm(b, 137, 1, 0, d);
+    } else {
+        x_byte(b, 136);              // mov byte [rax + d], cl
+        x_modrm_mem(b, 1, 0, d);
+    }
+    x_mov_ri(b, 0, 0);
+    return true;
+}
+
+// Runtime collection / string primitives expanded at the call site.
+fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
+    let b = ncode(c);
+    if count == 2 && text_eq(text, "track_i64_collection_get") {
+        ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
+        let z = vnew();
+        x_test_rax(b);
+        vpush(z, x_jcc(b, 4));
+        x_rm(b, 59, 1, 0, 8);            // cmp rcx, [rax + 8]
+        vpush(z, x_jcc(b, 3));
+        x_rm(b, 139, 0, 0, 0);           // mov rax, [rax]
+        x_rmx(b, 0, 139, 0, 0, 1, 3, 0); // mov rax, [rax + rcx*8]
+        let done = x_jmp(b);
+        ng_patch_all(c, z);
+        x_mov_ri(b, 0, 0);
+        x_patch_here(b, done);
+        return true;
+    }
+    if count == 3 && text_eq(text, "track_i64_collection_set") {
+        let v = list_at(c, args, 2);
+        let vk = ng_opnd(c, v);
+        let vv = ng(c, NG_OPV);
+        if vk > 0 {
+            ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
+            ng_opnd_to(c, vk, vv, 2);
+        } else {
+            ng_gen(c, list_at(c, args, 0));
+            x_push_rax(b);
+            ng_gen(c, list_at(c, args, 1));
+            x_push_rax(b);
+            ng_gen(c, v);
+            x_mov_rr(b, 2, 0);
+            x_pop_r(b, 1);
+            x_pop_r(b, 0);
+        }
+        let z = vnew();
+        x_test_rax(b);
+        vpush(z, x_jcc(b, 4));
+        x_rm(b, 59, 1, 0, 8);
+        vpush(z, x_jcc(b, 3));
+        x_rm(b, 139, 0, 0, 0);
+        x_rmx(b, 0, 137, 2, 0, 1, 3, 0); // mov [rax + rcx*8], rdx
+        x_mov_ri(b, 0, 1);
+        let done = x_jmp(b);
+        ng_patch_all(c, z);
+        x_mov_ri(b, 0, 0);
+        x_patch_here(b, done);
+        return true;
+    }
+    if count == 1 && (text_eq(text, "track_i64_collection_len") || text_eq(text, "array_len")) {
+        ng_gen(c, list_at(c, args, 0));
+        x_test_rax(b);
+        let z = x_jcc(b, 4);             // null: rax is already 0
+        if text_eq(text, "array_len") {
+            x_rm(b, 139, 0, 0, 0);
+        } else {
+            x_rm(b, 139, 0, 0, 8);
+        }
+        x_patch_here(b, z);
+        return true;
+    }
+    if count == 2 && text_eq(text, "track_i64_collection_push") {
+        ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
+        let slow = vnew();
+        x_test_rax(b);
+        vpush(slow, x_jcc(b, 4));
+        x_rm(b, 139, 2, 0, 8);           // mov rdx, [rax + 8]
+        x_rm(b, 59, 2, 0, 16);           // cmp rdx, [rax + 16]
+        vpush(slow, x_jcc(b, 4));
+        x_rm(b, 139, 6, 0, 0);           // mov rsi, [rax]
+        x_rmx(b, 0, 137, 1, 6, 2, 3, 0); // mov [rsi + rdx*8], rcx
+        x_mov_rr(b, 6, 2);
+        x_ri(b, 0, 6, 1);
+        x_rm(b, 137, 6, 0, 8);           // mov [rax + 8], rsi
+        x_mov_rr(b, 0, 2);
+        let done = x_jmp(b);
+        ng_patch_all(c, slow);
+        x_push_r(b, 0);
+        x_push_r(b, 1);
+        ng_call_rt(c, "track_i64_collection_push", 2);
+        x_patch_here(b, done);
+        return true;
+    }
+    if count == 2 && text_eq(text, "str_char_at") {
+        ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
+        let z = vnew();
+        x_test_rax(b);
+        vpush(z, x_jcc(b, 4));
+        x_rr(b, 133, 1, 1);              // test rcx, rcx
+        vpush(z, x_jcc(b, 8));           // js
+        x_rmx(b, 0, 141, 7, 0, 1, 0, 0); // lea rdi, [rax + rcx]
+        x_mov_rr(b, 6, 0);
+        x_ri(b, 4, 6, -8);               // rsi = s & -8
+        x_mov_rr(b, 1, 0);
+        x_ri(b, 4, 1, 7);
+        x_shift_ri(b, 4, 1, 3);          // rcx = (s & 7) * 8
+        x_mov_ri(b, 2, -1);
+        x_shift_cl(b, 4, 2);
+        x_bytes3(b, 72, 247, 210);       // not rdx: bytes before s
+        x_rm(b, 11, 2, 6, 0);            // or rdx, [rsi]
+        x_mov_ri(b, 8, 72340172838076673);
+        x_mov_ri(b, 9, 0 - 9187201950435737472);
+        let top = x_here(b);
+        x_mov_rr(b, 10, 2);
+        x_rr(b, 41, 10, 8);              // sub r10, r8
+        x_bytes3(b, 72, 247, 210);       // not rdx
+        x_rr(b, 33, 10, 2);              // and r10, rdx
+        x_rr(b, 33, 10, 9);              // and r10, r9
+        let found = x_jcc(b, 5);
+        x_ri(b, 0, 6, 8);                // rsi += 8
+        x_rr(b, 57, 6, 7);               // cmp rsi, rdi
+        let ok = vnew();
+        vpush(ok, x_jcc(b, 3));          // jae ok
+        x_rm(b, 139, 2, 6, 0);           // mov rdx, [rsi]
+        x_patch_rel(b, x_jmp(b), top);
+        x_patch_here(b, found);
+        x_bytes2(b, 77, 15);
+        x_bytes2(b, 188, 210);           // bsf r10, r10
+        x_shift_ri(b, 5, 10, 3);
+        x_rr(b, 1, 10, 6);               // r10 += rsi: first NUL
+        x_rr(b, 57, 10, 7);              // cmp r10, rdi
+        vpush(z, x_jcc(b, 2));           // jb: NUL before idx
+        ng_patch_all(c, ok);
+        x_rm2(b, 182, 0, 7, 0);          // movzx rax, byte [rdi]
+        let done = x_jmp(b);
+        ng_patch_all(c, z);
+        x_mov_ri(b, 0, 0);
+        x_patch_here(b, done);
+        return true;
+    }
+    return false;
+}
+
 // ------------------------------------------------------------ operands
 
 // Classify `n` as a simple operand: 0 none, 1 imm32 (value in NG_OPV),
@@ -236,6 +613,14 @@ fn ng_opnd(c: i64, n: i64) -> i64 {
     if local >= 0 {
         ng_set(c, NG_OPV, local);
         return 2;
+    }
+    if local <= -2 {
+        let cv = vget(ng(c, NG_CBIND), -2 - local);
+        if x_fits32(cv) {
+            ng_set(c, NG_OPV, cv);
+            return 1;
+        }
+        return 0;
     }
     let mut v: i64 = 0;
     if is_qualified(c, name) {
@@ -458,6 +843,16 @@ fn ng_branch(c: i64, n: i64, sense: bool, list: i64) -> i64 {
     if k == K_UN && na(c, n) == OP_NOT {
         return ng_branch(c, nb(c, n), !sense, list);
     }
+    if k == K_CALL {
+        let f = ng_call_target(c, n);
+        if f >= 0 {
+            let mark = ng_inline_begin(c, f, nb(c, n));
+            if mark >= 0 {
+                ng_branch(c, ng_inline_body(c, f), sense, list);
+                return ng_inline_end(c, mark);
+            }
+        }
+    }
     if k == K_BOOL || k == K_INT {
         if (na(c, n) != 0) == sense {
             return vpush(list, x_jmp(b));
@@ -654,6 +1049,9 @@ fn ng_var(c: i64, n: i64) -> i64 {
     if local >= 0 {
         return ng_load(c, local);
     }
+    if local <= -2 {
+        return x_mov_ri(b, 0, vget(ng(c, NG_CBIND), -2 - local));
+    }
     let disc = variant_disc(c, name);
     if is_qualified(c, name) {
         if disc < 0 {
@@ -758,6 +1156,19 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
         } else {
             vpush(ng(c, NG_MISSING), target);
         }
+    }
+    if f >= 0 && na(c, n) == name {
+        let mark = ng_inline_begin(c, f, args);
+        if mark >= 0 {
+            ng_gen(c, ng_inline_body(c, f));
+            return ng_inline_end(c, mark);
+        }
+        if ng_prim(c, name_text(c, callee), args, count) {
+            return 0;
+        }
+    }
+    if builtin >= 0 && ng_mem_builtin(c, name_text(c, target), args) {
+        return 0;
     }
     let mut i: i64 = 0;
     while i < count {
@@ -1539,6 +1950,7 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_SAVED, vnew());
     ng_set(c, NG_INL, vnew());
     ng_set(c, NG_COLD, vnew());
+    ng_set(c, NG_CBIND, vnew());
     ng_set(c, NG_PASS, 2);
     ng_entry(c);
     let items = cx(c, CX_ITEMS);
