@@ -234,36 +234,66 @@ fn track_sb_push_byte(b: i64, byte: i64) -> i64 {
     return 0;
 }
 
-// Non-negative values are formatted straight into the buffer, two digits
-// per division (a leaf: growth and negative values tail-call the slow
-// path).
+// Non-negative values below 10^8 are formatted straight into the buffer
+// as one word: four two-digit pairs, eight digits with leading zeros, then
+// shifted right past the leading zeros (little-endian: the first digit is
+// the low byte). A leaf: growth and other values tail-call the slow path.
+// The pair table is padded so a word load at its last pair stays inside.
 fn track_sb_push_int(b: i64, val: i64) -> i64 {
     if b == 0 || val < 0 || val >= 100000000 {
         return rt_sb_push_int_slow(b, val);
     }
-    let mut d: i64 = 8;
-    if val < 10 { d = 1; } else if val < 100 { d = 2; } else if val < 1000 { d = 3; } else if val < 10000 { d = 4; } else if val < 100000 { d = 5; } else if val < 1000000 { d = 6; } else if val < 10000000 { d = 7; }
     let len = load64(b + 8);
-    if len + d + 1 > load64(b + 16) {
+    let cap = load64(b + 16);
+    let need = len + 9;
+    if need > cap {
         return rt_sb_push_int_slow(b, val);
     }
+    // One statement per operation with simple right operands, so the
+    // native backend keeps the temporaries in registers.
+    let mut d: i64 = 8;
+    if val < 10000 {
+        if val < 10 { d = 1; } else if val < 100 { d = 2; } else if val < 1000 { d = 3; } else { d = 4; }
+    } else if val < 100000 { d = 5; } else if val < 1000000 { d = 6; } else if val < 10000000 { d = 7; }
+    let t = "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900000000";
+    // Exact quotients for 0 <= n < 2^32 by multiply and shift:
+    // n / 10000 = n * 3518437209 >> 45, n / 100 = n * 1374389535 >> 37.
+    let mut q = val * 3518437209;
+    let hi = q >> 45;
+    q = hi * 10000;
+    let lo = val - q;
+    q = hi * 1374389535;
+    let p1 = q >> 37;
+    q = p1 * 100;
+    let mut o = hi - q;
+    o = o + o;
+    let mut x = load64(t + o);
+    x = x & 65535;
+    x = x << 16;
+    o = p1 + p1;
+    let mut w = load64(t + o);
+    w = w & 65535;
+    w = w | x;
+    q = lo * 1374389535;
+    let p3 = q >> 37;
+    q = p3 * 100;
+    o = lo - q;
+    o = o + o;
+    x = load64(t + o);
+    x = x << 48;
+    w = w | x;
+    o = p3 + p3;
+    x = load64(t + o);
+    x = x & 65535;
+    x = x << 32;
+    w = w | x;
+    let mut sh = 8 - d;
+    sh = sh << 3;
+    w = w >> sh;
+    let dst = load64(b) + len;
+    store64(dst, w);
+    store8(dst + d, 0);
     store64(b + 8, len + d);
-    let mut q = load64(b) + len + d;
-    store8(q, 0);
-    let mut n = val;
-    while n >= 100 {
-        let h = n / 100;
-        q = q - 2;
-        store8(q, load8("00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899" + (n - h * 100) * 2));
-        store8(q + 1, load8("00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899" + (n - h * 100) * 2 + 1));
-        n = h;
-    }
-    if n >= 10 {
-        store8(q - 2, load8("00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899" + n * 2));
-        store8(q - 1, load8("00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899" + n * 2 + 1));
-    } else {
-        store8(q - 1, 48 + n);
-    }
     return 0;
 }
 
