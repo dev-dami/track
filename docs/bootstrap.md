@@ -143,8 +143,10 @@ A function that makes no calls, syscalls or scratch-heavy inline
 expansions is a leaf: parameters stay in their argument registers, other
 hot locals use the free ones of `rdi`, `rsi`, `r10`, `r11` at no save
 cost, and with every used slot in a register it gets no frame at all.
-`return f(args)` is a jump (a tail call), so it neither grows the stack
-nor stops its function from being a leaf. Accumulator recursion
+`return f(args)` is a jump (a tail call) when both caller and callee take
+at most six parameters, so it neither grows the stack nor stops its
+function from being a leaf. With more than six parameters on either side
+it is still an ordinary call. Accumulator recursion
 (`return f(a) + f(b)`) becomes a loop and inlines into itself three levels
 deep, testing a leading `if cond { return e; }` guard before each
 remaining call. Indexes of a never-reassigned array literal by `x & C`
@@ -173,8 +175,9 @@ rejects exactly what `trackc check` rejects.
 The image carries a `PT_GNU_STACK` header (read/write, no execute) and
 runs on the kernel's default stack (usually 8 MiB). Only leaf frames
 and tail calls are optimised away, so very deep non-tail recursion (about
-a million calls) overflows the stack and dies with SIGSEGV where the C
-build at `-O2` may survive.
+a million calls), including tail recursion through functions with more
+than six parameters, overflows the stack and dies with SIGSEGV where the
+C build at `-O2` may survive.
 The natively built `trackc` compiles itself to a byte-identical fixed
 point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
 compares native and C builds of the examples.
