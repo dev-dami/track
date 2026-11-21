@@ -1,0 +1,13 @@
+// Integer loop: multiply, add, modulo, mask in a tight while loop.
+fn main() -> void {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 1;
+    let mut odd: i64 = 0;
+    while i < 200000000 {
+        acc = (acc * 31 + i) % 1000000007;
+        odd = odd + (acc & 1);
+        i = i + 1;
+    }
+    print(acc);
+    print(odd);
+}

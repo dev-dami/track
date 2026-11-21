@@ -1,0 +1,26 @@
+// Array-heavy: bounds-checked reads and writes on a fixed 16-element array,
+// passed by reference to a summing helper.
+fn total(values: &[]i64) -> i64 {
+    let mut sum: i64 = 0;
+    for i in 0..array_len(values) {
+        sum = sum + values[i];
+    }
+    return sum;
+}
+
+fn main() -> void {
+    let mut xs = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3];
+    let mut i: i64 = 0;
+    let mut check: i64 = 0;
+    while i < 60000000 {
+        let j: i64 = i & 15;
+        let k: i64 = (i * 7) & 15;
+        xs[j] = (xs[j] + xs[k] + i) & 1023;
+        if (i & 255) == 0 {
+            check = (check + total(&xs)) % 1000000007;
+        }
+        i = i + 1;
+    }
+    print(check);
+    print(total(&xs));
+}
