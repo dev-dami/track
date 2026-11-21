@@ -1,5 +1,5 @@
 fn total
-  param values ref use=mutate end=-
+  param values ref use=read end=-
   result copy
   effects calls
 fn main

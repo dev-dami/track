@@ -128,6 +128,21 @@ At a call `f(a0, a1, ...)`:
    nothing. An opaque linear `T` is a value of unknown size, so it can be
    heap-placed and auto-freed but never stack-placed.
 
+   *As built (L4):* SCC members run in load order, Gauss-Seidel style,
+   and each record is joined with its previous value, so passes only add
+   facts. A pass ends the iteration when no summary a call read during it
+   changed afterwards (flags never count), so components whose summaries
+   stay at bottom after the first read (most of trackc's word-typed code)
+   take 1 pass; the self- and mutual-recursion goldens take 2.
+   `trackc life` prints `scc size=N passes=P` for recursive functions.
+   A callee end of `{}` (it diverges, or its summary is still bottom)
+   ends nothing in the caller; `die` keeps an owned argument live in the
+   caller and gives a borrowed one `die` (E0211's input); `ret` adds the
+   argument's origin to the result. Generics: one summary per template,
+   analysed with its type parameters as opaque linear values, which
+   bounds the join over instantiations from above; a Copy instantiation
+   passes the empty origin at the call site, so it loses nothing.
+
 **Cost.** The walk does less per node than `check_expr`: no type
 inference and no borrow-state updates. trackc checks itself in about
 40 ms on a quiet machine [reported] and 70 ms (±22%) on today's loaded

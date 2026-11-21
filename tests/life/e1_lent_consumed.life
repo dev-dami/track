@@ -3,7 +3,7 @@ fn take
   result copy
   effects none
 fn peek
-  param r ref use=read end=esc
+  param r ref use=read end=die
   result copy
   effects calls
 fn main
