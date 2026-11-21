@@ -1457,11 +1457,9 @@ fn check_if(c: i64, n: i64) -> i64 {
     while m < vlen(u) {
         let slot = vget(u, m);
         let mut then_state = vf(c, slot, V_STATE);
-        let mut then_b = vf(c, slot, V_BORROWS);
         let ti = vget(uthen, m);
         if ti >= 0 {
             then_state = vget(then_vals, ti * 2);
-            then_b = vget(then_vals, ti * 2 + 1);
         }
         let else_state = vget(uelse, m * 2);
         if slot_visible(c, slot) && then_state != else_state && !then_div && !else_div {
@@ -1759,6 +1757,138 @@ fn check_lens(c: i64, n: i64) -> i64 {
     return 0;
 }
 
+// Outer slots a match guard spent (touched since `pre`), or -1 for none.
+fn guard_spends(c: i64, pre: i64, count: i64) -> i64 {
+    let t = touched_slots(c, pre, count);
+    let out = vnew();
+    let mut a: i64 = 0;
+    while a < vlen(t) {
+        if vf(c, vget(t, a), V_STATE) == ST_SPENT {
+            vpush(out, vget(t, a));
+        }
+        a = a + 1;
+    }
+    if vlen(out) == 0 {
+        return -1;
+    }
+    return out;
+}
+
+fn spend_slots(c: i64, slots: i64) -> i64 {
+    let mut a: i64 = 0;
+    while a < vlen(slots) {
+        let slot = vget(slots, a);
+        if slot_visible(c, slot) && vf(c, slot, V_STATE) == ST_ACTIVE {
+            sset(c, slot, V_STATE, ST_SPENT);
+        }
+        a = a + 1;
+    }
+    return 0;
+}
+
+// False only when no value can match both patterns: distinct literals,
+// distinct variants of the same enum or union, or tuples with such a pair
+// of elements. Wildcards, bindings and anything else may overlap.
+fn patterns_overlap(c: i64, p: i64, q: i64) -> bool {
+    let kp = nk(c, p);
+    let kq = nk(c, q);
+    if kp == P_LIT && kq == P_LIT {
+        let a = na(c, p);
+        let b = na(c, q);
+        let ka = nk(c, a);
+        if ka != nk(c, b) {
+            return true;
+        }
+        if ka == K_INT || ka == K_BOOL {
+            return na(c, a) == na(c, b);
+        }
+        if ka == K_STR {
+            return text_eq(na(c, a), na(c, b));
+        }
+        return true;
+    }
+    if kp == P_VARIANT && kq == P_VARIANT {
+        return na(c, p) != na(c, q) || nb(c, p) == nb(c, q);
+    }
+    if kp == P_TUPLE && kq == P_TUPLE {
+        let ps = na(c, p);
+        let qs = na(c, q);
+        if list_len(c, ps) != list_len(c, qs) {
+            return true;
+        }
+        let mut i: i64 = 0;
+        while i < list_len(c, ps) {
+            if !patterns_overlap(c, list_at(c, ps, i), list_at(c, qs, i)) {
+                return false;
+            }
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+// True when every value matches `p`: a wildcard, a binding, or a tuple of
+// only those.
+fn pattern_irrefutable(c: i64, p: i64) -> bool {
+    let k = nk(c, p);
+    if k == P_WILD || k == P_IDENT {
+        return true;
+    }
+    if k == P_TUPLE {
+        let ps = na(c, p);
+        let mut i: i64 = 0;
+        while i < list_len(c, ps) {
+            if !pattern_irrefutable(c, list_at(c, ps, i)) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    return false;
+}
+
+// Check arm `i` entered with `entry` spent (slots an earlier guard spent on
+// this path, or -1) and tally its exit into spent/hits unless the body
+// diverges. Returns what the arm's own guard spent, or -1.
+fn check_arm(c: i64, arms: i64, i: i64, tt: i64, entry: i64, spent: i64, hits: i64) -> i64 {
+    let pre = snapshot(c);
+    let count = vget(pre, 0);
+    if entry >= 0 {
+        spend_slots(c, entry);
+    }
+    bind_pattern(c, list_at(c, arms, i), tt, 0);
+    let guard = list_at(c, arms, i + 1);
+    let mut guard_spent: i64 = -1;
+    if guard >= 0 {
+        check_expr(c, guard);
+        guard_spent = guard_spends(c, pre, count);
+    }
+    check_expr(c, list_at(c, arms, i + 2));
+    let t = touched_slots(c, pre, count);
+    let mut a: i64 = 0;
+    if node_diverges(c, list_at(c, arms, i + 2)) {
+        a = vlen(t);
+    }
+    while a < vlen(t) {
+        let slot = vget(t, a);
+        if vf(c, slot, V_STATE) == ST_SPENT {
+            let mut j: i64 = 0;
+            while j < vlen(spent) && vget(spent, j) != slot {
+                j = j + 1;
+            }
+            if j == vlen(spent) {
+                vpush(spent, slot);
+                vpush(hits, 0);
+            }
+            vset(hits, j, vget(hits, j) + 1);
+        }
+        a = a + 1;
+    }
+    restore(c, pre);
+    return guard_spent;
+}
+
 fn check_match(c: i64, n: i64) -> i64 {
     let target = na(c, n);
     check_expr(c, target);
@@ -1767,56 +1897,61 @@ fn check_match(c: i64, n: i64) -> i64 {
         tt = ck(c, CK_TY_UNK);
     }
     let arms = nb(c, n);
-    // Like if/else: a resource spent in one arm must be spent in all.
-    // spent: slots spent by some arm; hits: how many arms spent each.
+    // Like if/else: a resource spent on one way out must be spent on all.
+    // spent: slots spent on some exit; hits: how many exits spent each.
+    // A guard runs only where its arm's pattern matched, so its spends
+    // reach a later arm only when the two patterns may overlap. Such an arm
+    // is checked twice, entered with them (the guard failed) and without
+    // (the guarded pattern did not match), and both exits join. Diverging
+    // arms leave the join.
     let spent = vnew();
     let hits = vnew();
+    // [pattern, slots]* of earlier refutable arms whose guard spent something
+    let guards = vnew();
+    // Spends of guards on irrefutable patterns: every later arm is reached
+    // only after such a guard ran and failed, so they apply on every entry.
+    let forced = vnew();
+    let mut exits: i64 = 0;
     let mut i: i64 = 0;
     while i < list_len(c, arms) {
-        let pre = snapshot(c);
-        let count = vget(pre, 0);
-        bind_pattern(c, list_at(c, arms, i), tt, 0);
-        let guard = list_at(c, arms, i + 1);
-        if guard >= 0 {
-            check_expr(c, guard);
-        }
-        check_expr(c, list_at(c, arms, i + 2));
-        let t = touched_slots(c, pre, count);
-        let mut a: i64 = 0;
-        if node_diverges(c, list_at(c, arms, i + 2)) {
-            a = vlen(t);
-        }
-        while a < vlen(t) {
-            let slot = vget(t, a);
-            if vf(c, slot, V_STATE) == ST_SPENT {
-                let mut j: i64 = 0;
-                while j < vlen(spent) && vget(spent, j) != slot {
-                    j = j + 1;
-                }
-                if j == vlen(spent) {
-                    vpush(spent, slot);
-                    vpush(hits, 0);
-                }
-                vset(hits, j, vget(hits, j) + 1);
+        let pat = list_at(c, arms, i);
+        let entry = vnew();
+        let mut g: i64 = 0;
+        while g < vlen(guards) {
+            if patterns_overlap(c, vget(guards, g), pat) {
+                prov_merge(entry, vget(guards, g + 1));
             }
-            a = a + 1;
+            g = g + 2;
         }
-        restore(c, pre);
+        let mut base: i64 = -1;
+        if vlen(forced) > 0 {
+            base = forced;
+        }
+        let mut ways: i64 = 1;
+        let own = check_arm(c, arms, i, tt, base, spent, hits);
+        if vlen(entry) > 0 {
+            prov_merge(entry, forced);
+            check_arm(c, arms, i, tt, entry, spent, hits);
+            ways = 2;
+        }
+        if !node_diverges(c, list_at(c, arms, i + 2)) {
+            exits = exits + ways;
+        }
+        if own >= 0 {
+            if pattern_irrefutable(c, pat) {
+                prov_merge(forced, own);
+            } else {
+                vpush(guards, pat);
+                vpush(guards, own);
+            }
+        }
         i = i + 3;
-    }
-    let mut narms: i64 = 0;
-    let mut q: i64 = 0;
-    while q < list_len(c, arms) {
-        if !node_diverges(c, list_at(c, arms, q + 2)) {
-            narms = narms + 1;
-        }
-        q = q + 3;
     }
     let mut m: i64 = 0;
     while m < vlen(spent) {
         let slot = vget(spent, m);
         if slot_visible(c, slot) && vf(c, slot, V_STATE) == ST_ACTIVE {
-            if vget(hits, m) != narms {
+            if vget(hits, m) != exits {
                 cfail(c, n, text_cat3("Resource ", quoted(c, vf(c, slot, V_NAME)), " is spent in some match arms but not in others."));
             }
             sset(c, slot, V_STATE, ST_SPENT);

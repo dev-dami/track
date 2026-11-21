@@ -621,25 +621,15 @@ fn trackc_on_the_track_runtime_self_compiles() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-fn run_trackc_warn_test(args: &[&str], cwd: &Path) -> Output {
-    Command::new(trackc())
-        .args(args)
-        .env("TRACKC_WARN_TEST", "1")
-        .current_dir(cwd)
-        .output()
-        .expect("failed to run trackc")
-}
-
-// L2 warnings channel. `TRACKC_WARN_TEST=1` is a hidden test-only trigger:
-// trackc emits `warning[W0000]` at every top-level item, in reverse order,
-// so the output also shows that diagnostics are sorted by position.
+// L2 warnings channel, driven by real lifecycle warnings (L6): two unused
+// bindings, so the output also shows that diagnostics are sorted by position.
 #[test]
-fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
+fn warnings_print_sorted_and_only_deny_warnings_fails() {
     let dir = scratch("warnings");
     let src = dir.join("w.trk");
     fs::write(
         &src,
-        "fn helper() -> i64 { return 2; }\nfn main() -> void { print(helper()); }\n",
+        "fn helper() -> i64 { let a = 1; return 2; }\nfn main() -> void { let b = 3; print(helper()); }\n",
     )
     .unwrap();
     let path = src.to_str().unwrap();
@@ -650,34 +640,34 @@ fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
         vec!["build", path],
         vec!["build", "--native", path],
     ] {
-        let out = run_trackc_warn_test(&args, &dir);
+        let out = run_trackc(&args, &dir);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(out.status.success(), "{:?}: {}", args, stderr);
         assert_eq!(
-            stderr.matches("warning[W0000]").count(),
+            stderr.matches("warning[W0301]").count(),
             2,
             "{:?}: {}",
             args,
             stderr
         );
         assert!(
-            at(&stderr, "w.trk:1:1") < at(&stderr, "w.trk:2:1"),
+            at(&stderr, "w.trk:1:") < at(&stderr, "w.trk:2:"),
             "{:?}: warnings not sorted by position:\n{}",
             args,
             stderr
         );
     }
-    let out = run_trackc_warn_test(&["check", path], &dir);
+    let out = run_trackc(&["check", path], &dir);
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("(2 warnings)"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
 
-    let out = run_trackc_warn_test(&["run", path], &dir);
+    let out = run_trackc(&["run", path], &dir);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("warning[W0000]"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("warning[W0301]"));
 
     // --deny-warnings in any position turns warnings into a failure.
     for args in [
@@ -686,14 +676,20 @@ fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
         vec!["build", "--native", path, "--deny-warnings"],
         vec!["run", "--deny-warnings", path],
     ] {
-        let out = run_trackc_warn_test(&args, &dir);
+        let out = run_trackc(&args, &dir);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{:?}: {}", args, stderr);
-        assert!(stderr.contains("warning[W0000]"), "{:?}: {}", args, stderr);
+        assert!(stderr.contains("warning[W0301]"), "{:?}: {}", args, stderr);
     }
 
-    // Without the trigger there are no warnings, and --deny-warnings passes.
-    let out = run_trackc(&["check", "--deny-warnings", path], &dir);
+    // `_`-prefixed names are silent, and --deny-warnings then passes.
+    let quiet = dir.join("quiet.trk");
+    fs::write(
+        &quiet,
+        "fn helper() -> i64 { let _a = 1; return 2; }\nfn main() -> void { print(helper()); }\n",
+    )
+    .unwrap();
+    let out = run_trackc(&["check", "--deny-warnings", quiet.to_str().unwrap()], &dir);
     assert!(out.status.success());
     assert!(!String::from_utf8_lossy(&out.stderr).contains("warning"));
 
@@ -701,17 +697,137 @@ fn forced_warnings_print_sorted_and_only_deny_warnings_fails() {
     let bad = dir.join("bad.trk");
     fs::write(
         &bad,
-        "fn main() -> void {\n    print(nope);\n}\nfn later() -> i64 { return 1; }\n",
+        "fn first() -> i64 { let u = 1; return 0; }\nfn main() -> void {\n    print(nope);\n}\n",
     )
     .unwrap();
-    let out = run_trackc_warn_test(&["check", bad.to_str().unwrap()], &dir);
+    let out = run_trackc(&["check", bad.to_str().unwrap()], &dir);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{}", stderr);
-    let w1 = at(&stderr, "bad.trk:1:1");
-    let e = at(&stderr, "error[");
-    let w2 = at(&stderr, "bad.trk:4:1");
-    assert!(w1 < e && e < w2, "not sorted by position:\n{}", stderr);
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Lifecycle warnings W0301-W0305 (card L6, docs/lifecycles.md §2): each
+/// docs/lifecycles/wN example gives exactly its warning, with the §2 text,
+/// exits 0, and fails under --deny-warnings.
+#[test]
+fn lifecycle_warnings_match_the_catalogue() {
+    let root = repo();
+    let cases = [
+        (
+            "w1_fresh_unread",
+            "warning[W0301]: 'origin' is created and never read; remove it or name it '_origin'.",
+        ),
+        (
+            "w2_write_only",
+            "warning[W0302]: write to 'p.y' is never read; 'p' ends at line 7.",
+        ),
+        (
+            "w3_mutated_unread",
+            "warning[W0303]: 'bump' mutates 'c', but 'c' is never read afterwards.",
+        ),
+        (
+            "w4_discarded_result",
+            "warning[W0304]: result of 'vadd' is discarded, and 'vadd' has no other effect (it only reads its parameters and returns a fresh value).",
+        ),
+        (
+            "w5_consume_only_reads",
+            "warning[W0305]: 'norm1' takes 'p' by value but only reads it; take '&Point' so callers keep it.",
+        ),
+    ];
+    for (stem, want) in cases {
+        let rel = format!("docs/lifecycles/{}.trk", stem);
+        let out = run_trackc(&["check", &rel], &root);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{}: {}", rel, stderr);
+        assert!(
+            stderr.contains(want),
+            "{}: want {:?}, got:\n{}",
+            rel,
+            want,
+            stderr
+        );
+        assert_eq!(stderr.matches("warning[").count(), 1, "{}: {}", rel, stderr);
+        let out = run_trackc(&["check", "--deny-warnings", &rel], &root);
+        assert_eq!(out.status.code(), Some(1), "{}", rel);
+    }
+    // Near misses stay warning-free.
+    let dir = scratch("lifewarn");
+    let clean = [
+        // read after the write
+        "struct P { x: i64, y: i64 }\nfn main() -> void { let mut p = P { x: 1, y: 2 }; p.y = 9; print(p.y); }\n",
+        // mutated, then read
+        "struct C { n: i64 }\nfn bump(c: &C) -> i64 { with c -> l { l.n = l.n + 1; } return 0; }\nfn main() -> void { let c = C { n: 0 }; bump(&c); print(c.n); }\n",
+        // pure result used
+        "struct V { x: i64 }\nfn mk(a: &V) -> V { return V { x: a.x }; }\nfn main() -> void { let a = V { x: 1 }; let b = mk(&a); print(b.x); }\n",
+        // by-value parameter handed back
+        "struct P { x: i64 }\nfn get(p: &P) -> i64 { return p.x; }\nfn eat(p: P) -> P { return p; }\nfn main() -> void { let p = P { x: 1 }; print(get(&p)); let q = eat(p); print(q.x); }\n",
+        // a write read on the next loop iteration
+        "struct P { x: i64 }\nfn main() -> void { let mut p = P { x: 0 }; let mut i = 0; while i < 3 { print(p.x); p.x = i; i = i + 1; } }\n",
+        // a discarded call with an effect
+        "struct V { x: i64 }\nfn show(a: &V) -> V { print(a.x); return V { x: a.x }; }\nfn main() -> void { let a = V { x: 1 }; show(&a); }\n",
+    ];
+    for (i, src) in clean.iter().enumerate() {
+        let f = dir.join(format!("clean{}.trk", i));
+        fs::write(&f, src).unwrap();
+        let out = run_trackc(&["check", f.to_str().unwrap()], &dir);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "clean{}: {}", i, stderr);
+        assert!(!stderr.contains("warning["), "clean{}: {}", i, stderr);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// examples/ is warning-free except two intended demonstrations: an unused
+/// allocation that is auto-freed, and a struct pattern match on a by-value
+/// parameter.
+#[test]
+fn examples_warn_only_where_intended() {
+    let root = repo();
+    let intended = [
+        ("linear_auto_free.trk", "warning[W0301]: 'buf'"),
+        ("structs_arrays.trk", "warning[W0305]: 'quadrant'"),
+    ];
+    let mut files: Vec<PathBuf> = fs::read_dir(root.join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "trk"))
+        .collect();
+    files.sort();
+    for file in files {
+        let name = file.file_name().unwrap().to_str().unwrap().to_string();
+        let rel = format!("examples/{}", name);
+        let out = run_trackc(&["check", &rel], &root);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let want: Vec<&str> = intended
+            .iter()
+            .filter(|(f, _)| *f == name)
+            .map(|(_, w)| *w)
+            .collect();
+        assert_eq!(
+            stderr.matches("warning[").count(),
+            want.len(),
+            "{}: {}",
+            rel,
+            stderr
+        );
+        for w in want {
+            assert!(stderr.contains(w), "{}: want {:?}: {}", rel, w, stderr);
+        }
+    }
+}
+
+/// The compiler's own sources stay warning-clean (CI runs the same check).
+#[test]
+fn compiler_sources_are_warning_clean() {
+    let out = run_trackc(
+        &["check", "--deny-warnings", "compiler/src/main.trk"],
+        &repo(),
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// (name, source, accepted) for trackc alone: holes the review found where
@@ -884,6 +1000,80 @@ const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
         "struct A { x: i64, y: i64 } fn gx(p: &A) -> i64 { return p.x; } fn main() -> void { let a = A { x: 1, y: 2 }; print(gx(&a)); }",
         true,
     ),
+    // A guard that consumes runs before the arm body, so its spends count
+    // even when the body diverges (and on the fall-through to later arms).
+    (
+        "guard_consumes_on_diverging_arm",
+        "fn eatb(s: Str) -> bool { return true; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => return 1, _ => print(0), } print(s); return 0; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // L5b: a guard's spends happen only where its pattern matched; arm `2` cannot overlap `1`.
+    (
+        "guard_spend_skips_disjoint_literal_arm",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => return 1, 2 => return eatr(s), _ => return 0, } } fn main() -> void { print(f(2)); }",
+        true,
+    ),
+    // s is spent on k==1 paths and live on the others.
+    (
+        "guard_spend_inconsistent_after_match",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => print(1), _ => print(0), } return 0; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // the guard-failed path reaches `_` with s already spent.
+    (
+        "guard_spend_wild_arm_use_after_free",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => return 1, _ => return eatr(s), } } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // distinct enum variants cannot overlap.
+    (
+        "guard_spend_disjoint_enum_variant",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } enum C { R, G, B } fn f(k: C) -> i64 { let s = str_concat(\"a\", \"b\"); match k { C::R if eatb(s) => return 1, C::G => return eatr(s), _ => return 0, } } fn main() -> void { print(f(C::G)); }",
+        true,
+    ),
+    // the same variant overlaps: guard-failed path has s spent.
+    (
+        "guard_spend_same_enum_variant",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } enum C { R, G, B } fn f(k: C) -> i64 { let s = str_concat(\"a\", \"b\"); match k { C::R if eatb(s) => return 1, C::R => return eatr(s), _ => return 0, } } fn main() -> void { print(f(C::R)); }",
+        false,
+    ),
+    // a guard on an irrefutable pattern runs on every path to later arms,
+    // so s is spent on every way out: consistent.
+    (
+        "guard_spend_irrefutable_always_spent",
+        "fn eatb(s: Str) -> bool { return true; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { x if eatb(s) => return 1, _ => print(0), } return 0; } fn main() -> void { print(f(1)); }",
+        true,
+    ),
+    // ... and s is gone after the match.
+    (
+        "guard_spend_irrefutable_use_after",
+        "fn eatb(s: Str) -> bool { return true; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { x if eatb(s) => return 1, _ => print(0), } print(s); return 0; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // a binding pattern overlaps everything.
+    (
+        "guard_spend_binding_then_use",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { x if eatb(s) => return x, y => return eatr(s), } } fn main() -> void { print(f(1)); }",
+        false,
+    ),
+    // a guard that only reads spends nothing.
+    (
+        "guard_read_only_then_use",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if readb(&s) => return 1, _ => return eatr(s), } } fn main() -> void { print(f(1)); }",
+        true,
+    ),
+    // two guards spending different values: arm `3` is disjoint from both.
+    (
+        "guard_two_spends_disjoint_arms",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat2(a: Str, b: Str) -> i64 { return 1; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); let u = str_concat(\"c\", \"d\"); match k { 1 if eatb(s) => return eatr(u), 2 if eatb(u) => return eatr(s), 3 => return eat2(s, u), _ => return 0, } } fn main() -> void { print(f(3)); }",
+        true,
+    ),
+    // ... but `_` overlaps the guard on `1`, which spent s.
+    (
+        "guard_two_spends_wild_uses_one",
+        "fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat2(a: Str, b: Str) -> i64 { return 1; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); let u = str_concat(\"c\", \"d\"); match k { 1 if eatb(s) => return eatr(u), 2 if eatb(u) => return eatr(s), _ => return eatr(s), } } fn main() -> void { print(f(5)); }",
+        false,
+    ),
     (
         "shadow_in_else_hides_consume",
         "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { eat(s); } else { let s = 1; } }",
@@ -904,6 +1094,67 @@ fn trackc_closes_checker_holes() {
             "{}: trackc verdict: {}",
             name,
             String::from_utf8_lossy(&native.stderr)
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Lifecycle hard errors (docs/lifecycles.md §2, card L5), trackc-only:
+/// (program, exact first diagnostic line). Paths are under docs/lifecycles/;
+/// other entries are inline sources.
+const LIFE_ERRORS: &[(&str, &str)] = &[
+    (
+        "e1_lent_consumed.trk",
+        "error[E0211]: 'take' consumes its parameter 'p', but 'r' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.",
+    ),
+    (
+        "e2_escape_tuple.trk",
+        "error[E0212]: local 'p' escapes 'pair' inside the returned tuple (element 0); it dies when 'pair' returns.",
+    ),
+    (
+        "e3_escape_struct.trk",
+        "error[E0212]: local 'p' escapes 'make' through field 'Holder.p'; it dies when 'make' returns.",
+    ),
+    (
+        "e4_outlive_block.trk",
+        "error[E0213]: 'r' refers to 'b', which ends at the close of this block (line 9); 'r' is used after it at line 14.",
+    ),
+    (
+        "e5_end_twice.trk",
+        "error[E0214]: 'p' would be ended twice: fields 'Bag.a' and 'Bag.b' both take ownership of the borrowed 'r'.",
+    ),
+    (
+        "fn eatb(s: Str) -> bool { return true; }\nfn f(k: i64) -> i64 {\n    let s = str_concat(\"a\", \"b\");\n    match k { 1 if eatb(s) => return 1, _ => print(0), }\n    print(s);\n    return 0;\n}\nfn main() -> void { print(f(1)); }\n",
+        "error[E0200]: Resource 's' is spent in some match arms but not in others.",
+    ),
+    // I2: through a local alias, E0211 names the lent parameter.
+    (
+        "struct Point { x: i64, y: i64 }\nfn take(p: Point) -> i64 { return p.x; }\nfn peek(r: &Point) -> i64 {\n    let q = r;\n    return take(q);\n}\nfn main() -> void { let p = Point { x: 1, y: 2 }; print(peek(&p)); }\n",
+        "error[E0211]: 'take' consumes its parameter 'p', but 'r' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.",
+    ),
+];
+
+#[test]
+fn lifecycle_hard_errors_print_the_catalogue_texts() {
+    let root = repo();
+    let dir = scratch("life_errors");
+    for (i, (prog, want)) in LIFE_ERRORS.iter().enumerate() {
+        let path = if prog.ends_with(".trk") {
+            root.join("docs/lifecycles").join(prog)
+        } else {
+            let file = dir.join(format!("inline{}.trk", i));
+            fs::write(&file, prog).unwrap();
+            file
+        };
+        let out = run_trackc(&["check", path.to_str().unwrap()], &dir);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{}: {}", prog, stderr);
+        assert_eq!(
+            stderr.lines().next().unwrap_or(""),
+            *want,
+            "{}: unexpected diagnostic:\n{}",
+            prog,
+            stderr
         );
     }
     let _ = fs::remove_dir_all(&dir);

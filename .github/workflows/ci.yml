@@ -71,6 +71,9 @@ jobs:
       - name: Bootstrap fixed point (stage0 -> stage3)
         run: YARD=./target/release/yard scripts/bootstrap.sh
 
+      - name: Compiler sources are warning-clean
+        run: ./build/bootstrap/stage3/trackc check --deny-warnings compiler/src/main.trk
+
       - name: Self-hosting from .trk alone (native, no C toolchain)
         run: scripts/selfhost.sh
 
