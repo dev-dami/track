@@ -1,0 +1,242 @@
+// rt_alloc.trk (tests/native) — allocator patterns: small cells freed and reused,
+// realloc growth across the small/large boundary and through page-moving
+// growth, shrinking, collections and builders that outgrow 64 KiB, and
+// number formatting edges. The output must be the same with
+// runtime/track_runtime.c, with `--rt=track` and with `--native`.
+
+import "std" :: { dealloc };
+
+// Plain-word wrappers: the test hands block addresses around freely.
+fn a_new(n: i64) -> i64 { return alloc(n); }
+fn a_grow(p: i64, n: i64) -> i64 { return mem_realloc(p, n); }
+fn a_free(p: i64) -> i64 {
+    dealloc(p);
+    return 0;
+}
+
+fn show(label: i64, v: i64) -> i64 {
+    track_out(label);
+    track_out(" = ");
+    track_out(int_to_str(v));
+    track_out("\n");
+    return 0;
+}
+
+// Fill `words` words at `p` with a pattern seeded by `seed`.
+fn fill(p: i64, words: i64, seed: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        store64(p + 8 * i, seed * 31 + i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// 1 when the first `words` words still hold the pattern.
+fn check(p: i64, words: i64, seed: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        if load64(p + 8 * i) != seed * 31 + i {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// 1 when `bytes` bytes at `p` are all zero.
+fn zeroed(p: i64, bytes: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < bytes {
+        if load8(p + i) != 0 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn small_cells() -> i64 {
+    let base = sys_get_memory_used();
+    let mut ok: i64 = 1;
+    let mut round: i64 = 0;
+    while round < 50 {
+        // Cells of every size up to 600 bytes, dirtied, freed, and asked
+        // for again: reused cells must come back zeroed.
+        let mut size: i64 = 8;
+        while size <= 600 {
+            let p: i64 = a_new(size);
+            if zeroed(p, size) == 0 {
+                ok = 0;
+            }
+            fill(p, size / 8, size);
+            if check(p, size / 8, size) == 0 {
+                ok = 0;
+            }
+            a_free(p);
+            size = size + 8;
+        }
+        round = round + 1;
+    }
+    show("small cells zero and intact", ok);
+    // Many live cells, then all freed: accounting returns to the start.
+    let v: i64 = vec_init(0);
+    let mut i: i64 = 0;
+    while i < 20000 {
+        let p: i64 = a_new(16 + (i % 7) * 8);
+        store64(p, i);
+        vec_push(v, p);
+        i = i + 1;
+    }
+    let mut sum: i64 = 0;
+    i = 0;
+    while i < 20000 {
+        sum = sum + load64(vec_get(v, i));
+        a_free(vec_get(v, i));
+        i = i + 1;
+    }
+    show("live cells sum", sum);
+    show("used back to start", sys_get_memory_used() - base);
+    return 0;
+}
+
+fn realloc_growth() -> i64 {
+    let base = sys_get_memory_used();
+    // Grow by 3/2 from 8 bytes to past 3 MiB: through every small class,
+    // the copy into a large block, and page-moving growth after it.
+    let mut size: i64 = 8;
+    let mut p: i64 = a_new(size);
+    fill(p, 1, 7);
+    let mut ok: i64 = 1;
+    let mut steps: i64 = 0;
+    while size < 3500000 {
+        let old = size;
+        size = size + size / 2 + 8;
+        p = a_grow(p, size);
+        if check(p, old / 8, 7) == 0 {
+            ok = 0;
+        }
+        fill(p, size / 8, 7);
+        steps = steps + 1;
+    }
+    show("growth steps", steps);
+    show("growth intact", ok);
+    show("growth used", sys_get_memory_used() - base);
+    // Shrink, then grow again: the kept prefix survives.
+    p = a_grow(p, 1000);
+    show("shrunk intact", check(p, 125, 7));
+    show("shrunk used", sys_get_memory_used() - base);
+    p = a_grow(p, 200000);
+    show("regrown intact", check(p, 125, 7));
+    a_free(p);
+    show("growth freed", sys_get_memory_used() - base);
+    // Exactly at the boundaries around 64 KiB and page sizes.
+    let mut s: i64 = 65500;
+    while s < 65560 {
+        let q: i64 = a_new(s);
+        if zeroed(q, s) == 0 {
+            ok = 0;
+        }
+        fill(q, s / 8, s);
+        let r: i64 = a_grow(q, s + 4096);
+        if check(r, s / 8, s) == 0 {
+            ok = 0;
+        }
+        a_free(r);
+        s = s + 4;
+    }
+    show("boundary sizes", ok);
+    // Large blocks come back zeroed after earlier ones were freed.
+    let mut k: i64 = 0;
+    while k < 8 {
+        let q: i64 = a_new(300000 + k * 4096);
+        if zeroed(q, 300000) == 0 {
+            ok = 0;
+        }
+        fill(q, 1000, k);
+        a_free(q);
+        k = k + 1;
+    }
+    show("large reuse zero", ok);
+    show("all freed", sys_get_memory_used() - base);
+    return 0;
+}
+
+fn collections() -> i64 {
+    let v: i64 = vec_init(1);
+    let mut i: i64 = 0;
+    while i < 300000 {
+        vec_push(v, i * 3);
+        i = i + 1;
+    }
+    show("vec len", vec_len(v));
+    show("vec last", vec_get(v, 299999));
+    show("vec mid", vec_get(v, 123456));
+    let c: i64 = track_i64_collection_new(2);
+    i = 0;
+    while i < 250000 {
+        track_i64_collection_push(c, i * 5);
+        i = i + 1;
+    }
+    show("collection len", track_i64_collection_len(c));
+    show("collection get", track_i64_collection_get(c, 249999));
+    let b: i64 = track_sb_new();
+    i = 0;
+    while i < 120000 {
+        track_sb_push(b, "ab");
+        track_sb_push_int(b, i);
+        track_sb_push_byte(b, 59);
+        i = i + 1;
+    }
+    let s: i64 = track_sb_str(b);
+    show("sb len", str_len(s));
+    show("sb char", str_char_at(s, 777777));
+    show("concat len", str_len(str_concat(s, s)));
+    return 0;
+}
+
+fn number_edges() -> i64 {
+    let b: i64 = track_sb_new();
+    let mut p: i64 = 1;
+    while p <= 1000000000 {
+        track_sb_push_int(b, p - 1);
+        track_sb_push_byte(b, 32);
+        track_sb_push_int(b, p);
+        track_sb_push_byte(b, 32);
+        track_sb_push_int(b, p + 1);
+        track_sb_push_byte(b, 32);
+        track_sb_push_int(b, 0 - p);
+        track_sb_push_byte(b, 10);
+        p = p * 10;
+    }
+    track_sb_push_int(b, 99999999);
+    track_sb_push_byte(b, 32);
+    track_sb_push_int(b, 12345678);
+    track_sb_push_byte(b, 32);
+    track_sb_push_int(b, 10203);
+    track_sb_push_byte(b, 32);
+    track_sb_push_int(b, 9223372036854775807);
+    track_sb_push_byte(b, 10);
+    track_out(track_sb_str(b));
+    // Every value below 10^6, checked against int_to_str.
+    let mut bad: i64 = 0;
+    let mut v: i64 = 0;
+    while v < 1000000 {
+        let c: i64 = track_sb_new();
+        track_sb_push_int(c, v * 97);
+        if str_eq(track_sb_str(c), int_to_str(v * 97)) == false {
+            bad = bad + 1;
+        }
+        v = v + 1;
+    }
+    show("push_int mismatches", bad);
+    return 0;
+}
+
+fn main() -> i64 {
+    small_cells();
+    realloc_growth();
+    collections();
+    number_edges();
+    return 0;
+}

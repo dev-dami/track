@@ -1,0 +1,15 @@
+// Growing a block past the memory limit stops the program: exit 137 with
+// the same message on every runtime, from the reallocation path. (Nothing
+// is printed first: the C runtime's buffered stdout would come out after
+// the message when both streams share a pipe.)
+fn main() -> i64 {
+    sys_set_memory_limit(5000000);
+    let v: i64 = vec_init(1);
+    let mut i: i64 = 0;
+    while i < 2000000 {
+        vec_push(v, i);
+        i = i + 1;
+    }
+    print(vec_len(v));
+    return 0;
+}
