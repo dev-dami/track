@@ -79,6 +79,9 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
     }
     check_program(c);
     life_program(c);
+    if !text_eq(arg_text(1), "life") {
+        life_fail_pending(c);
+    }
     finish_warnings(c);
     if with_rt {
         let from = vlen(cx(c, CX_ITEMS));

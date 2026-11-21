@@ -881,6 +881,13 @@ const TRACKC_VERDICTS: &[(&str, &str, bool)] = &[
         "struct A { x: i64, y: i64 } fn gx(p: &A) -> i64 { return p.x; } fn main() -> void { let a = A { x: 1, y: 2 }; print(gx(&a)); }",
         true,
     ),
+    // A guard that consumes runs before the arm body, so its spends count
+    // even when the body diverges (and on the fall-through to later arms).
+    (
+        "guard_consumes_on_diverging_arm",
+        "fn eatb(s: Str) -> bool { return true; } fn f(k: i64) -> i64 { let s = str_concat(\"a\", \"b\"); match k { 1 if eatb(s) => return 1, _ => print(0), } print(s); return 0; } fn main() -> void { print(f(1)); }",
+        false,
+    ),
     (
         "shadow_in_else_hides_consume",
         "fn eat(s: Str) -> void { } fn main() -> void { let s = str_concat(\"a\", \"b\"); if true { eat(s); } else { let s = 1; } }",
@@ -901,6 +908,62 @@ fn trackc_closes_checker_holes() {
             "{}: trackc verdict: {}",
             name,
             String::from_utf8_lossy(&native.stderr)
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Lifecycle hard errors (docs/lifecycles.md §2, card L5), trackc-only:
+/// (program, exact first diagnostic line). Paths are under docs/lifecycles/;
+/// other entries are inline sources.
+const LIFE_ERRORS: &[(&str, &str)] = &[
+    (
+        "e1_lent_consumed.trk",
+        "error[E0211]: 'take' consumes its parameter 'p', but 'r' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.",
+    ),
+    (
+        "e2_escape_tuple.trk",
+        "error[E0212]: local 'p' escapes 'pair' inside the returned tuple (element 0); it dies when 'pair' returns.",
+    ),
+    (
+        "e3_escape_struct.trk",
+        "error[E0212]: local 'p' escapes 'make' through field 'Holder.p'; it dies when 'make' returns.",
+    ),
+    (
+        "e4_outlive_block.trk",
+        "error[E0213]: 'r' refers to 'b', which ends at the close of this block (line 9); 'r' is used after it at line 14.",
+    ),
+    (
+        "e5_end_twice.trk",
+        "error[E0214]: 'p' would be ended twice: fields 'Bag.a' and 'Bag.b' both take ownership of the borrowed 'r'.",
+    ),
+    (
+        "fn eatb(s: Str) -> bool { return true; }\nfn f(k: i64) -> i64 {\n    let s = str_concat(\"a\", \"b\");\n    match k { 1 if eatb(s) => return 1, _ => print(0), }\n    print(s);\n    return 0;\n}\nfn main() -> void { print(f(1)); }\n",
+        "error[E0200]: Use-after-free! Resource 's' is already spent.",
+    ),
+];
+
+#[test]
+fn lifecycle_hard_errors_print_the_catalogue_texts() {
+    let root = repo();
+    let dir = scratch("life_errors");
+    for (i, (prog, want)) in LIFE_ERRORS.iter().enumerate() {
+        let path = if prog.ends_with(".trk") {
+            root.join("docs/lifecycles").join(prog)
+        } else {
+            let file = dir.join(format!("inline{}.trk", i));
+            fs::write(&file, prog).unwrap();
+            file
+        };
+        let out = run_trackc(&["check", path.to_str().unwrap()], &dir);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{}: {}", prog, stderr);
+        assert_eq!(
+            stderr.lines().next().unwrap_or(""),
+            *want,
+            "{}: unexpected diagnostic:\n{}",
+            prog,
+            stderr
         );
     }
     let _ = fs::remove_dir_all(&dir);
