@@ -155,6 +155,9 @@ embeds it with `include_str!`; `scripts/embed_runtime.sh` regenerates
 literals plus each function's prototype and arity. CI runs
 `scripts/embed_runtime.sh --check` so the two copies cannot drift.
 
+`trackc build --rt=track` links the same runtime written in Track
+(`compiler/rt/*.trk`) instead, with no libc; see [native.md](native.md).
+
 ## Ownership checker
 
 `checker.trk` implements the same rules as `src/checker/` (see

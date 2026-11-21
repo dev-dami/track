@@ -1,0 +1,341 @@
+// rt/mem.trk — Track runtime: process state, allocator, raw memory.
+//
+// The Track runtime replaces runtime/track_runtime.c with Track code that
+// needs no libc: it talks to Linux through the `syscall6` builtin and
+// reads and writes memory through `load64`/`store64`/`load8`/`store8`
+// (docs/native.md). Every exported function keeps the name and word-ABI
+// behaviour of its C counterpart, so generated code calls it unchanged.
+//
+// Track has no global variables, so the runtime keeps its state in one
+// page mapped at the fixed address RT_BASE when the process starts.
+// The rt modules have no imports: trackc loads all of them together.
+
+const RT_BASE = 35184372088832;   // 0x200000000000, the runtime state page
+const RT_STATE_SIZE = 8192;
+
+// State fields (byte offsets from RT_BASE).
+const RS_ARGC = 0;
+const RS_ARGV = 8;
+const RS_ENVP = 16;
+const RS_HEAP = 24;               // bump pointer of the current arena
+const RS_HEAP_END = 32;
+const RS_USED = 40;               // bytes handed out by `alloc`
+const RS_LIMIT = 48;              // `alloc` limit (sys_set_memory_limit)
+const RS_RNG = 56;                // math_random state
+const RS_OUTBUF = 64;             // stdout buffer
+const RS_OUTLEN = 72;
+const RS_NUM = 128;               // 32-byte scratch for number formatting
+const RS_PIPE = 160;              // pipe(2) result: two 32-bit fds
+const RS_TIME = 176;              // struct timespec
+const RS_WAIT = 192;              // wait4 status
+const RS_ONE = 200;               // the int 1, for setsockopt
+const RS_FREE = 256;              // free-list heads, one per size class (64)
+const RS_SOCK = 768;              // struct sockaddr_in
+const RS_STAT = 1024;             // struct stat (144 bytes)
+const RS_EXECV = 2048;            // argv for execve: 4 words
+
+const RT_OUT_CAP = 65536;
+const RT_ARENA = 67108864;        // grow the heap 64 MiB at a time
+
+const SYS_READ = 0;
+const SYS_WRITE = 1;
+const SYS_OPEN = 2;
+const SYS_CLOSE = 3;
+const SYS_STAT = 4;
+const SYS_LSEEK = 8;
+const SYS_MMAP = 9;
+const SYS_PIPE = 22;
+const SYS_ACCESS = 21;
+const SYS_GETPID = 39;
+const SYS_FORK = 57;
+const SYS_EXECVE = 59;
+const SYS_WAIT4 = 61;
+const SYS_KILL = 62;
+const SYS_UNLINK = 87;
+const SYS_CLOCK_GETTIME = 228;
+const SYS_EXIT_GROUP = 231;
+
+fn rs(off: i64) -> i64 { return load64(RT_BASE + off); }
+fn rs_set(off: i64, v: i64) -> i64 { return store64(RT_BASE + off, v); }
+
+fn sys0(nr: i64) -> i64 { return syscall6(nr, 0, 0, 0, 0, 0, 0); }
+fn sys1(nr: i64, a: i64) -> i64 { return syscall6(nr, a, 0, 0, 0, 0, 0); }
+fn sys2(nr: i64, a: i64, b: i64) -> i64 { return syscall6(nr, a, b, 0, 0, 0, 0); }
+fn sys3(nr: i64, a: i64, b: i64, d: i64) -> i64 { return syscall6(nr, a, b, d, 0, 0, 0); }
+
+fn rt_exit_now(code: i64) -> i64 {
+    sys1(SYS_EXIT_GROUP, code);
+    return 0;
+}
+
+// Anonymous private read/write mapping of `len` bytes; exits 137 on failure.
+fn rt_mmap(len: i64) -> i64 {
+    let p = syscall6(SYS_MMAP, 0, len, 3, 34, -1, 0);
+    if p < 0 && p > -4096 {
+        rt_oom("\nTrack Runtime Error: Out of memory allocation failure!\n");
+    }
+    return p;
+}
+
+fn rt_oom(msg: i64) -> i64 {
+    rt_err_bytes(msg, rt_strlen(msg));
+    rt_exit_now(137);
+    return 0;
+}
+
+// Map the state page and record the process arguments.
+fn track_runtime_init(argc: i64, argv: i64) -> i64 {
+    // MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE
+    let p = syscall6(SYS_MMAP, RT_BASE, RT_STATE_SIZE, 3, 1048610, -1, 0);
+    if p != RT_BASE {
+        rt_exit_now(137);
+    }
+    rs_set(RS_ARGC, argc);
+    rs_set(RS_ARGV, argv);
+    rs_set(RS_ENVP, argv + 8 * (argc + 1));
+    rs_set(RS_LIMIT, 536870912);
+    rs_set(RS_RNG, 0 - 8846114314301621463);
+    rs_set(RS_OUTBUF, rt_mmap(RT_OUT_CAP));
+    rs_set(RS_ONE, 1);
+    return 0;
+}
+
+// ------------------------------------------------------------ allocator
+//
+// Blocks are powers of two from 32 bytes up, with one header word before
+// the payload: `requested_size << 8 | class`. Freed blocks go on a
+// per-class free list (the next pointer lives in the first payload word);
+// new blocks are carved from 64 MiB arenas.
+
+fn rt_class(need: i64) -> i64 {
+    let mut k: i64 = 5;
+    while (1 << k) < need {
+        k = k + 1;
+    }
+    return k;
+}
+
+// Payload of at least `size` bytes; zeroed when `zero` is true.
+fn rt_block(size: i64, zero: bool) -> i64 {
+    let k = rt_class(size + 8);
+    let slot = RS_FREE + 8 * k;
+    let head = rs(slot);
+    if head != 0 {
+        rs_set(slot, load64(head));
+        store64(head - 8, k);
+        if zero {
+            rt_zero(head, (1 << k) - 8);
+        }
+        return head;
+    }
+    let bsize = 1 << k;
+    let mut cur = rs(RS_HEAP);
+    if cur + bsize > rs(RS_HEAP_END) || cur == 0 {
+        let mut chunk: i64 = RT_ARENA;
+        if bsize > chunk {
+            chunk = bsize;
+        }
+        cur = rt_mmap(chunk);
+        rs_set(RS_HEAP_END, cur + chunk);
+    }
+    rs_set(RS_HEAP, cur + bsize);
+    store64(cur, k);
+    return cur + 8;
+}
+
+fn rt_malloc(size: i64) -> i64 { return rt_block(size, false); }
+
+fn rt_free(p: i64) -> i64 {
+    if p == 0 {
+        return 0;
+    }
+    let k = load64(p - 8) & 255;
+    let slot = RS_FREE + 8 * k;
+    store64(p, rs(slot));
+    rs_set(slot, p);
+    return 0;
+}
+
+// Usable bytes of block `p`.
+fn rt_capacity(p: i64) -> i64 {
+    return (1 << (load64(p - 8) & 255)) - 8;
+}
+
+fn rt_realloc(p: i64, size: i64) -> i64 {
+    if p == 0 {
+        return rt_malloc(size);
+    }
+    let cap = rt_capacity(p);
+    if size <= cap {
+        return p;
+    }
+    let q = rt_malloc(size);
+    rt_copy(q, p, cap);
+    rt_free(p);
+    return q;
+}
+
+// ------------------------------------------------------- raw memory ops
+
+fn rt_copy(dst: i64, src: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    if ((dst | src) & 7) == 0 {
+        let words = n & (0 - 8);
+        while i < words {
+            store64(dst + i, load64(src + i));
+            i = i + 8;
+        }
+    }
+    while i < n {
+        store8(dst + i, load8(src + i));
+        i = i + 1;
+    }
+    return dst;
+}
+
+fn rt_zero(dst: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    if (dst & 7) == 0 {
+        let words = n & (0 - 8);
+        while i < words {
+            store64(dst + i, 0);
+            i = i + 8;
+        }
+    }
+    while i < n {
+        store8(dst + i, 0);
+        i = i + 1;
+    }
+    return dst;
+}
+
+// strlen, a word at a time once aligned.
+fn rt_strlen(s: i64) -> i64 {
+    let mut p = s;
+    while (p & 7) != 0 {
+        if load8(p) == 0 {
+            return p - s;
+        }
+        p = p + 1;
+    }
+    let ones = 72340172838076673;          // 0x0101010101010101
+    let highs = 0 - 9187201950435737472;   // 0x8080808080808080
+    let mut v = load64(p);
+    while ((v - ones) & (0 - v - 1) & highs) == 0 {
+        p = p + 8;
+        v = load64(p);
+    }
+    while load8(p) != 0 {
+        p = p + 1;
+    }
+    return p - s;
+}
+
+// strnlen
+fn rt_strnlen(s: i64, max: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < max && load8(s + i) != 0 {
+        i = i + 1;
+    }
+    return i;
+}
+
+// New NUL-terminated copy of `n` bytes at `s`.
+fn rt_dup_n(s: i64, n: i64) -> i64 {
+    let out = rt_malloc(n + 1);
+    if n > 0 {
+        rt_copy(out, s, n);
+    }
+    store8(out + n, 0);
+    return out;
+}
+
+fn rt_dup(s: i64) -> i64 {
+    if s == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_dup_n(s, rt_strlen(s));
+}
+
+// ------------------------------------------------- counted allocation API
+
+fn rt_limit_exceeded(requested: i64) -> i64 {
+    let b = track_sb_new();
+    track_sb_push(b, "\nTrack Runtime Error: Process memory boundary limit exceeded! (Allocated: ");
+    track_sb_push_int(b, rs(RS_USED));
+    track_sb_push(b, " bytes, Requested: ");
+    track_sb_push_int(b, requested);
+    track_sb_push(b, " bytes, Limit: ");
+    track_sb_push_int(b, rs(RS_LIMIT));
+    track_sb_push(b, " bytes)\n");
+    rt_err_bytes(load64(b), track_sb_len(b));
+    rt_exit_now(137);
+    return 0;
+}
+
+fn sys_set_memory_limit(bytes: i64) -> i64 {
+    if bytes > 0 {
+        rs_set(RS_LIMIT, bytes);
+    }
+    return 0;
+}
+
+fn sys_get_memory_used() -> i64 { return rs(RS_USED); }
+
+fn alloc(size: i64) -> i64 {
+    if size <= 0 {
+        return 0;
+    }
+    if rs(RS_USED) + size > rs(RS_LIMIT) {
+        rt_limit_exceeded(size);
+    }
+    let p = rt_block(size, true);
+    store64(p - 8, (size << 8) | (load64(p - 8) & 255));
+    rs_set(RS_USED, rs(RS_USED) + size);
+    return p;
+}
+
+fn dealloc(p: i64) -> i64 {
+    if p == 0 {
+        return 0;
+    }
+    let size = load64(p - 8) >> 8;
+    let used = rs(RS_USED);
+    if used >= size {
+        rs_set(RS_USED, used - size);
+    } else {
+        rs_set(RS_USED, 0);
+    }
+    rt_free(p);
+    return 0;
+}
+
+fn mem_realloc(p: i64, new_size: i64) -> i64 {
+    if p == 0 {
+        return alloc(new_size);
+    }
+    if new_size <= 0 {
+        return dealloc(p);
+    }
+    let old_size = load64(p - 8) >> 8;
+    if rs(RS_USED) - old_size + new_size > rs(RS_LIMIT) {
+        rt_limit_exceeded(new_size);
+    }
+    let q = rt_realloc(p, new_size);
+    store64(q - 8, (new_size << 8) | (load64(q - 8) & 255));
+    rs_set(RS_USED, rs(RS_USED) - old_size + new_size);
+    return q;
+}
+
+// Copy `count` words to a fresh heap cell (escaping tuples).
+fn track_words_copy(src: i64, count: i64) -> i64 {
+    let mut bytes: i64 = 8;
+    if count > 0 {
+        bytes = count * 8;
+    }
+    let dst = alloc(bytes);
+    if src != 0 && count > 0 {
+        rt_copy(dst, src, count * 8);
+    }
+    return dst;
+}
