@@ -1,0 +1,8 @@
+fn mk(n: i64) -> [](i64, i64) { return [(n, n + 1)]; }
+fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; }
+fn main() -> void {
+    let a = mk(4);
+    print(clobber(100));
+    let t = a[0];
+    print(t.1);
+}

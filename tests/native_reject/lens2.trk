@@ -1,0 +1,7 @@
+fn main() -> void {
+    let mut v = vec_init(4);
+    vec_push(v, 3);
+    with v -> l { vec_push(l, 4); }
+    print(vec_len(v));
+    print(vec_get(v, 1));
+}

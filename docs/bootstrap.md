@@ -120,6 +120,52 @@ counter restarts per function. Calls to functions that are neither Track
 functions nor runtime functions are declared as externs from their first
 call site.
 
+## Native backend (no C toolchain)
+
+`trackc build --native app.trk -o app` lowers the checked AST straight to
+x86-64 machine code and writes a static Linux ELF executable: no C
+compiler, assembler or linker runs.
+
+| Module | Role |
+| :--- | :--- |
+| `x64.trk` | instruction encoder (one byte per vector word, rel32 patching) |
+| `ngen.trk` | lowering from the AST, construct for construct like `cgen.trk` |
+| `elf.trk` | one RWX `PT_LOAD` segment at `0x400000`; written with raw syscalls |
+
+Every expression leaves its value in `rax`; operands wait on the machine
+stack; locals and temporaries are `rbp`-relative slots. Calls push the
+arguments left to right and the callee reads argument `i` of `n` at
+`[rbp + 16 + 8(n-1-i)]`. `syscall6`, `load64`, `store64`, `load8`,
+`store8` compile to instructions, as do the libc names `elf.trk` uses
+(`open64`, `write`, `fchmod`, `close`, `memset`) so that the Rust
+bootstrap compiler, which knows no machine builtins, links them from libc. String
+literals follow the code. `_start` calls `rt_start(argc, argv)`, then
+`main()`, then `sys_exit(result)` (the compiler/rt `rt_start` runs main
+and exits itself, so the rest is a fallback; see docs/native.md).
+
+Tuple literals are heap cells (only `let (a, b) = (x, y)` binds the
+elements without one), so a tuple stored in a struct, array, union or
+tuple, returned, or built in a loop outlives its frame. Identical string
+literals share one copy, so `"abc" == "abc"` is `1` as with the C
+compiler's literal merging. A program without `main` gets an empty one
+that runs its top-level statements, as on the C path.
+
+The runtime is Track code loaded with the program: the compiler/rt
+modules embedded in `runtime_trk.trk`. It is loaded only after the user
+program has been checked (also for `--rt=track`), so its plain-`i64`
+definitions of `str_concat`, `vec_push`... never replace the builtin
+signatures the ownership checker types the program with: `build --native`
+rejects exactly what `trackc check` rejects.
+
+The image carries a `PT_GNU_STACK` header (read/write, no execute) and
+runs on the kernel's default stack (usually 8 MiB). Frames are not
+optimised away, so very deep recursion (about a million calls) overflows
+the stack and dies with SIGSEGV where the C build at `-O2` may survive
+through tail calls.
+The natively built `trackc` compiles itself to a byte-identical fixed
+point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
+compares native and C builds of the examples.
+
 ## The runtime
 
 `runtime/track_runtime.c` is the single source of truth. The Rust compiler

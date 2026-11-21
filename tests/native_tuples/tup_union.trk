@@ -1,0 +1,8 @@
+union U { P((i64, i64)), N }
+fn mk(n: i64) -> U { return U::P((n, n + 5)); }
+fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; }
+fn main() -> void {
+    let u = mk(1);
+    print(clobber(100));
+    match u { U::P(t) => print(t.1), U::N => print(0) }
+}

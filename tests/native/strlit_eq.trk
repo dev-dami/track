@@ -1,0 +1,10 @@
+fn main() -> void {
+    let a = "abc";
+    let b = "abc";
+    print(a == b);
+    let c = str_concat(a, "d");
+    print(c);
+    print(str_len("hello"));
+    print("tab\there\n");
+    print("q\"x\\");
+}
