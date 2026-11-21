@@ -346,6 +346,14 @@ fn x_ri(b: i64, ext: i64, reg: i64, imm: i64) -> i64 {
     return x_u32(b, imm);
 }
 
+// test r64(reg), imm32 (sign-extended)
+fn x_test_ri(b: i64, reg: i64, imm: i64) -> i64 {
+    x_byte(b, 72 + (reg >> 3));
+    x_byte(b, 247);
+    x_byte(b, 192 + (reg & 7));
+    return x_u32(b, imm);
+}
+
 // group-1 op qword [base + disp], imm
 fn x_mi(b: i64, ext: i64, base: i64, disp: i64, imm: i64) -> i64 {
     x_byte(b, 72 + (base >> 3));

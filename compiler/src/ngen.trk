@@ -2158,6 +2158,20 @@ fn ng_cmp(c: i64, n: i64) -> i64 {
     let op = na(c, n);
     let l = nb(c, n);
     let r = nc(c, n);
+    if (op == OP_EQ || op == OP_NEQ) && nk(c, r) == K_INT && na(c, r) == 0 && nk(c, l) == K_BIN && na(c, l) == OP_BAND && nk(c, nc(c, l)) == K_INT && na(c, nc(c, l)) >= 0 && x_fits32(na(c, nc(c, l))) {
+        // (x & C) == 0: one test of x against C, in place when x has a register
+        let m = na(c, nc(c, l));
+        if ng(c, NG_PASS) == 2 && ng_opnd(c, nb(c, l)) == 2 {
+            let xr = ng_reg(c, ng(c, NG_OPV));
+            if xr >= 0 {
+                x_test_ri(b, xr, m);
+                return x_cc(op);
+            }
+        }
+        ng_gen(c, nb(c, l));
+        x_test_ri(b, 0, m);
+        return x_cc(op);
+    }
     let rk = ng_opnd(c, r);
     let rv = ng(c, NG_OPV);
     if rk > 0 {
@@ -2831,6 +2845,12 @@ fn ng_stmt(c: i64, n: i64) -> i64 {
         let target = na(c, n);
         if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
             return ng_gen_into(c, nb(c, n), ni(c, na(c, target), NI_CVAR));
+        }
+        if nk(c, target) == K_INDEX && ng_safe_index(c, na(c, target), nb(c, target)) >= 0 {
+            // in-bounds element store whose value is unused: no temporary
+            ng_gen(c, nb(c, n));
+            x_mov_rr(ncode(c), 2, 0);
+            return ng_index_direct(c, na(c, target), nb(c, target), true);
         }
     }
     return ng_gen(c, n);
