@@ -1,6 +1,8 @@
 fn eat(s: Str) -> void { }
 fn main() -> void {
     let s = str_concat("a", "b");
-    if true { eat(s); return; }
+    // The returning else branch skips the merge, so `s` is spent after
+    // the if (a returning then branch would leave it Active: accepted).
+    if true { eat(s); } else { return; }
     print(s);
 }
