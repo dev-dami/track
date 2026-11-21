@@ -132,10 +132,25 @@ compiler, assembler or linker runs.
 | `ngen.trk` | lowering from the AST, construct for construct like `cgen.trk` |
 | `elf.trk` | one RWX `PT_LOAD` segment at `0x400000`; written with raw syscalls |
 
-Every expression leaves its value in `rax`; operands wait on the machine
-stack; locals and temporaries are `rbp`-relative slots. Calls push the
-arguments left to right and the callee reads argument `i` of `n` at
-`[rbp + 16 + 8(n-1-i)]`. `syscall6`, `load64`, `store64`, `load8`,
+Every expression leaves its value in `rax` (`rcx`, `rdx` are scratch);
+operands wait on the machine stack; locals and temporaries are
+`rbp`-relative slots, the busiest ones (weighted by loop depth) in
+`rbx`, `r12`-`r15`, `r8`, `r9`, which a function saves when it uses them.
+Functions of at most six parameters take them in `rdi`, `rsi`, `r10`,
+`r11`, `rdx`, `rcx`; with more, the caller pushes the arguments left to
+right and the callee reads argument `i` of `n` at `[rbp + 16 + 8(n-1-i)]`.
+A function that makes no calls, syscalls or scratch-heavy inline
+expansions is a leaf: parameters stay in their argument registers, other
+hot locals use the free ones of `rdi`, `rsi`, `r10`, `r11` at no save
+cost, and with every used slot in a register it gets no frame at all.
+`return f(args)` is a jump (a tail call) when both caller and callee take
+at most six parameters, so it neither grows the stack nor stops its
+function from being a leaf. With more than six parameters on either side
+it is still an ordinary call. Accumulator recursion
+(`return f(a) + f(b)`) becomes a loop and inlines into itself three levels
+deep, testing a leading `if cond { return e; }` guard before each
+remaining call. Indexes of a never-reassigned array literal by `x & C`
+with `C` below its length skip the null and bounds checks. `syscall6`, `load64`, `store64`, `load8`,
 `store8` compile to instructions, as do the libc names `elf.trk` uses
 (`open64`, `write`, `fchmod`, `close`, `memset`) so that the Rust
 bootstrap compiler, which knows no machine builtins, links them from libc. String
@@ -158,10 +173,11 @@ signatures the ownership checker types the program with: `build --native`
 rejects exactly what `trackc check` rejects.
 
 The image carries a `PT_GNU_STACK` header (read/write, no execute) and
-runs on the kernel's default stack (usually 8 MiB). Frames are not
-optimised away, so very deep recursion (about a million calls) overflows
-the stack and dies with SIGSEGV where the C build at `-O2` may survive
-through tail calls.
+runs on the kernel's default stack (usually 8 MiB). Only leaf frames
+and tail calls are optimised away, so very deep non-tail recursion (about
+a million calls), including tail recursion through functions with more
+than six parameters, overflows the stack and dies with SIGSEGV where the
+C build at `-O2` may survive.
 The natively built `trackc` compiles itself to a byte-identical fixed
 point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
 compares native and C builds of the examples.
