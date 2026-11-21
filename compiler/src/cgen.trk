@@ -222,7 +222,7 @@ fn gen_struct_init(c: i64, n: i64) -> i64 {
             vpush(words, vget(values, j));
             j = j + 1;
         }
-        return gen_cell(c, words);
+        return gen_site_cell(c, n, words);
     }
     let order = nb(c, decl);
     let mut f: i64 = 0;
@@ -238,7 +238,7 @@ fn gen_struct_init(c: i64, n: i64) -> i64 {
         vpush(words, v);
         f = f + 2;
     }
-    return gen_cell(c, words);
+    return gen_site_cell(c, n, words);
 }
 
 // Read (store == 0) or write a struct field of the cell in temp `base`.
@@ -423,7 +423,7 @@ fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
                     vpush(words, vget(args, i));
                     i = i + 1;
                 }
-                return gen_cell(c, words);
+                return gen_site_cell(c, n, words);
             }
             return text_of_int(disc);
         }
@@ -535,15 +535,29 @@ fn gen_return(c: i64, n: i64) -> i64 {
     return "0";
 }
 
-// A tuple literal is a heap cell unless the placement plan (life.trk,
-// `life_place_of`) puts it on the stack: then it lives in a stack slot of
-// the current frame, one slot per literal site, reused on every execution.
+// A tuple, struct, array or payload-union literal is a heap cell unless
+// the placement plan (life.trk, `life_place_of`) puts it on the stack:
+// then it lives in a stack slot of the current frame, one slot per literal
+// site, reused on every execution. Same layout, so readers never know.
 fn gen_tuple(c: i64, n: i64) -> i64 {
     return gen_cell(c, gen_list_values(c, na(c, n)));
 }
 
 fn gen_stack_tuple(c: i64, n: i64) -> i64 {
-    let values = gen_list_values(c, na(c, n));
+    return gen_slot(c, gen_list_values(c, na(c, n)));
+}
+
+// The cell of literal `n` holding `words`: a stack slot when the plan
+// says stack, else a heap cell.
+fn gen_site_cell(c: i64, n: i64, words: i64) -> i64 {
+    if life_place_of(c, n) == PL_STACK {
+        return gen_slot(c, words);
+    }
+    return gen_cell(c, words);
+}
+
+// A stack slot `tk_w sN[k]` holding `values`.
+fn gen_slot(c: i64, values: i64) -> i64 {
     // Evaluate every element before storing: `p = (p.1, p.0)` may write
     // the slot `p` already points at.
     let tmps = vnew();
@@ -832,7 +846,7 @@ fn gen(c: i64, n: i64) -> i64 {
             vpush(cell, vget(words, i));
             i = i + 1;
         }
-        return gen_cell(c, cell);
+        return gen_site_cell(c, n, cell);
     }
     if k == K_INDEX {
         let arr = gen(c, na(c, n));

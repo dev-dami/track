@@ -1,0 +1,32 @@
+// L8: struct and array literals that are only read (fields, indexing,
+// lent to non-escaping parameters) live in a stack slot.
+struct Vec2 { x: i64, y: i64 }
+
+fn dot(a: &Vec2, b: &Vec2) -> i64 {
+    return a.x * b.x + a.y * b.y;
+}
+
+fn sum(xs: &[i64; 4]) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < array_len(xs) {
+        s = s + xs[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        let d = Vec2 { x: i, y: i + 1 };
+        let e = Vec2 { x: d.y, y: d.x };
+        total = total + dot(&d, &e) % 1000;
+        i = i + 1;
+    }
+    print(total);
+    let xs = [3, 1, 4, 1];
+    print(xs[2]);
+    print(sum(&xs));
+}

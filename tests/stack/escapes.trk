@@ -1,0 +1,35 @@
+// L8: struct literals that outlive the frame stay on the heap: returned,
+// stored into a collection or another literal, passed to a parameter that
+// returns or escapes it.
+struct P { x: i64, y: i64 }
+struct Box { p: P }
+
+fn make(a: i64) -> P {
+    let p = P { x: a, y: a * 2 };
+    return p;
+}
+
+fn pass(p: P) -> P {
+    return p;
+}
+
+fn boxed(a: i64) -> Box {
+    let p = P { x: a, y: a + 1 };
+    let b = Box { p: p };
+    return b;
+}
+
+fn main() -> void {
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 100 {
+        let m = make(i);
+        let q = P { x: i, y: 1 };
+        let r = pass(q);
+        let ps = [P { x: i, y: 3 }];
+        let b = boxed(i);
+        acc = acc + m.y + r.x + ps[0].y + b.p.y;
+        i = i + 1;
+    }
+    print(acc);
+}
