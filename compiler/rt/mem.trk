@@ -177,14 +177,13 @@ fn rt_realloc(p: i64, size: i64) -> i64 {
 
 // ------------------------------------------------------- raw memory ops
 
+// x86-64 allows unaligned word access, so copy words whatever the alignment.
 fn rt_copy(dst: i64, src: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
-    if ((dst | src) & 7) == 0 {
-        let words = n & (0 - 8);
-        while i < words {
-            store64(dst + i, load64(src + i));
-            i = i + 8;
-        }
+    let words = n & (0 - 8);
+    while i < words {
+        store64(dst + i, load64(src + i));
+        i = i + 8;
     }
     while i < n {
         store8(dst + i, load8(src + i));

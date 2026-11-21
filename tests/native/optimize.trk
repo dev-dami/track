@@ -1,0 +1,43 @@
+fn sumr(n: i64) -> i64 {
+    if n == 0 {
+        return 0;
+    }
+    return n + sumr(n - 1);
+}
+
+fn noisy(n: i64) -> i64 {
+    print(n);
+    return n * 2;
+}
+
+fn walk(n: i64, step: i64) -> i64 {
+    if n <= 0 {
+        return step;
+    }
+    return noisy(n) + walk(n - step, step + 1);
+}
+
+fn tri(n: i64) -> i64 {
+    if n < 3 {
+        return 1;
+    }
+    let a = tri(n - 1);
+    return a + tri(n - 3);
+}
+
+fn main() -> void {
+    print(sumr(100000));
+    print(walk(20, 1));
+    print(tri(30));
+    print(-7 / 2);
+    print(-7 % 2);
+    print(-1000000 / 1000000007);
+    print(-5000000000000 % 1000000007);
+    print(123456789 % 1024);
+    print(-123456789 % 1024);
+    print(-123456789 / 64);
+    let mut x: i64 = -99;
+    print(x * 31);
+    print(x * 9);
+    print(x * 33);
+}
