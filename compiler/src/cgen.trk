@@ -16,6 +16,7 @@ import "lexer";
 import "ast";
 import "symbols";
 import "runtime_c";
+import "life";
 
 const G_DECLS = 0;    // current function: local declarations
 const G_BODY = 1;     // current function: statements
@@ -24,14 +25,10 @@ const G_NTEMP = 3;
 const G_NSLOT = 4;    // stack tuple slots declared so far
 const G_INDENT = 5;
 const G_BOUND = 6;    // scope stack: (name, previous binding) pairs
-const G_TUPLES = 7;   // local id -> 1 when it only ever holds stack tuples
 const G_RETVAL = 8;   // current function returns a value
 const G_EXTERNS = 9;  // extern (non-runtime) functions in first-use order
 const G_FUNCS = 10;   // emitted function definitions
 const G_PROTOS = 11;  // user function prototypes
-const G_STMT = 12;    // statement gen_block is generating
-const G_STMTS = 13;   // ... and the block list holding it
-const G_STMTI = 14;   // ... at this index
 const G_SLOTS = 15;
 
 fn g(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
@@ -73,7 +70,6 @@ fn new_local(c: i64, name: i64) -> i64 {
     let id = g_counter(c, G_NLOCAL);
     let text = local_name(c, id);
     sb_line(g(c, G_DECLS), text_cat3("    tk_w ", text, text_cat3(" = 0; /* ", name_text(c, name), " */")));
-    vpush(g(c, G_TUPLES), 0);
     bind(c, name, id);
     return id;
 }
@@ -466,9 +462,6 @@ fn gen_block(c: i64, body: i64) -> i64 {
     let mut last: i64 = "0";
     let mut i: i64 = 0;
     while i < list_len(c, body) {
-        g_set(c, G_STMT, list_at(c, body, i));
-        g_set(c, G_STMTS, body);
-        g_set(c, G_STMTI, i);
         last = gen(c, list_at(c, body, i));
         i = i + 1;
     }
@@ -542,8 +535,8 @@ fn gen_return(c: i64, n: i64) -> i64 {
     return "0";
 }
 
-// A tuple literal is a heap cell unless it is bound to a local that never
-// lets it escape (see `tuple_stays_local`): then it lives in a stack slot of
+// A tuple literal is a heap cell unless the placement plan (life.trk,
+// `life_place_of`) puts it on the stack: then it lives in a stack slot of
 // the current frame, one slot per literal site, reused on every execution.
 fn gen_tuple(c: i64, n: i64) -> i64 {
     return gen_cell(c, gen_list_values(c, na(c, n)));
@@ -571,132 +564,6 @@ fn gen_stack_tuple(c: i64, n: i64) -> i64 {
         j = j + 1;
     }
     return text_cat3("TK_W(", slot, ")");
-}
-
-// Escape analysis for `let name = (..)`, run over the statements after the
-// `let` in its block. The tuple stays local when `name` is only read by
-// tuple indexing (`name.0`), destructured (`let (a, b) = name`), matched
-// against patterns that never bind the whole value, or reassigned. Any
-// other mention (returned, passed, stored, copied, borrowed, lens target,
-// block value) is an escape. A shadowing `let name` only makes it stricter.
-fn tuple_stays_local(c: i64, n: i64) -> bool {
-    if g(c, G_STMT) != n {
-        return false;
-    }
-    let body = g(c, G_STMTS);
-    let name = na(c, n);
-    let mut i: i64 = g(c, G_STMTI) + 1;
-    if i >= list_len(c, body) {
-        return false;
-    }
-    while i < list_len(c, body) {
-        if !tuple_use_ok(c, list_at(c, body, i), name) {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
-fn tuple_uses_ok(c: i64, l: i64, name: i64) -> bool {
-    let mut i: i64 = 0;
-    while i < list_len(c, l) {
-        if !tuple_use_ok(c, list_at(c, l, i), name) {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
-fn tuple_use_opt(c: i64, n: i64, name: i64) -> bool {
-    if n < 0 {
-        return true;
-    }
-    return tuple_use_ok(c, n, name);
-}
-
-fn is_name_var(c: i64, n: i64, name: i64) -> bool {
-    if n < 0 {
-        return false;
-    }
-    return nk(c, n) == K_VAR && na(c, n) == name;
-}
-
-fn tuple_use_ok(c: i64, n: i64, name: i64) -> bool {
-    let k = nk(c, n);
-    if k == K_INT || k == K_STR || k == K_BOOL { return true; }
-    if k == K_VAR { return na(c, n) != name; }
-    if k == K_BIN { return tuple_use_ok(c, nb(c, n), name) && tuple_use_ok(c, nc(c, n), name); }
-    if k == K_UN { return tuple_use_ok(c, nb(c, n), name); }
-    if k == K_ADDR { return tuple_use_ok(c, na(c, n), name); }
-    if k == K_ARRAY || k == K_TUPLE { return tuple_uses_ok(c, na(c, n), name); }
-    if k == K_TINDEX {
-        if is_name_var(c, na(c, n), name) {
-            return true;
-        }
-        return tuple_use_ok(c, na(c, n), name);
-    }
-    if k == K_INDEX || k == K_RANGE { return tuple_use_ok(c, na(c, n), name) && tuple_use_ok(c, nb(c, n), name); }
-    if k == K_SLICE { return tuple_use_ok(c, na(c, n), name) && tuple_use_opt(c, nb(c, n), name) && tuple_use_opt(c, nc(c, n), name); }
-    if k == K_FIELD { return tuple_use_ok(c, na(c, n), name); }
-    if k == K_SINIT {
-        let fields = nb(c, n);
-        let mut i: i64 = 0;
-        while i < list_len(c, fields) {
-            if !tuple_use_ok(c, list_at(c, fields, i + 1), name) {
-                return false;
-            }
-            i = i + 2;
-        }
-        return true;
-    }
-    if k == K_LENS { return na(c, n) != name && tuple_uses_ok(c, nc(c, n), name); }
-    if k == K_CALL { return tuple_uses_ok(c, nb(c, n), name); }
-    if k == K_MACROCALL { return tuple_uses_ok(c, nb(c, n), name) && tuple_uses_ok(c, nc(c, n), name); }
-    if k == K_IF { return tuple_use_ok(c, na(c, n), name) && tuple_uses_ok(c, nb(c, n), name) && tuple_uses_ok(c, nc(c, n), name); }
-    if k == K_WHILE { return tuple_use_ok(c, na(c, n), name) && tuple_uses_ok(c, nb(c, n), name); }
-    if k == K_FOR { return tuple_use_ok(c, nb(c, n), name) && tuple_uses_ok(c, nc(c, n), name); }
-    if k == K_RETURN { return tuple_use_opt(c, na(c, n), name); }
-    if k == K_ASSIGN {
-        if is_name_var(c, na(c, n), name) {
-            return tuple_use_ok(c, nb(c, n), name);
-        }
-        return tuple_use_ok(c, na(c, n), name) && tuple_use_ok(c, nb(c, n), name);
-    }
-    if k == K_LET { return tuple_use_ok(c, nd(c, n), name); }
-    if k == K_LETD {
-        if is_name_var(c, nc(c, n), name) && nk(c, na(c, n)) != P_IDENT {
-            return true;
-        }
-        return tuple_use_ok(c, nc(c, n), name);
-    }
-    if k == K_MATCH {
-        let arms = nb(c, n);
-        if is_name_var(c, na(c, n), name) {
-            let mut j: i64 = 0;
-            while j < list_len(c, arms) {
-                if nk(c, list_at(c, arms, j)) == P_IDENT {
-                    return false;
-                }
-                j = j + 3;
-            }
-        } else if !tuple_use_ok(c, na(c, n), name) {
-            return false;
-        }
-        let mut i: i64 = 0;
-        while i < list_len(c, arms) {
-            if !tuple_use_opt(c, list_at(c, arms, i + 1), name) || !tuple_use_ok(c, list_at(c, arms, i + 2), name) {
-                return false;
-            }
-            i = i + 3;
-        }
-        return true;
-    }
-    if k == K_FN || k == K_MACRODEF || k == K_USE || k == K_CONST || k == K_TYPEDEF || k == K_ENUM || k == K_UNION || k == K_STRUCT {
-        return true;
-    }
-    return false;
 }
 
 fn load_text(base: i64, i: i64) -> i64 {
@@ -884,18 +751,6 @@ fn gen_lens(c: i64, n: i64) -> i64 {
     return t;
 }
 
-// `target` names a local whose `let` proved it never lets a tuple escape.
-fn stack_tuple_target(c: i64, target: i64) -> bool {
-    if nk(c, target) != K_VAR {
-        return false;
-    }
-    let id = ni(c, na(c, target), NI_CVAR);
-    if id < 0 {
-        return false;
-    }
-    return vget(g(c, G_TUPLES), id) == 1;
-}
-
 fn gen(c: i64, n: i64) -> i64 {
     let k = nk(c, n);
     if k == K_INT { return text_of_int(na(c, n)); }
@@ -921,10 +776,9 @@ fn gen(c: i64, n: i64) -> i64 {
     if k == K_CALL { return gen_call(c, n, nb(c, n)); }
     if k == K_MACROCALL { return gen_call(c, n, nb(c, n)); }
     if k == K_LET {
-        if nk(c, nd(c, n)) == K_TUPLE && tuple_stays_local(c, n) {
+        if nk(c, nd(c, n)) == K_TUPLE && life_place_of(c, nd(c, n)) == PL_STACK {
             let sv = gen_stack_tuple(c, nd(c, n));
             let sid = new_local(c, na(c, n));
-            vset(g(c, G_TUPLES), sid, 1);
             emit(c, text_cat3(local_name(c, sid), " = ", text_cat(sv, ";")));
             return local_name(c, sid);
         }
@@ -936,7 +790,7 @@ fn gen(c: i64, n: i64) -> i64 {
     if k == K_ASSIGN {
         let target = na(c, n);
         let mut v: i64 = 0;
-        if stack_tuple_target(c, target) && nk(c, nb(c, n)) == K_TUPLE {
+        if nk(c, nb(c, n)) == K_TUPLE && life_place_of(c, nb(c, n)) == PL_STACK {
             v = gen_stack_tuple(c, nb(c, n));
         } else {
             v = gen(c, nb(c, n));
@@ -1036,8 +890,6 @@ fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
     g_set(c, G_NLOCAL, 0);
     g_set(c, G_NTEMP, 0);
     g_set(c, G_NSLOT, 0);
-    g_set(c, G_TUPLES, vnew());
-    g_set(c, G_STMT, -1);
     g_set(c, G_INDENT, 1);
     let is_main = text_eq(name_text(c, na(c, f)), "main");
     let ret = nd(c, f);
@@ -1232,6 +1084,7 @@ fn track_runtime_entry(c: i64, out: i64) -> i64 {
 
 // Generate the C translation unit for the loaded, checked program.
 fn generate_c(c: i64) -> i64 {
+    life_place_program(c);
     let state = vfill(vnew_cap(G_SLOTS), G_SLOTS, 0);
     vset(c, CX_GEN, state);
     g_set(c, G_BOUND, vnew());

@@ -1,0 +1,30 @@
+// L7: the placement plan (`trackc life --place`). One site per case:
+// a destructured tuple, a returned tuple, values stored into a
+// collection, a value passed to an escaping parameter, and a fresh Str
+// that dies in this frame.
+struct P { x: i64, y: i64 }
+
+fn pair(a: i64, b: i64) -> (i64, i64) {
+    return (a, b);
+}
+
+@macro hold(s: Str) -> i64 {
+    return 0;
+}
+
+fn keep(s: Str) -> i64 {
+    return @hold(s);
+}
+
+fn main() -> void {
+    let t = (1, 2);
+    let (a, b) = t;
+    let r = pair(a, b);
+    print(r.0);
+    let ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];
+    print(array_len(&ps));
+    let gone = str_concat("c", "d");
+    print(keep(gone));
+    let s = str_concat("a", "b");
+    print(s);
+}
