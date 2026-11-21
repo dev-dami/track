@@ -42,7 +42,7 @@ const CK_LENSCOUNT = 2;  // live lens aliases
 const CK_FLOOR = 3;      // slots below this index are invisible (macro bodies)
 const CK_RET = 4;        // current return type (-1 = none)
 const CK_PARAMS = 5;     // vector of current parameter names
-const CK_GENERICS = 6;   // unused (generic parameters are linear)
+const CK_GENERICS = 6;   // [name, type]*: generic bindings of the instantiation being checked
 const CK_FNNAMES = 7;    // names present in the function table, in order
 const CK_STAMP = 8;
 const CK_TY_I32 = 9;
@@ -57,7 +57,10 @@ const CK_SEEN = 17;      // scratch: per-slot stamp for touched_slots
 const CK_PRESTATE = 18;  // scratch: per-slot state before the log range
 const CK_SEENSTAMP = 19;
 const CK_TY_UNK = 20;    // placeholder type of a value whose type is not known
-const CK_SLOTS = 21;
+const CK_INSTS = 21;     // instantiation keys already queued (see `note_instantiation`)
+const CK_PENDING = 22;   // queued instantiations: (fn node, bindings vector) pairs
+const CK_TY_OPAQUE = 23; // stand-in for a generic argument whose type is linear or unknown
+const CK_SLOTS = 24;
 
 fn ck(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_CHK), slot); }
 fn ck_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_CHK), slot, v); }
@@ -95,8 +98,27 @@ fn ty_is_copy(c: i64, t: i64) -> bool {
     if k == T_REF {
         return true;
     }
-    // A generic `T` may stand for a linear type, so it is never Copy.
+    // A generic `T` is Copy exactly when the instantiation being checked
+    // binds it to a Copy type; outside one it may be linear.
+    if k == T_CUSTOM {
+        let bound = generic_binding(c, na(c, t));
+        if bound >= 0 {
+            return ty_is_copy(c, bound);
+        }
+    }
     return false;
+}
+
+fn generic_binding(c: i64, name: i64) -> i64 {
+    let b = ck(c, CK_GENERICS);
+    let mut i: i64 = 0;
+    while i < vlen(b) {
+        if vget(b, i) == name {
+            return vget(b, i + 1);
+        }
+        i = i + 2;
+    }
+    return -1;
 }
 
 fn ty_is_ref(c: i64, t: i64) -> bool {
@@ -1323,8 +1345,65 @@ fn bind_pattern(c: i64, p: i64, ty: i64, mutable: i64) -> i64 {
     return 0;
 }
 
+// True when control never leaves `body` normally: it returns, aborts,
+// loops forever (`while true`; there is no `break`), or ends in an if/else
+// or match whose every branch diverges.
+fn body_diverges(c: i64, body: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < list_len(c, body) {
+        if node_diverges(c, list_at(c, body, i)) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn node_diverges(c: i64, n: i64) -> bool {
+    if n < 0 {
+        return false;
+    }
+    let k = nk(c, n);
+    if k == K_RETURN {
+        return true;
+    }
+    if k == K_CALL {
+        let name = na(c, n);
+        if ni(c, name, NI_FN) >= 0 || ni(c, last_segment(c, name), NI_FN) >= 0 {
+            return false;
+        }
+        let t = name_text(c, last_segment(c, name));
+        return text_eq(t, "abort") || text_eq(t, "exit");
+    }
+    if k == K_WHILE {
+        return nk(c, na(c, n)) == K_BOOL && na(c, na(c, n)) == 1;
+    }
+    if k == K_IF {
+        return body_diverges(c, nb(c, n)) && body_diverges(c, nc(c, n));
+    }
+    if k == K_MATCH {
+        let arms = nb(c, n);
+        if list_len(c, arms) == 0 {
+            return false;
+        }
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            if !node_diverges(c, list_at(c, arms, i + 2)) {
+                return false;
+            }
+            i = i + 3;
+        }
+        return true;
+    }
+    return false;
+}
+
 fn check_if(c: i64, n: i64) -> i64 {
     check_expr(c, na(c, n));
+    // A branch that diverges never reaches the code after the if, so it
+    // takes no part in the merge: the other branch's state carries on.
+    let then_div = body_diverges(c, nb(c, n));
+    let else_div = body_diverges(c, nc(c, n));
     let pre = snapshot(c);
     let count = vget(pre, 0);
     check_body(c, nb(c, n));
@@ -1382,7 +1461,7 @@ fn check_if(c: i64, n: i64) -> i64 {
             then_b = vget(then_vals, ti * 2 + 1);
         }
         let else_state = vget(uelse, m * 2);
-        if slot_visible(c, slot) && then_state != else_state {
+        if slot_visible(c, slot) && then_state != else_state && !then_div && !else_div {
             let name = vf(c, slot, V_NAME);
             cfail(c, n, text_cat3("Resource ", quoted(c, name), text_cat3(" has inconsistent state after if/else. Then branch: ", state_name(then_state), text_cat(", Else branch: ", state_name(else_state)))));
         }
@@ -1395,14 +1474,26 @@ fn check_if(c: i64, n: i64) -> i64 {
         let slot = vget(u, s);
         let mut b = vf(c, slot, V_BORROWS);
         let ti = vget(uthen, s);
+        let mut then_state = vf(c, slot, V_STATE);
+        let mut then_b = b;
         if ti >= 0 {
-            b = vget(then_vals, ti * 2 + 1);
+            then_state = vget(then_vals, ti * 2);
+            then_b = vget(then_vals, ti * 2 + 1);
         }
-        if b < 0 {
-            b = vget(uelse, s * 2 + 1);
+        if else_div && !then_div {
+            sset(c, slot, V_STATE, then_state);
+            sset(c, slot, V_BORROWS, then_b);
+        } else if then_div {
+            sset(c, slot, V_STATE, vget(uelse, s * 2));
+            sset(c, slot, V_BORROWS, vget(uelse, s * 2 + 1));
+        } else {
+            b = then_b;
+            if b < 0 {
+                b = vget(uelse, s * 2 + 1);
+            }
+            sset(c, slot, V_STATE, vget(uelse, s * 2));
+            sset(c, slot, V_BORROWS, b);
         }
-        sset(c, slot, V_STATE, vget(uelse, s * 2));
-        sset(c, slot, V_BORROWS, b);
         s = s + 1;
     }
     update_borrow_states(c);
@@ -1441,6 +1532,141 @@ fn for_elem_type(c: i64, t: i64) -> i64 {
         return na(c, t);
     }
     return ck(c, CK_TY_UNK);
+}
+
+// ------------------------------------------------------ generics
+//
+// A generic function body is checked once per distinct instantiation, with
+// each type parameter bound to the class of its argument type: Copy types
+// (integers, bool, references) bind to i64, every other type to an opaque
+// linear type. Copy-ness is all the checker derives from a type parameter,
+// so this is the same verdict as binding the concrete type, and it caps a
+// function at 2^generics instantiations (no unbounded recursion).
+
+// The argument type bound to generic `name` by matching parameter type
+// `pty` against argument type `aty`, or -1.
+fn match_generic(c: i64, name: i64, pty: i64, aty: i64) -> i64 {
+    if pty < 0 || aty < 0 {
+        return -1;
+    }
+    let k = nk(c, pty);
+    if k == T_CUSTOM {
+        if na(c, pty) == name {
+            return aty;
+        }
+        return -1;
+    }
+    if (k == T_REF || k == T_PTR || k == T_SLICE || k == T_ARRAY) && nk(c, aty) == k {
+        return match_generic(c, name, na(c, pty), na(c, aty));
+    }
+    if k == T_TUPLE && nk(c, aty) == T_TUPLE && list_len(c, na(c, pty)) == list_len(c, na(c, aty)) {
+        let mut i: i64 = 0;
+        while i < list_len(c, na(c, pty)) {
+            let r = match_generic(c, name, list_at(c, na(c, pty), i), list_at(c, na(c, aty), i));
+            if r >= 0 {
+                return r;
+            }
+            i = i + 1;
+        }
+    }
+    return -1;
+}
+
+fn generic_class(c: i64, t: i64) -> i64 {
+    if t >= 0 && t != ck(c, CK_TY_UNK) && ty_is_copy(c, t) {
+        return ck(c, CK_TY_I64);
+    }
+    return ck(c, CK_TY_OPAQUE);
+}
+
+// Queue the instantiation a call to a generic function needs, once per
+// (function, binding classes).
+fn note_instantiation(c: i64, n: i64) -> i64 {
+    let mut target = na(c, n);
+    if ni(c, target, NI_FN) < 0 {
+        target = last_segment(c, target);
+    }
+    let f = ni(c, target, NI_FN);
+    if f < 0 || nk(c, f) != K_FN || list_len(c, nb(c, f)) == 0 {
+        return 0;
+    }
+    let generics = nb(c, f);
+    let params = nc(c, f);
+    let args = nb(c, n);
+    let bindings = vnew();
+    let key = sb_new();
+    sb_int(key, f);
+    let mut g: i64 = 0;
+    while g < list_len(c, generics) {
+        let name = list_at(c, generics, g);
+        let mut found: i64 = -1;
+        let mut p: i64 = 0;
+        while found < 0 && p < list_len(c, params) && p / 2 < list_len(c, args) {
+            found = match_generic(c, name, list_at(c, params, p + 1), infer_type(c, list_at(c, args, p / 2)));
+            p = p + 2;
+        }
+        let cls = generic_class(c, found);
+        vpush(bindings, name);
+        vpush(bindings, cls);
+        if cls == ck(c, CK_TY_I64) {
+            sb_add(key, ":c");
+        } else {
+            sb_add(key, ":l");
+        }
+        g = g + 1;
+    }
+    let k = sb_text(key);
+    let seen = ck(c, CK_INSTS);
+    let mut i: i64 = 0;
+    while i < vlen(seen) {
+        if text_eq(vget(seen, i), k) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    vpush(seen, k);
+    vpush(ck(c, CK_PENDING), f);
+    vpush(ck(c, CK_PENDING), bindings);
+    return 0;
+}
+
+fn check_instantiation(c: i64, f: i64, bindings: i64) -> i64 {
+    let saved = ck(c, CK_GENERICS);
+    ck_set(c, CK_GENERICS, bindings);
+    check_function(c, f, false);
+    ck_set(c, CK_GENERICS, saved);
+    return 0;
+}
+
+// Check every queued instantiation (which may queue more), then each
+// generic function nothing instantiated, with its parameters linear.
+fn check_instantiations(c: i64) -> i64 {
+    let pending = ck(c, CK_PENDING);
+    let mut i: i64 = 0;
+    while i < vlen(pending) {
+        check_instantiation(c, vget(pending, i), vget(pending, i + 1));
+        i = i + 2;
+    }
+    let items = cx(c, CX_ITEMS);
+    let mut j: i64 = 0;
+    while j < vlen(items) {
+        let f = vget(items, j);
+        if nk(c, f) == K_FN && list_len(c, nb(c, f)) > 0 {
+            let mut used = false;
+            let mut p: i64 = 0;
+            while p < vlen(pending) {
+                if vget(pending, p) == f {
+                    used = true;
+                }
+                p = p + 2;
+            }
+            if !used {
+                check_instantiation(c, f, vnew());
+            }
+        }
+        j = j + 1;
+    }
+    return 0;
 }
 
 fn check_function(c: i64, n: i64, is_macro: bool) -> i64 {
@@ -1554,6 +1780,9 @@ fn check_match(c: i64, n: i64) -> i64 {
         check_expr(c, list_at(c, arms, i + 2));
         let t = touched_slots(c, pre, count);
         let mut a: i64 = 0;
+        if node_diverges(c, list_at(c, arms, i + 2)) {
+            a = vlen(t);
+        }
         while a < vlen(t) {
             let slot = vget(t, a);
             if vf(c, slot, V_STATE) == ST_SPENT {
@@ -1572,7 +1801,14 @@ fn check_match(c: i64, n: i64) -> i64 {
         restore(c, pre);
         i = i + 3;
     }
-    let narms = list_len(c, arms) / 3;
+    let mut narms: i64 = 0;
+    let mut q: i64 = 0;
+    while q < list_len(c, arms) {
+        if !node_diverges(c, list_at(c, arms, q + 2)) {
+            narms = narms + 1;
+        }
+        q = q + 3;
+    }
     let mut m: i64 = 0;
     while m < vlen(spent) {
         let slot = vget(spent, m);
@@ -1768,6 +2004,7 @@ fn check_expr(c: i64, n: i64) -> i64 {
     if k == K_CALL {
         check_call_target(c, n, na(c, n));
         check_call_args(c, n);
+        note_instantiation(c, n);
         return check_list(c, nb(c, n));
     }
     if k == K_LET {
@@ -1822,6 +2059,9 @@ fn check_expr(c: i64, n: i64) -> i64 {
         return check_assign(c, n);
     }
     if k == K_FN {
+        if list_len(c, nb(c, n)) > 0 {
+            return 0; // checked per instantiation (check_instantiations)
+        }
         return check_function(c, n, false);
     }
     if k == K_MACRODEF {
@@ -1931,6 +2171,10 @@ fn checker_init(c: i64) -> i64 {
     ck_set(c, CK_TY_VOID, prim_type(c, PRIM_VOID));
     ck_set(c, CK_TY_I64, prim_type(c, PRIM_I64));
     ck_set(c, CK_TY_STRLIT, node1(c, T_PTR, prim_type(c, PRIM_I32), -1));
+    ck_set(c, CK_GENERICS, vnew());
+    ck_set(c, CK_INSTS, vnew());
+    ck_set(c, CK_PENDING, vnew());
+    ck_set(c, CK_TY_OPAQUE, ty_custom(c, "<generic>"));
     register_builtins(c);
     register_runtime(c);
     return 0;
@@ -1966,5 +2210,7 @@ fn check_program(c: i64) -> i64 {
         check_expr(c, vget(items, j));
         j = j + 1;
     }
+    // Pass 3: generic function bodies, once per instantiation.
+    check_instantiations(c);
     return 0;
 }
