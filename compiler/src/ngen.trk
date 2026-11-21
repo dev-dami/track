@@ -63,11 +63,10 @@ const NG_SLEN = 38;    // slot -> length of the array literal it always holds (-
 const NG_SMAX = 39;    // slot -> upper bound of its value, known to be >= 0 (-1)
 const NG_ASSIGNED = 40; // names assigned anywhere in the function (-1: unknown)
 const NG_PIN = 41;     // (slot, register) pairs: slots pinned to a caller-saved register
-const NG_FRAMEFIX = 42; // positions of epilogue `add rsp, imm32` to patch with the frame size
-const NG_ACCBODY = 43; // accumulator loop: code position after its guard (-1)
-const NG_ACCRET = 44;  // accumulator loop: guard jumps waiting for the loop's exit code (-1)
-const NG_STRLEN = 45;  // (string slot, length slot) pairs hoisted by enclosing store-free loops
-const NG_SLOTS = 46;
+const NG_ACCBODY = 42; // accumulator loop: code position after its guard (-1)
+const NG_ACCRET = 43;  // accumulator loop: guard jumps waiting for the loop's exit code (-1)
+const NG_STRLEN = 44;  // (string slot, length slot) pairs hoisted by enclosing store-free loops
+const NG_SLOTS = 45;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -3516,23 +3515,16 @@ fn ng_epilogue(c: i64) -> i64 {
     return x_ret(b);
 }
 
-// Pop the callee-saved registers (pushed right below rbp) and the frame.
+// Reload the callee-saved registers (saved right below rbp) and drop the frame.
 fn ng_unframe(c: i64) -> i64 {
     let b = ncode(c);
     let saved = ng(c, NG_SAVED);
-    let n = vlen(saved);
-    if n == 0 {
-        return x_byte(b, 201); // leave
+    let mut i: i64 = 0;
+    while i < vlen(saved) {
+        x_rm(b, 139, vget(saved, i), 5, 0 - 8 * (i + 1));
+        i = i + 1;
     }
-    x_bytes3(b, 72, 129, 196); // add rsp, frame size (patched)
-    vpush(ng(c, NG_FRAMEFIX), vlen(b));
-    x_u32(b, 0);
-    let mut i = n - 1;
-    while i >= 0 {
-        x_pop_r(b, vget(saved, i));
-        i = i - 1;
-    }
-    return x_pop_r(b, 5);
+    return x_byte(b, 201); // leave
 }
 
 // Tear down the frame for a tail call whose `nargs` (> 6, else 0) stack
@@ -3626,20 +3618,14 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         ng_set(c, NG_STACKARGS, 0);
     }
     let mut frame: i64 = -1;
-    vtrunc(ng(c, NG_FRAMEFIX), 0);
     let saved = ng(c, NG_SAVED);
     if ng(c, NG_FRAMELESS) == 0 {
-        // push rbp; mov rbp, rsp; push saved...; sub rsp, imm32
-        x_byte(b, 85);
-        x_bytes3(b, 72, 137, 229);
+        frame = x_prologue(b);
         let mut s: i64 = 0;
         while s < vlen(saved) {
-            x_push_r(b, vget(saved, s));
+            x_rm(b, 137, vget(saved, s), 5, 0 - 8 * (s + 1));
             s = s + 1;
         }
-        x_bytes3(b, 72, 129, 236);
-        frame = vlen(b);
-        x_u32(b, 0);
     }
     let mark = ng_scope_begin(c);
     let pass = ng(c, NG_PASS);
@@ -3716,14 +3702,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         return 0;
     }
     let size = ((locals + vlen(saved)) * 8 + 15) / 16 * 16;
-    let fixes = ng(c, NG_FRAMEFIX);
-    let mut fi: i64 = 0;
-    while fi < vlen(fixes) {
-        x_patch32(b, vget(fixes, fi), size - 8 * vlen(saved));
-        fi = fi + 1;
-    }
-    vtrunc(fixes, 0);
-    return x_patch32(b, frame, size - 8 * vlen(saved));
+    return x_patch32(b, frame, size);
 }
 
 const NG_CALLEE_SAVED = 7;
@@ -3932,7 +3911,6 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_SLEN, vnew());
     ng_set(c, NG_SMAX, vnew());
     ng_set(c, NG_PIN, vnew());
-    ng_set(c, NG_FRAMEFIX, vnew());
     ng_set(c, NG_ACCBODY, -1);
     ng_set(c, NG_ACCRET, -1);
     ng_set(c, NG_STRLEN, vnew());

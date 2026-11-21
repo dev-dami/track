@@ -139,7 +139,7 @@ operands wait on the machine stack; locals and temporaries are
 Functions of at most six parameters take them in `rdi`, `rsi`, `r10`,
 `r11`, `rdx`, `rcx`; with more, the caller pushes the arguments left to
 right, the callee reads argument `i` of `n` at `[rbp + 16 + 8(n-1-i)]` and
-pops them on return (`ret 8n`). Saved registers are pushed under `rbp`.
+pops them on return (`ret 8n`).
 A function that makes no calls, syscalls or scratch-heavy inline
 expansions is a leaf: parameters stay in their argument registers, other
 hot locals use the free ones of `rdi`, `rsi`, `r10`, `r11` at no save
