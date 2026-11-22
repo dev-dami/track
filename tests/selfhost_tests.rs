@@ -2218,6 +2218,106 @@ fn temps_free_fresh_cell_temporaries() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Owned Str fields (card L13e, docs/lifecycles.md §3.6): drop glue frees
+/// a struct cell's Str field only when every construction reaching the
+/// free fills it with a fresh Str and no use moves it out. Every program
+/// in tests/strfield/ prints its `<stem>.out` with both backends and plans
+/// as its `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them). `temp`
+/// and `local` own their strings (`deep strs`) and run leak-clean under
+/// LSan; a literal, a parameter's, an aliased or a moved-out Str field is
+/// never freed (ASan clean, leaks not checked: those strings may live on).
+#[test]
+fn strfield_frees_owned_str_fields() {
+    let root = repo();
+    let update = env::var("UPDATE_LIFE").is_ok();
+    let dir = scratch("strfield");
+    let stems = ["alias", "literal", "local", "moved", "param", "temp"];
+    for stem in stems {
+        let rel = format!("tests/strfield/{}.trk", stem);
+        let want = fs::read_to_string(root.join(format!("tests/strfield/{}.out", stem))).unwrap();
+        let exe = dir.join(stem);
+        let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
+        assert!(out.status.success(), "{}: build failed", rel);
+        assert_eq!(run_exe(&exe), (want.clone(), Some(0)), "{}: C output", rel);
+        let nat = dir.join(format!("{}_nat", stem));
+        let out = run_trackc(
+            &["build", "--native", &rel, "-o", nat.to_str().unwrap()],
+            &root,
+        );
+        assert!(out.status.success(), "{}: native build failed", rel);
+        assert_eq!(run_exe(&nat), (want, Some(0)), "{}: native output", rel);
+        let plan = run_trackc(&["life", "--place", &rel], &root);
+        let got = String::from_utf8_lossy(&plan.stdout).into_owned();
+        let golden = root.join(format!("tests/strfield/{}.place", stem));
+        if update {
+            fs::write(&golden, &got).unwrap();
+        }
+        let want = fs::read_to_string(&golden)
+            .unwrap_or_else(|_| panic!("missing golden {}", golden.display()));
+        assert_eq!(got, want, "{}: placement plan differs", rel);
+        let owns = got.contains(" strs ");
+        match stem {
+            "temp" | "local" => assert!(owns, "{}: no owned Str field in\n{}", stem, got),
+            "param" => {
+                // Only main's `keep` owns its string: the cells built from
+                // the parameter in build_local/build_temp do not.
+                let callee = got.split("fn main").next().unwrap_or("");
+                assert!(!callee.contains(" strs "), "param: callee frees a parameter's Str:\n{}", got);
+            }
+            _ => assert!(!owns, "{}: a Str field it does not own is freed:\n{}", stem, got),
+        }
+    }
+    let asan = Command::new("gcc")
+        .args(["-fsanitize=address", "-x", "c", "-", "-o"])
+        .arg(dir.join("probe"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"int main(void){return 0;}")?;
+            child.wait()
+        })
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !asan {
+        let _ = fs::remove_dir_all(&dir);
+        return;
+    }
+    for stem in stems {
+        let rel = format!("tests/strfield/{}.trk", stem);
+        let exe = dir.join(format!("{}_asan", stem));
+        let out = Command::new(trackc())
+            .args(["build", &rel, "-o", exe.to_str().unwrap()])
+            .env("CC", "gcc -fsanitize=address -g")
+            .env("TRACKC_CACHE", dir.join("cache"))
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}: ASan build failed", rel);
+        let leaks = if matches!(stem, "temp" | "local" | "literal") {
+            "detect_leaks=1"
+        } else {
+            "detect_leaks=0"
+        };
+        let run = Command::new(&exe)
+            .env("ASAN_OPTIONS", leaks)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success() && !err.contains("Sanitizer"),
+            "{}: ASan reports an error or a leak:\n{}",
+            rel,
+            err
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Caller return slots in the C backend (card L10, docs/lifecycles.md
 /// §3.2): every program in tests/retslot/ builds, prints its `<stem>.out`
 /// and plans as its `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them).

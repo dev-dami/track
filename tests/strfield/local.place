@@ -1,0 +1,8 @@
+fn main
+  L13 struct heap-autofree deep strs ends L14
+  L13 call heap ends -
+  L15 struct heap-autofree deep strs ends L18
+  L15 call heap ends -
+  L15 str temp-autofree ends L15
+  L17 struct heap ends -
+  L17 call heap ends -

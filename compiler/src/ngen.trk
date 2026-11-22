@@ -661,6 +661,7 @@ fn ng_free_slot(c: i64, k: i64, site: i64) -> i64 {
         return ng_call_regs(c, intern(c, hd_free_name(hk)), 1);
     }
     if life_auto_deep(c, site) {
+        ng_drop_strs(c, site);
         return ng_drop(c, pl_site_type(c, site), 0);
     }
     return ng_dealloc_rax(c);
@@ -702,6 +703,27 @@ fn ng_dealloc_rax(c: i64) -> i64 {
     ng_call_regs(c, intern(c, "dealloc"), 1);
     x_patch_here(b, null);
     return x_patch_here(b, done);
+}
+
+// Free the Str fields deep site `site`'s cell in rax owns (cgen
+// `gen_drop_strs`); rax is kept.
+fn ng_drop_strs(c: i64, site: i64) -> i64 {
+    let m = life_str_mask(c, site);
+    if m == 0 {
+        return 0;
+    }
+    let b = ncode(c);
+    x_push_rax(b);
+    let mut f: i64 = 0;
+    while (m >> f) != 0 {
+        if ((m >> f) & 1) == 1 {
+            x_rm(b, 139, 0, 4, 0); // mov rax, [rsp]
+            x_rm(b, 139, 7, 0, 8 * (f + 1)); // mov rdi, [rax + 8 * (f + 1)]
+            ng_call_regs(c, intern(c, hd_free_name(HK_STR)), 1);
+        }
+        f = f + 1;
+    }
+    return x_pop_rax(b);
 }
 
 // Drop glue for the cell in rax of type `t` (cgen `gen_drop`): free its
@@ -3606,6 +3628,7 @@ fn ng_free_temp(c: i64, code: i64) -> i64 {
     }
     let site = 0 - 1 - code;
     if life_auto_deep(c, site) {
+        ng_drop_strs(c, site);
         return ng_drop(c, pl_site_type(c, site), 0);
     }
     return ng_dealloc_rax(c);
