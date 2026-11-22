@@ -1,0 +1,7 @@
+# ```track blocks in markdown are checked one by one, lines shifted to the block
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}
+{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///guide.md","languageId":"markdown","version":1,"text":"# Guide\n\n```track\nfn main() -> i64 {\n    return 0;\n}\n```\n\nText.\n\n```trk\nfn main() -> i64 {\n    return nope;\n}\n```\n\n```rust\nnot track\n```\n"}}}
+{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"file:///guide.md"},"text":"```track\nfn main() -> i64 { return 0; }\n```\n"}}
+{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"file:///guide.md"}}}
+{"jsonrpc":"2.0","id":2,"method":"shutdown"}
+{"jsonrpc":"2.0","method":"exit"}

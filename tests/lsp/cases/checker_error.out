@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"triggerCharacters":[".",":"]},"hoverProvider":true},"serverInfo":{"name":"trackc","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///work/use%20after.trk","diagnostics":[{"range":{"start":{"line":3,"character":10},"end":{"line":3,"character":11}},"severity":1,"code":"E0200","source":"trackc","message":"Use-after-free! Resource 's' is already spent."}]}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///work/use%20after.trk","diagnostics":[{"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":5}},"severity":2,"code":"W0301","source":"trackc","message":"'s' is created and never read; remove it or name it '_s'."}]}}
+{"jsonrpc":"2.0","id":2,"result":{"contents":{"kind":"markdown","value":"Declare a variable\n\n```track\nlet x = 42;\n```"}}}
+{"jsonrpc":"2.0","id":3,"result":null}
+exit=0

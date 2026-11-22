@@ -1,0 +1,12 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"triggerCharacters":[".",":"]},"hoverProvider":true},"serverInfo":{"name":"trackc","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///shapes.trk","diagnostics":[{"range":{"start":{"line":10,"character":12},"end":{"line":10,"character":13}},"severity":1,"code":"E0200","source":"trackc","message":"Undeclared variable 'Co'."}]}}
+{"jsonrpc":"2.0","id":2,"result":[{"label":"Color::Red","kind":20,"detail":"Enum variant of Color"},{"label":"Color::Green","kind":20,"detail":"Enum variant of Color"}]}
+{"jsonrpc":"2.0","id":3,"result":[{"label":"Color::Red","kind":20,"detail":"Enum variant of Color"},{"label":"Color::Green","kind":20,"detail":"Enum variant of Color"}]}
+{"jsonrpc":"2.0","id":4,"result":[{"label":"i64","kind":25,"detail":"Type"}]}
+{"jsonrpc":"2.0","id":5,"result":null}
+{"jsonrpc":"2.0","id":6,"result":[{"label":"@compile_error","kind":3,"detail":"Macro"},{"label":"compute","kind":3,"detail":"User-defined function"}]}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///shapes.trk","diagnostics":[{"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":1}},"severity":1,"code":"E0100","source":"trackc","message":"expected '}', found end of file"}]}}
+{"jsonrpc":"2.0","id":7,"result":[{"label":"Shape::Circle","kind":20,"detail":"Union variant of Shape"},{"label":"Shape::Dot","kind":20,"detail":"Union variant of Shape"}]}
+{"jsonrpc":"2.0","id":8,"result":[{"label":"fn","detail":"Keyword"},{"label":"for","detail":"Keyword"},{"label":"false","detail":"Keyword"},{"label":"file_open","kind":3,"detail":"Built-in function"},{"label":"file_close","kind":3,"detail":"Built-in function"},{"label":"file_exists","kind":3,"detail":"Built-in function"},{"label":"file_copy","kind":3,"detail":"Built-in function"}]}
+{"jsonrpc":"2.0","id":9,"result":null}
+exit=0

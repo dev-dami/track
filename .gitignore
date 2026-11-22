@@ -32,3 +32,6 @@ scratch/benchmarks/rec
 !tests/temps_cell/*.out
 !tests/strfield/*.out
 !tests/returns/*.out
+
+# Recorded LSP sessions are expected output, not build products
+!tests/lsp/cases/*.out

@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"triggerCharacters":[".",":"]},"hoverProvider":true},"serverInfo":{"name":"trackc","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///guide.md","diagnostics":[{"range":{"start":{"line":12,"character":11},"end":{"line":12,"character":12}},"severity":1,"code":"E0200","source":"trackc","message":"Undeclared variable 'nope'."}]}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///guide.md","diagnostics":[]}}
+{"jsonrpc":"2.0","id":2,"result":null}
+exit=0

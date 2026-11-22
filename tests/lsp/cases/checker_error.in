@@ -1,0 +1,7 @@
+# ownership errors and warnings carry their position, code and severity
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}
+{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///work/use%20after.trk","languageId":"track","version":1,"text":"fn main() -> i64 {\n    let s = str_concat(\"a\", \"b\");\n    let t = s;\n    print(s);\n    return 0;\n}\n"}}}
+{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///work/use%20after.trk","version":2},"contentChanges":[{"text":"fn main() -> i64 {\n    let s = str_concat(\"a\", \"b\");\n    return 0;\n}\n"}]}}
+{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///work/use%20after.trk"},"position":{"line":1,"character":5}}}
+{"jsonrpc":"2.0","id":3,"method":"shutdown"}
+{"jsonrpc":"2.0","method":"exit"}

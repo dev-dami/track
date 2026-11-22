@@ -149,17 +149,27 @@ fn file_close(h: i64) -> i64 {
     return 0;
 }
 
-// Read everything from `fd`'s current size; "" on error.
+// Read everything from `fd` to end of file; "" on error. The size from
+// lseek only sizes the first buffer: files whose size is not known up
+// front (/proc, pipes) read whole too.
 fn rt_read_fd(fd: i64) -> i64 {
+    let mut cap: i64 = 4096;
     let end = sys3(SYS_LSEEK, fd, 0, 2);
-    if end < 0 || sys3(SYS_LSEEK, fd, 0, 0) < 0 {
-        return rt_dup_n("", 0);
+    if end >= 0 {
+        if sys3(SYS_LSEEK, fd, 0, 0) < 0 {
+            return rt_dup_n("", 0);
+        }
+        cap = end + 1;
     }
-    let buf = rt_malloc(end + 1);
+    let mut buf = rt_malloc(cap + 1);
     let mut got: i64 = 0;
     let mut going = true;
-    while going && got < end {
-        let r = sys3(SYS_READ, fd, buf + got, end - got);
+    while going {
+        if got == cap {
+            cap = cap * 2;
+            buf = rt_realloc(buf, cap + 1);
+        }
+        let r = sys3(SYS_READ, fd, buf + got, cap - got);
         if r == -4 {
             // EINTR: retry
         } else if r <= 0 {

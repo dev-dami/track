@@ -34,6 +34,7 @@ tk_w eprint(tk_w);
 tk_w track_out(tk_w);
 tk_w track_err(tk_w);
 tk_w read_line(void);
+tk_w track_stdin_read(tk_w);
 tk_w str_from_literal(tk_w);
 tk_w str_free(tk_w);
 tk_w track_str_free(tk_w);
@@ -374,6 +375,7 @@ tk_w tk_resolve_module(tk_w a0, tk_w a1);
 tk_w tk_module_key(tk_w a0);
 tk_w tk_module_loaded(tk_w a0, tk_w a1);
 tk_w tk_load_module(tk_w a0, tk_w a1);
+tk_w tk_load_source(tk_w a0, tk_w a1, tk_w a2);
 tk_w tk_load_embedded_module(tk_w a0, tk_w a1, tk_w a2);
 tk_w tk_load_program(tk_w a0, tk_w a1);
 tk_w tk_const_eval__rs(tk_w a0, tk_w a1, tk_w rs);
@@ -1053,6 +1055,51 @@ tk_w tk_rt_module_source_3(tk_w a0);
 tk_w tk_rt_module_source_4(tk_w a0);
 tk_w tk_rt_module_source_5(tk_w a0);
 tk_w tk_rt_module_source(tk_w a0);
+tk_w tk_lj_node(tk_w a0, tk_w a1);
+tk_w tk_lj_peek(tk_w a0);
+tk_w tk_lj_skip(tk_w a0, tk_w a1);
+tk_w tk_lj_bad(tk_w a0);
+tk_w tk_lj_ws(tk_w a0);
+tk_w tk_lsp_hexdigit(tk_w a0);
+tk_w tk_lj_hex(tk_w a0);
+tk_w tk_lj_utf8(tk_w a0, tk_w a1);
+tk_w tk_lj_string(tk_w a0);
+tk_w tk_lj_value(tk_w a0);
+tk_w tk_lj_parse(tk_w a0);
+tk_w tk_lj_at(tk_w a0, tk_w a1);
+tk_w tk_lj_text(tk_w a0, tk_w a1);
+tk_w tk_lj_text_or(tk_w a0, tk_w a1);
+tk_w tk_lj_int(tk_w a0, tk_w a1);
+tk_w tk_lj_quote(tk_w a0, tk_w a1);
+tk_w tk_lsp_send(tk_w a0);
+tk_w tk_lsp_notify(tk_w a0, tk_w a1);
+tk_w tk_lsp_reply(tk_w a0, tk_w a1);
+tk_w tk_lsp_result(tk_w a0, tk_w a1);
+tk_w tk_lsp_error(tk_w a0, tk_w a1, tk_w a2);
+tk_w tk_lsp_read(void);
+tk_w tk_lsp_doc(tk_w a0, tk_w a1);
+tk_w tk_lsp_uri_path(tk_w a0);
+tk_w tk_lsp_lines(tk_w a0);
+tk_w tk_lsp_dir(tk_w a0, tk_w a1);
+tk_w tk_lsp_sh(tk_w a0, tk_w a1);
+tk_w tk_lsp_tag_ok(tk_w a0);
+tk_w tk_lsp_tag(tk_w a0);
+tk_w tk_lsp_timeout(void);
+tk_w tk_lsp_diag(tk_w a0, tk_w a1, tk_w a2, tk_w a3, tk_w a4, tk_w a5);
+tk_w tk_lsp_check(tk_w a0, tk_w a1, tk_w a2, tk_w a3, tk_w a4, tk_w a5);
+tk_w tk_lsp_update(tk_w a0, tk_w a1, tk_w a2);
+tk_w tk_lsp_check_child(tk_w a0);
+tk_w tk_lsp_split(tk_w a0, tk_w a1);
+tk_w tk_lsp_word_byte(tk_w a0);
+tk_w tk_lsp_item(tk_w a0, tk_w a1, tk_w a2, tk_w a3);
+tk_w tk_lsp_items(tk_w a0, tk_w a1, tk_w a2, tk_w a3, tk_w a4, tk_w a5);
+tk_w tk_lsp_word(tk_w a0, tk_w a1, tk_w a2);
+tk_w tk_lsp_completion(tk_w a0, tk_w a1);
+tk_w tk_lsp_hover_docs(void);
+tk_w tk_lsp_hover(tk_w a0, tk_w a1);
+tk_w tk_lsp_quit(tk_w a0, tk_w a1);
+tk_w tk_lsp_handle(tk_w a0, tk_w a1);
+tk_w tk_lsp_main(void);
 tk_w tk_trackc_version(void);
 tk_w tk_usage(void);
 tk_w tk_track_rt(void);
@@ -7813,44 +7860,7 @@ tk_w tk_load_module(tk_w a0, tk_w a1) {
     tk_w t5 = 0;
     tk_w t6 = 0;
     tk_w t7 = 0;
-    tk_w l2 = 0; /* src */
     tk_w t8 = 0;
-    tk_w l3 = 0; /* f */
-    tk_w t9 = 0;
-    tk_w l4 = 0; /* first */
-    tk_w t10 = 0;
-    tk_w l5 = 0; /* items */
-    tk_w t11 = 0;
-    tk_w t12 = 0;
-    tk_w t13 = 0;
-    tk_w l6 = 0; /* dir */
-    tk_w t14 = 0;
-    tk_w l7 = 0; /* all */
-    tk_w t15 = 0;
-    tk_w l8 = 0; /* files */
-    tk_w l9 = 0; /* i */
-    tk_w t16 = 0;
-    tk_w t17 = 0;
-    tk_w l10 = 0; /* item */
-    tk_w t18 = 0;
-    tk_w t19 = 0;
-    tk_w t20 = 0;
-    tk_w l11 = 0; /* mpath */
-    tk_w t21 = 0;
-    tk_w t22 = 0;
-    tk_w t23 = 0;
-    tk_w t24 = 0;
-    tk_w l12 = 0; /* found */
-    tk_w t25 = 0;
-    tk_w t26 = 0;
-    tk_w t27 = 0;
-    tk_w t28 = 0;
-    tk_w t29 = 0;
-    tk_w t30 = 0;
-    tk_w t31 = 0;
-    tk_w t32 = 0;
-    tk_w t33 = 0;
-    tk_w t34 = 0;
     l0 = a0;
     l1 = a1;
     t0 = tk_cx(l0, 15);
@@ -7865,63 +7875,111 @@ tk_w tk_load_module(tk_w a0, tk_w a1) {
         t3 = 0;
     }
     t7 = tk_read_text(l1);
-    l2 = t7;
-    t8 = tk_add_source(l0, l1, l2);
-    l3 = t8;
-    t9 = tk_lex_file(l0, l3);
-    l4 = t9;
-    t10 = tk_parse_file(l0, l4);
-    l5 = t10;
-    t11 = tk_cx(l0, 4);
-    t12 = tk_vtrunc(t11, (l4 * 4));
-    t13 = tk_path_dir(l1);
-    l6 = t13;
-    t14 = tk_cx(l0, 12);
-    l7 = t14;
-    t15 = tk_cx(l0, 16);
-    l8 = t15;
+    t8 = tk_load_source(l0, l1, t7);
+    return t8;
+    return 0;
+}
+
+tk_w tk_load_source(tk_w a0, tk_w a1, tk_w a2) {
+    tk_w l0 = 0; /* c */
+    tk_w l1 = 0; /* path */
+    tk_w l2 = 0; /* src */
+    tk_w t0 = 0;
+    tk_w l3 = 0; /* f */
+    tk_w t1 = 0;
+    tk_w l4 = 0; /* first */
+    tk_w t2 = 0;
+    tk_w l5 = 0; /* items */
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w l6 = 0; /* dir */
+    tk_w t6 = 0;
+    tk_w l7 = 0; /* all */
+    tk_w t7 = 0;
+    tk_w l8 = 0; /* files */
+    tk_w l9 = 0; /* i */
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w l10 = 0; /* item */
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w l11 = 0; /* mpath */
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w l12 = 0; /* found */
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    t0 = tk_add_source(l0, l1, l2);
+    l3 = t0;
+    t1 = tk_lex_file(l0, l3);
+    l4 = t1;
+    t2 = tk_parse_file(l0, l4);
+    l5 = t2;
+    t3 = tk_cx(l0, 4);
+    t4 = tk_vtrunc(t3, (l4 * 4));
+    t5 = tk_path_dir(l1);
+    l6 = t5;
+    t6 = tk_cx(l0, 12);
+    l7 = t6;
+    t7 = tk_cx(l0, 16);
+    l8 = t7;
     l9 = 0;
     while (1) {
-        t16 = tk_list_len(l0, l5);
-        if (!((l9 < t16))) break;
-        t17 = tk_list_at(l0, l5, l9);
-        l10 = t17;
-        t19 = tk_nk(l0, l10);
-        if ((t19 == 23)) {
-            t20 = tk_na(l0, l10);
-            l11 = t20;
-            t22 = tk_normalize_module_path(l11);
-            t23 = tk_is_builtin_module(t22);
-            track_str_free(t22);
-            if ((t23 == 0)) {
-                t24 = tk_resolve_module(l6, l11);
-                l12 = t24;
+        t8 = tk_list_len(l0, l5);
+        if (!((l9 < t8))) break;
+        t9 = tk_list_at(l0, l5, l9);
+        l10 = t9;
+        t11 = tk_nk(l0, l10);
+        if ((t11 == 23)) {
+            t12 = tk_na(l0, l10);
+            l11 = t12;
+            t14 = tk_normalize_module_path(l11);
+            t15 = tk_is_builtin_module(t14);
+            track_str_free(t14);
+            if ((t15 == 0)) {
+                t16 = tk_resolve_module(l6, l11);
+                l12 = t16;
                 if ((l12 == 0)) {
-                    t26 = tk_npos(l0, l10);
-                    t27 = tk_text_cat3(TK_S("Unknown module '"), l11, TK_S("'"));
-                    t28 = tk_fail_at(l0, t26, TK_S("E0011"), t27);
-                    t25 = t28;
+                    t18 = tk_npos(l0, l10);
+                    t19 = tk_text_cat3(TK_S("Unknown module '"), l11, TK_S("'"));
+                    t20 = tk_fail_at(l0, t18, TK_S("E0011"), t19);
+                    t17 = t20;
                 } else {
-                    t25 = 0;
+                    t17 = 0;
                 }
-                t30 = tk_module_key(l12);
-                t31 = tk_module_loaded(l0, t30);
-                if ((t31 == 0)) {
-                    t32 = tk_load_module(l0, l12);
-                    t29 = t32;
+                t22 = tk_module_key(l12);
+                t23 = tk_module_loaded(l0, t22);
+                if ((t23 == 0)) {
+                    t24 = tk_load_module(l0, l12);
+                    t21 = t24;
                 } else {
-                    t29 = 0;
+                    t21 = 0;
                 }
-                t21 = t29;
+                t13 = t21;
             } else {
-                t21 = 0;
+                t13 = 0;
             }
-            t18 = t21;
+            t10 = t13;
         } else {
-            t18 = 0;
+            t10 = 0;
         }
-        t33 = tk_vpush(l7, l10);
-        t34 = tk_vpush(l8, l3);
+        t25 = tk_vpush(l7, l10);
+        t26 = tk_vpush(l8, l3);
         l9 = (l9 + 1);
     }
     return l3;
@@ -10613,6 +10671,25 @@ tk_w tk_runtime_source(tk_w a0) {
     tk_w t943 = 0;
     tk_w t944 = 0;
     tk_w t945 = 0;
+    tk_w t946 = 0;
+    tk_w t947 = 0;
+    tk_w t948 = 0;
+    tk_w t949 = 0;
+    tk_w t950 = 0;
+    tk_w t951 = 0;
+    tk_w t952 = 0;
+    tk_w t953 = 0;
+    tk_w t954 = 0;
+    tk_w t955 = 0;
+    tk_w t956 = 0;
+    tk_w t957 = 0;
+    tk_w t958 = 0;
+    tk_w t959 = 0;
+    tk_w t960 = 0;
+    tk_w t961 = 0;
+    tk_w t962 = 0;
+    tk_w t963 = 0;
+    tk_w t964 = 0;
     l0 = a0;
     t0 = tk_sb_line(l0, TK_S("/*"));
     t1 = tk_sb_line(l0, TK_S(" * Track runtime (word ABI)."));
@@ -10948,618 +11025,637 @@ tk_w tk_runtime_source(tk_w a0) {
     t331 = tk_sb_line(l0, TK_S("    return TK_WORD(buf);"));
     t332 = tk_sb_line(l0, TK_S("}"));
     t333 = tk_sb_line(l0, TK_S(""));
-    t334 = tk_sb_line(l0, TK_S("/* ---------------------------------------------------------------- strings */"));
-    t335 = tk_sb_line(l0, TK_S(""));
-    t336 = tk_sb_line(l0, TK_S("tk_w str_from_literal(tk_w raw) { return TK_WORD(tk_dup(TK_STR(raw))); }"));
-    t337 = tk_sb_line(l0, TK_S(""));
-    t338 = tk_sb_line(l0, TK_S("tk_w str_free(tk_w s) {"));
-    t339 = tk_sb_line(l0, TK_S("    (void)s; /* literals and runtime strings share a representation; never freed */"));
-    t340 = tk_sb_line(l0, TK_S("    return 0;"));
-    t341 = tk_sb_line(l0, TK_S("}"));
-    t342 = tk_sb_line(l0, TK_S(""));
-    t343 = tk_sb_line(l0, TK_S("/* Free a string the compiler proved fresh (docs/lifecycles.md \302\2473.5): a"));
-    t344 = tk_sb_line(l0, TK_S(" * runtime result the caller owns, never a literal. str_free stays a no-op"));
-    t345 = tk_sb_line(l0, TK_S(" * because user code may pass it either. */"));
-    t346 = tk_sb_line(l0, TK_S("tk_w track_str_free(tk_w s) {"));
-    t347 = tk_sb_line(l0, TK_S("    if (s) free(TK_PTR(s));"));
-    t348 = tk_sb_line(l0, TK_S("    return 0;"));
-    t349 = tk_sb_line(l0, TK_S("}"));
-    t350 = tk_sb_line(l0, TK_S(""));
-    t351 = tk_sb_line(l0, TK_S("tk_w str_len(tk_w s) { return s \? (tk_w)strlen(TK_STR(s)) : 0; }"));
-    t352 = tk_sb_line(l0, TK_S(""));
-    t353 = tk_sb_line(l0, TK_S("tk_w str_eq(tk_w a, tk_w b) {"));
-    t354 = tk_sb_line(l0, TK_S("    if (!a || !b) return a == b \? 1 : 0;"));
-    t355 = tk_sb_line(l0, TK_S("    return strcmp(TK_STR(a), TK_STR(b)) == 0 \? 1 : 0;"));
-    t356 = tk_sb_line(l0, TK_S("}"));
-    t357 = tk_sb_line(l0, TK_S(""));
-    t358 = tk_sb_line(l0, TK_S("tk_w str_concat(tk_w a, tk_w b) {"));
-    t359 = tk_sb_line(l0, TK_S("    size_t a_len = a \? strlen(TK_STR(a)) : 0;"));
-    t360 = tk_sb_line(l0, TK_S("    size_t b_len = b \? strlen(TK_STR(b)) : 0;"));
-    t361 = tk_sb_line(l0, TK_S("    char *out = tk_dup_n(\"\", 0);"));
-    t362 = tk_sb_line(l0, TK_S("    out = (char *)realloc(out, a_len + b_len + 1);"));
-    t363 = tk_sb_line(l0, TK_S("    if (!out) exit(137);"));
-    t364 = tk_sb_line(l0, TK_S("    if (a_len) memcpy(out, TK_STR(a), a_len);"));
-    t365 = tk_sb_line(l0, TK_S("    if (b_len) memcpy(out + a_len, TK_STR(b), b_len);"));
-    t366 = tk_sb_line(l0, TK_S("    out[a_len + b_len] = '\\0';"));
-    t367 = tk_sb_line(l0, TK_S("    return TK_WORD(out);"));
-    t368 = tk_sb_line(l0, TK_S("}"));
-    t369 = tk_sb_line(l0, TK_S(""));
-    t370 = tk_sb_line(l0, TK_S("tk_w str_find(tk_w s, tk_w sub) {"));
-    t371 = tk_sb_line(l0, TK_S("    if (!s || !sub) return -1;"));
-    t372 = tk_sb_line(l0, TK_S("    const char *p = strstr(TK_STR(s), TK_STR(sub));"));
-    t373 = tk_sb_line(l0, TK_S("    return p \? (tk_w)(p - TK_STR(s)) : -1;"));
-    t374 = tk_sb_line(l0, TK_S("}"));
-    t375 = tk_sb_line(l0, TK_S(""));
-    t376 = tk_sb_line(l0, TK_S("tk_w str_contains(tk_w s, tk_w sub) {"));
-    t377 = tk_sb_line(l0, TK_S("    if (!s || !sub) return 0;"));
-    t378 = tk_sb_line(l0, TK_S("    return strstr(TK_STR(s), TK_STR(sub)) \? 1 : 0;"));
+    t334 = tk_sb_line(l0, TK_S("/* Read n >= 0 bytes of stdin (fewer at end of input), flushing stdout first"));
+    t335 = tk_sb_line(l0, TK_S(" * so a reply is never left buffered (`trackc lsp` relies on this). */"));
+    t336 = tk_sb_line(l0, TK_S("tk_w track_stdin_read(tk_w n) {"));
+    t337 = tk_sb_line(l0, TK_S("    char *buf = (char *)malloc((size_t)n + 1);"));
+    t338 = tk_sb_line(l0, TK_S("    size_t got = 0, r = 1;"));
+    t339 = tk_sb_line(l0, TK_S("    fflush(stdout);"));
+    t340 = tk_sb_line(l0, TK_S("    while (buf && got < (size_t)n && r > 0) got += (r = fread(buf + got, 1, (size_t)n - got, stdin));"));
+    t341 = tk_sb_line(l0, TK_S("    if (buf) buf[got] = '\\0';"));
+    t342 = tk_sb_line(l0, TK_S("    return TK_WORD(buf \? buf : tk_dup(\"\"));"));
+    t343 = tk_sb_line(l0, TK_S("}"));
+    t344 = tk_sb_line(l0, TK_S(""));
+    t345 = tk_sb_line(l0, TK_S("/* ---------------------------------------------------------------- strings */"));
+    t346 = tk_sb_line(l0, TK_S(""));
+    t347 = tk_sb_line(l0, TK_S("tk_w str_from_literal(tk_w raw) { return TK_WORD(tk_dup(TK_STR(raw))); }"));
+    t348 = tk_sb_line(l0, TK_S(""));
+    t349 = tk_sb_line(l0, TK_S("tk_w str_free(tk_w s) {"));
+    t350 = tk_sb_line(l0, TK_S("    (void)s; /* literals and runtime strings share a representation; never freed */"));
+    t351 = tk_sb_line(l0, TK_S("    return 0;"));
+    t352 = tk_sb_line(l0, TK_S("}"));
+    t353 = tk_sb_line(l0, TK_S(""));
+    t354 = tk_sb_line(l0, TK_S("/* Free a string the compiler proved fresh (docs/lifecycles.md \302\2473.5): a"));
+    t355 = tk_sb_line(l0, TK_S(" * runtime result the caller owns, never a literal. str_free stays a no-op"));
+    t356 = tk_sb_line(l0, TK_S(" * because user code may pass it either. */"));
+    t357 = tk_sb_line(l0, TK_S("tk_w track_str_free(tk_w s) {"));
+    t358 = tk_sb_line(l0, TK_S("    if (s) free(TK_PTR(s));"));
+    t359 = tk_sb_line(l0, TK_S("    return 0;"));
+    t360 = tk_sb_line(l0, TK_S("}"));
+    t361 = tk_sb_line(l0, TK_S(""));
+    t362 = tk_sb_line(l0, TK_S("tk_w str_len(tk_w s) { return s \? (tk_w)strlen(TK_STR(s)) : 0; }"));
+    t363 = tk_sb_line(l0, TK_S(""));
+    t364 = tk_sb_line(l0, TK_S("tk_w str_eq(tk_w a, tk_w b) {"));
+    t365 = tk_sb_line(l0, TK_S("    if (!a || !b) return a == b \? 1 : 0;"));
+    t366 = tk_sb_line(l0, TK_S("    return strcmp(TK_STR(a), TK_STR(b)) == 0 \? 1 : 0;"));
+    t367 = tk_sb_line(l0, TK_S("}"));
+    t368 = tk_sb_line(l0, TK_S(""));
+    t369 = tk_sb_line(l0, TK_S("tk_w str_concat(tk_w a, tk_w b) {"));
+    t370 = tk_sb_line(l0, TK_S("    size_t a_len = a \? strlen(TK_STR(a)) : 0;"));
+    t371 = tk_sb_line(l0, TK_S("    size_t b_len = b \? strlen(TK_STR(b)) : 0;"));
+    t372 = tk_sb_line(l0, TK_S("    char *out = tk_dup_n(\"\", 0);"));
+    t373 = tk_sb_line(l0, TK_S("    out = (char *)realloc(out, a_len + b_len + 1);"));
+    t374 = tk_sb_line(l0, TK_S("    if (!out) exit(137);"));
+    t375 = tk_sb_line(l0, TK_S("    if (a_len) memcpy(out, TK_STR(a), a_len);"));
+    t376 = tk_sb_line(l0, TK_S("    if (b_len) memcpy(out + a_len, TK_STR(b), b_len);"));
+    t377 = tk_sb_line(l0, TK_S("    out[a_len + b_len] = '\\0';"));
+    t378 = tk_sb_line(l0, TK_S("    return TK_WORD(out);"));
     t379 = tk_sb_line(l0, TK_S("}"));
     t380 = tk_sb_line(l0, TK_S(""));
-    t381 = tk_sb_line(l0, TK_S("tk_w str_to_int(tk_w s) { return s \? atoll(TK_STR(s)) : 0; }"));
-    t382 = tk_sb_line(l0, TK_S(""));
-    t383 = tk_sb_line(l0, TK_S("/* Predicate companion for str_to_int: distinguishes a genuine \"0\" from a parse failure. */"));
-    t384 = tk_sb_line(l0, TK_S("tk_w str_is_int(tk_w s_w) {"));
-    t385 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
-    t386 = tk_sb_line(l0, TK_S("    if (!s || *s == '\\0') return 0;"));
-    t387 = tk_sb_line(l0, TK_S("    const char *p = s;"));
-    t388 = tk_sb_line(l0, TK_S("    if (*p == '+' || *p == '-') p++;"));
-    t389 = tk_sb_line(l0, TK_S("    if (*p == '\\0') return 0;"));
-    t390 = tk_sb_line(l0, TK_S("    for (; *p; p++) {"));
-    t391 = tk_sb_line(l0, TK_S("        if (!isdigit((unsigned char)*p)) return 0;"));
-    t392 = tk_sb_line(l0, TK_S("    }"));
-    t393 = tk_sb_line(l0, TK_S("    return 1;"));
-    t394 = tk_sb_line(l0, TK_S("}"));
-    t395 = tk_sb_line(l0, TK_S(""));
-    t396 = tk_sb_line(l0, TK_S("tk_w int_to_str(tk_w val) {"));
-    t397 = tk_sb_line(l0, TK_S("    char buf[32];"));
-    t398 = tk_sb_line(l0, TK_S("    snprintf(buf, sizeof(buf), \"%lld\", (long long)val);"));
-    t399 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup(buf));"));
-    t400 = tk_sb_line(l0, TK_S("}"));
-    t401 = tk_sb_line(l0, TK_S(""));
-    t402 = tk_sb_line(l0, TK_S("tk_w str_starts_with(tk_w s, tk_w prefix) {"));
-    t403 = tk_sb_line(l0, TK_S("    if (!s || !prefix) return 0;"));
-    t404 = tk_sb_line(l0, TK_S("    size_t lp = strlen(TK_STR(prefix));"));
-    t405 = tk_sb_line(l0, TK_S("    return strncmp(TK_STR(s), TK_STR(prefix), lp) == 0 \? 1 : 0;"));
-    t406 = tk_sb_line(l0, TK_S("}"));
-    t407 = tk_sb_line(l0, TK_S(""));
-    t408 = tk_sb_line(l0, TK_S("tk_w str_ends_with(tk_w s, tk_w suffix) {"));
-    t409 = tk_sb_line(l0, TK_S("    if (!s || !suffix) return 0;"));
-    t410 = tk_sb_line(l0, TK_S("    size_t ls = strlen(TK_STR(s));"));
-    t411 = tk_sb_line(l0, TK_S("    size_t lp = strlen(TK_STR(suffix));"));
-    t412 = tk_sb_line(l0, TK_S("    if (lp > ls) return 0;"));
-    t413 = tk_sb_line(l0, TK_S("    return strcmp(TK_STR(s) + ls - lp, TK_STR(suffix)) == 0 \? 1 : 0;"));
-    t414 = tk_sb_line(l0, TK_S("}"));
-    t415 = tk_sb_line(l0, TK_S(""));
-    t416 = tk_sb_line(l0, TK_S("tk_w str_substr(tk_w s_w, tk_w start, tk_w len) {"));
-    t417 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
-    t418 = tk_sb_line(l0, TK_S("    if (!s || start < 0 || len <= 0) return TK_WORD(tk_dup(\"\"));"));
-    t419 = tk_sb_line(l0, TK_S("    /* Bounded scan: never walk past the requested window of a long source. */"));
-    t420 = tk_sb_line(l0, TK_S("    size_t avail = strnlen(s, (size_t)start + (size_t)len);"));
-    t421 = tk_sb_line(l0, TK_S("    if ((size_t)start >= avail) return TK_WORD(tk_dup(\"\"));"));
-    t422 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup_n(s + start, avail - (size_t)start));"));
-    t423 = tk_sb_line(l0, TK_S("}"));
-    t424 = tk_sb_line(l0, TK_S(""));
-    t425 = tk_sb_line(l0, TK_S("tk_w str_trim(tk_w s_w) {"));
-    t426 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
-    t427 = tk_sb_line(l0, TK_S("    if (!s) return TK_WORD(tk_dup(\"\"));"));
-    t428 = tk_sb_line(l0, TK_S("    while (*s && isspace((unsigned char)*s)) s++;"));
-    t429 = tk_sb_line(l0, TK_S("    size_t len = strlen(s);"));
-    t430 = tk_sb_line(l0, TK_S("    while (len > 0 && isspace((unsigned char)s[len - 1])) len--;"));
-    t431 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup_n(s, len));"));
-    t432 = tk_sb_line(l0, TK_S("}"));
-    t433 = tk_sb_line(l0, TK_S(""));
-    t434 = tk_sb_line(l0, TK_S("tk_w str_char_at(tk_w s_w, tk_w idx) {"));
-    t435 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
-    t436 = tk_sb_line(l0, TK_S("    if (!s || idx < 0) return 0;"));
-    t437 = tk_sb_line(l0, TK_S("    size_t len = strnlen(s, (size_t)idx + 1);"));
-    t438 = tk_sb_line(l0, TK_S("    if ((size_t)idx >= len) return 0;"));
-    t439 = tk_sb_line(l0, TK_S("    return (unsigned char)s[idx];"));
-    t440 = tk_sb_line(l0, TK_S("}"));
-    t441 = tk_sb_line(l0, TK_S(""));
-    t442 = tk_sb_line(l0, TK_S("/* Copy a string's bytes into a collection for O(1) bounds-checked access. */"));
-    t443 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_new(tk_w requested_cap);"));
-    t444 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_push(tk_w handle, tk_w value);"));
-    t445 = tk_sb_line(l0, TK_S(""));
-    t446 = tk_sb_line(l0, TK_S("tk_w track_str_bytes(tk_w s_w) {"));
-    t447 = tk_sb_line(l0, TK_S("    const unsigned char *s = (const unsigned char *)TK_STR(s_w);"));
-    t448 = tk_sb_line(l0, TK_S("    size_t len = s \? strlen((const char *)s) : 0;"));
-    t449 = tk_sb_line(l0, TK_S("    tk_w out = track_i64_collection_new((tk_w)len + 1);"));
-    t450 = tk_sb_line(l0, TK_S("    for (size_t i = 0; i < len; i++) track_i64_collection_push(out, s[i]);"));
-    t451 = tk_sb_line(l0, TK_S("    return out;"));
-    t452 = tk_sb_line(l0, TK_S("}"));
-    t453 = tk_sb_line(l0, TK_S(""));
-    t454 = tk_sb_line(l0, TK_S("tk_w char_is_digit(tk_w c) { return c >= 0 && c < 256 && isdigit((int)c) \? 1 : 0; }"));
-    t455 = tk_sb_line(l0, TK_S("tk_w char_is_alpha(tk_w c) { return c >= 0 && c < 256 && isalpha((int)c) \? 1 : 0; }"));
-    t456 = tk_sb_line(l0, TK_S("tk_w char_is_alphanumeric(tk_w c) { return c >= 0 && c < 256 && isalnum((int)c) \? 1 : 0; }"));
-    t457 = tk_sb_line(l0, TK_S("tk_w char_is_space(tk_w c) { return c >= 0 && c < 256 && isspace((int)c) \? 1 : 0; }"));
-    t458 = tk_sb_line(l0, TK_S("tk_w char_to_upper(tk_w c) { return c >= 0 && c < 256 \? (unsigned char)toupper((int)c) : c; }"));
-    t459 = tk_sb_line(l0, TK_S("tk_w char_to_lower(tk_w c) { return c >= 0 && c < 256 \? (unsigned char)tolower((int)c) : c; }"));
-    t460 = tk_sb_line(l0, TK_S(""));
-    t461 = tk_sb_line(l0, TK_S("/* ------------------------------------------------------------------ paths */"));
-    t462 = tk_sb_line(l0, TK_S(""));
-    t463 = tk_sb_line(l0, TK_S("tk_w path_basename(tk_w path_w) {"));
-    t464 = tk_sb_line(l0, TK_S("    const char *path = TK_STR(path_w);"));
-    t465 = tk_sb_line(l0, TK_S("    if (!path) return TK_WORD(tk_dup(\"\"));"));
-    t466 = tk_sb_line(l0, TK_S("    const char *slash = strrchr(path, '/');"));
-    t467 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup(slash \? slash + 1 : path));"));
-    t468 = tk_sb_line(l0, TK_S("}"));
-    t469 = tk_sb_line(l0, TK_S(""));
-    t470 = tk_sb_line(l0, TK_S("tk_w path_ext(tk_w path_w) {"));
-    t471 = tk_sb_line(l0, TK_S("    const char *path = TK_STR(path_w);"));
-    t472 = tk_sb_line(l0, TK_S("    if (!path) return TK_WORD(tk_dup(\"\"));"));
-    t473 = tk_sb_line(l0, TK_S("    const char *dot = strrchr(path, '.');"));
-    t474 = tk_sb_line(l0, TK_S("    if (!dot || dot == path) return TK_WORD(tk_dup(\"\"));"));
-    t475 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup(dot + 1));"));
-    t476 = tk_sb_line(l0, TK_S("}"));
-    t477 = tk_sb_line(l0, TK_S(""));
-    t478 = tk_sb_line(l0, TK_S("tk_w path_join(tk_w a_w, tk_w b_w) {"));
-    t479 = tk_sb_line(l0, TK_S("    const char *a = a_w \? TK_STR(a_w) : \"\";"));
-    t480 = tk_sb_line(l0, TK_S("    const char *b = b_w \? TK_STR(b_w) : \"\";"));
-    t481 = tk_sb_line(l0, TK_S("    size_t la = strlen(a), lb = strlen(b);"));
-    t482 = tk_sb_line(l0, TK_S("    int slash = la > 0 && a[la - 1] != '/' && (lb == 0 || b[0] != '/');"));
-    t483 = tk_sb_line(l0, TK_S("    char *out = tk_dup_n(a, la);"));
-    t484 = tk_sb_line(l0, TK_S("    out = (char *)realloc(out, la + (size_t)slash + lb + 1);"));
-    t485 = tk_sb_line(l0, TK_S("    if (!out) exit(137);"));
-    t486 = tk_sb_line(l0, TK_S("    if (slash) out[la] = '/';"));
-    t487 = tk_sb_line(l0, TK_S("    memcpy(out + la + slash, b, lb + 1);"));
-    t488 = tk_sb_line(l0, TK_S("    return TK_WORD(out);"));
-    t489 = tk_sb_line(l0, TK_S("}"));
-    t490 = tk_sb_line(l0, TK_S(""));
-    t491 = tk_sb_line(l0, TK_S("/* ------------------------------------------------------------------ files */"));
-    t492 = tk_sb_line(l0, TK_S(""));
-    t493 = tk_sb_line(l0, TK_S("tk_w file_open(tk_w path, tk_w mode) {"));
-    t494 = tk_sb_line(l0, TK_S("    if (!path || !mode) return 0;"));
-    t495 = tk_sb_line(l0, TK_S("    return TK_WORD(fopen(TK_STR(path), TK_STR(mode)));"));
-    t496 = tk_sb_line(l0, TK_S("}"));
-    t497 = tk_sb_line(l0, TK_S(""));
-    t498 = tk_sb_line(l0, TK_S("tk_w file_close(tk_w f) {"));
-    t499 = tk_sb_line(l0, TK_S("    if (f) fclose((FILE *)TK_PTR(f));"));
-    t500 = tk_sb_line(l0, TK_S("    return 0;"));
-    t501 = tk_sb_line(l0, TK_S("}"));
-    t502 = tk_sb_line(l0, TK_S(""));
-    t503 = tk_sb_line(l0, TK_S("tk_w file_read_all(tk_w handle) {"));
-    t504 = tk_sb_line(l0, TK_S("    FILE *f = (FILE *)TK_PTR(handle);"));
-    t505 = tk_sb_line(l0, TK_S("    if (!f || fseek(f, 0, SEEK_END) != 0) return TK_WORD(tk_dup(\"\"));"));
-    t506 = tk_sb_line(l0, TK_S("    long end = ftell(f);"));
-    t507 = tk_sb_line(l0, TK_S("    if (end < 0 || fseek(f, 0, SEEK_SET) != 0) return TK_WORD(tk_dup(\"\"));"));
-    t508 = tk_sb_line(l0, TK_S("    char *buf = (char *)malloc((size_t)end + 1);"));
-    t509 = tk_sb_line(l0, TK_S("    if (!buf) exit(137);"));
-    t510 = tk_sb_line(l0, TK_S("    size_t got = fread(buf, 1, (size_t)end, f);"));
-    t511 = tk_sb_line(l0, TK_S("    buf[got] = '\\0';"));
-    t512 = tk_sb_line(l0, TK_S("    return TK_WORD(buf);"));
-    t513 = tk_sb_line(l0, TK_S("}"));
-    t514 = tk_sb_line(l0, TK_S(""));
-    t515 = tk_sb_line(l0, TK_S("tk_w file_write(tk_w handle, tk_w content) {"));
-    t516 = tk_sb_line(l0, TK_S("    FILE *f = (FILE *)TK_PTR(handle);"));
-    t517 = tk_sb_line(l0, TK_S("    if (!f || !content) return -1;"));
-    t518 = tk_sb_line(l0, TK_S("    size_t len = strlen(TK_STR(content));"));
-    t519 = tk_sb_line(l0, TK_S("    return fwrite(TK_STR(content), 1, len, f) == len \? 0 : -1;"));
-    t520 = tk_sb_line(l0, TK_S("}"));
-    t521 = tk_sb_line(l0, TK_S(""));
-    t522 = tk_sb_line(l0, TK_S("tk_w file_exists(tk_w path) { return path && access(TK_STR(path), F_OK) == 0 \? 1 : 0; }"));
-    t523 = tk_sb_line(l0, TK_S(""));
-    t524 = tk_sb_line(l0, TK_S("tk_w file_remove(tk_w path) { return path && unlink(TK_STR(path)) == 0 \? 0 : -1; }"));
-    t525 = tk_sb_line(l0, TK_S(""));
-    t526 = tk_sb_line(l0, TK_S("tk_w file_size(tk_w path) {"));
-    t527 = tk_sb_line(l0, TK_S("    struct stat st;"));
-    t528 = tk_sb_line(l0, TK_S("    if (!path || stat(TK_STR(path), &st) != 0) return -1;"));
-    t529 = tk_sb_line(l0, TK_S("    return (tk_w)st.st_size;"));
-    t530 = tk_sb_line(l0, TK_S("}"));
-    t531 = tk_sb_line(l0, TK_S(""));
-    t532 = tk_sb_line(l0, TK_S("tk_w dir_exists(tk_w path) {"));
-    t533 = tk_sb_line(l0, TK_S("    struct stat st;"));
-    t534 = tk_sb_line(l0, TK_S("    return path && stat(TK_STR(path), &st) == 0 && S_ISDIR(st.st_mode) \? 1 : 0;"));
-    t535 = tk_sb_line(l0, TK_S("}"));
-    t536 = tk_sb_line(l0, TK_S(""));
-    t537 = tk_sb_line(l0, TK_S("tk_w file_copy(tk_w src, tk_w dst) {"));
-    t538 = tk_sb_line(l0, TK_S("    if (!src || !dst) return -1;"));
-    t539 = tk_sb_line(l0, TK_S("    FILE *in = fopen(TK_STR(src), \"rb\");"));
-    t540 = tk_sb_line(l0, TK_S("    if (!in) return -1;"));
-    t541 = tk_sb_line(l0, TK_S("    FILE *out = fopen(TK_STR(dst), \"wb\");"));
-    t542 = tk_sb_line(l0, TK_S("    if (!out) {"));
-    t543 = tk_sb_line(l0, TK_S("        fclose(in);"));
-    t544 = tk_sb_line(l0, TK_S("        return -1;"));
-    t545 = tk_sb_line(l0, TK_S("    }"));
-    t546 = tk_sb_line(l0, TK_S("    char buf[4096];"));
-    t547 = tk_sb_line(l0, TK_S("    size_t n;"));
-    t548 = tk_sb_line(l0, TK_S("    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) fwrite(buf, 1, n, out);"));
-    t549 = tk_sb_line(l0, TK_S("    fclose(in);"));
-    t550 = tk_sb_line(l0, TK_S("    fclose(out);"));
-    t551 = tk_sb_line(l0, TK_S("    return 0;"));
-    t552 = tk_sb_line(l0, TK_S("}"));
-    t553 = tk_sb_line(l0, TK_S(""));
-    t554 = tk_sb_line(l0, TK_S("/* Whole-file helpers: open, transfer, and close in one call. */"));
-    t555 = tk_sb_line(l0, TK_S("tk_w track_file_read(tk_w path) {"));
-    t556 = tk_sb_line(l0, TK_S("    FILE *f = path \? fopen(TK_STR(path), \"rb\") : NULL;"));
-    t557 = tk_sb_line(l0, TK_S("    if (!f) return TK_WORD(tk_dup(\"\"));"));
-    t558 = tk_sb_line(l0, TK_S("    tk_w out = file_read_all(TK_WORD(f));"));
-    t559 = tk_sb_line(l0, TK_S("    fclose(f);"));
-    t560 = tk_sb_line(l0, TK_S("    return out;"));
-    t561 = tk_sb_line(l0, TK_S("}"));
-    t562 = tk_sb_line(l0, TK_S(""));
-    t563 = tk_sb_line(l0, TK_S("tk_w track_file_write_all(tk_w path, tk_w content) {"));
-    t564 = tk_sb_line(l0, TK_S("    FILE *f = path \? fopen(TK_STR(path), \"wb\") : NULL;"));
-    t565 = tk_sb_line(l0, TK_S("    if (!f) return -1;"));
-    t566 = tk_sb_line(l0, TK_S("    tk_w status = file_write(TK_WORD(f), content);"));
-    t567 = tk_sb_line(l0, TK_S("    if (fclose(f) != 0) status = -1;"));
-    t568 = tk_sb_line(l0, TK_S("    return status;"));
-    t569 = tk_sb_line(l0, TK_S("}"));
-    t570 = tk_sb_line(l0, TK_S(""));
-    t571 = tk_sb_line(l0, TK_S("/* ------------------------------------------------------------------- math */"));
+    t381 = tk_sb_line(l0, TK_S("tk_w str_find(tk_w s, tk_w sub) {"));
+    t382 = tk_sb_line(l0, TK_S("    if (!s || !sub) return -1;"));
+    t383 = tk_sb_line(l0, TK_S("    const char *p = strstr(TK_STR(s), TK_STR(sub));"));
+    t384 = tk_sb_line(l0, TK_S("    return p \? (tk_w)(p - TK_STR(s)) : -1;"));
+    t385 = tk_sb_line(l0, TK_S("}"));
+    t386 = tk_sb_line(l0, TK_S(""));
+    t387 = tk_sb_line(l0, TK_S("tk_w str_contains(tk_w s, tk_w sub) {"));
+    t388 = tk_sb_line(l0, TK_S("    if (!s || !sub) return 0;"));
+    t389 = tk_sb_line(l0, TK_S("    return strstr(TK_STR(s), TK_STR(sub)) \? 1 : 0;"));
+    t390 = tk_sb_line(l0, TK_S("}"));
+    t391 = tk_sb_line(l0, TK_S(""));
+    t392 = tk_sb_line(l0, TK_S("tk_w str_to_int(tk_w s) { return s \? atoll(TK_STR(s)) : 0; }"));
+    t393 = tk_sb_line(l0, TK_S(""));
+    t394 = tk_sb_line(l0, TK_S("/* Predicate companion for str_to_int: distinguishes a genuine \"0\" from a parse failure. */"));
+    t395 = tk_sb_line(l0, TK_S("tk_w str_is_int(tk_w s_w) {"));
+    t396 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
+    t397 = tk_sb_line(l0, TK_S("    if (!s || *s == '\\0') return 0;"));
+    t398 = tk_sb_line(l0, TK_S("    const char *p = s;"));
+    t399 = tk_sb_line(l0, TK_S("    if (*p == '+' || *p == '-') p++;"));
+    t400 = tk_sb_line(l0, TK_S("    if (*p == '\\0') return 0;"));
+    t401 = tk_sb_line(l0, TK_S("    for (; *p; p++) {"));
+    t402 = tk_sb_line(l0, TK_S("        if (!isdigit((unsigned char)*p)) return 0;"));
+    t403 = tk_sb_line(l0, TK_S("    }"));
+    t404 = tk_sb_line(l0, TK_S("    return 1;"));
+    t405 = tk_sb_line(l0, TK_S("}"));
+    t406 = tk_sb_line(l0, TK_S(""));
+    t407 = tk_sb_line(l0, TK_S("tk_w int_to_str(tk_w val) {"));
+    t408 = tk_sb_line(l0, TK_S("    char buf[32];"));
+    t409 = tk_sb_line(l0, TK_S("    snprintf(buf, sizeof(buf), \"%lld\", (long long)val);"));
+    t410 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup(buf));"));
+    t411 = tk_sb_line(l0, TK_S("}"));
+    t412 = tk_sb_line(l0, TK_S(""));
+    t413 = tk_sb_line(l0, TK_S("tk_w str_starts_with(tk_w s, tk_w prefix) {"));
+    t414 = tk_sb_line(l0, TK_S("    if (!s || !prefix) return 0;"));
+    t415 = tk_sb_line(l0, TK_S("    size_t lp = strlen(TK_STR(prefix));"));
+    t416 = tk_sb_line(l0, TK_S("    return strncmp(TK_STR(s), TK_STR(prefix), lp) == 0 \? 1 : 0;"));
+    t417 = tk_sb_line(l0, TK_S("}"));
+    t418 = tk_sb_line(l0, TK_S(""));
+    t419 = tk_sb_line(l0, TK_S("tk_w str_ends_with(tk_w s, tk_w suffix) {"));
+    t420 = tk_sb_line(l0, TK_S("    if (!s || !suffix) return 0;"));
+    t421 = tk_sb_line(l0, TK_S("    size_t ls = strlen(TK_STR(s));"));
+    t422 = tk_sb_line(l0, TK_S("    size_t lp = strlen(TK_STR(suffix));"));
+    t423 = tk_sb_line(l0, TK_S("    if (lp > ls) return 0;"));
+    t424 = tk_sb_line(l0, TK_S("    return strcmp(TK_STR(s) + ls - lp, TK_STR(suffix)) == 0 \? 1 : 0;"));
+    t425 = tk_sb_line(l0, TK_S("}"));
+    t426 = tk_sb_line(l0, TK_S(""));
+    t427 = tk_sb_line(l0, TK_S("tk_w str_substr(tk_w s_w, tk_w start, tk_w len) {"));
+    t428 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
+    t429 = tk_sb_line(l0, TK_S("    if (!s || start < 0 || len <= 0) return TK_WORD(tk_dup(\"\"));"));
+    t430 = tk_sb_line(l0, TK_S("    /* Bounded scan: never walk past the requested window of a long source. */"));
+    t431 = tk_sb_line(l0, TK_S("    size_t avail = strnlen(s, (size_t)start + (size_t)len);"));
+    t432 = tk_sb_line(l0, TK_S("    if ((size_t)start >= avail) return TK_WORD(tk_dup(\"\"));"));
+    t433 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup_n(s + start, avail - (size_t)start));"));
+    t434 = tk_sb_line(l0, TK_S("}"));
+    t435 = tk_sb_line(l0, TK_S(""));
+    t436 = tk_sb_line(l0, TK_S("tk_w str_trim(tk_w s_w) {"));
+    t437 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
+    t438 = tk_sb_line(l0, TK_S("    if (!s) return TK_WORD(tk_dup(\"\"));"));
+    t439 = tk_sb_line(l0, TK_S("    while (*s && isspace((unsigned char)*s)) s++;"));
+    t440 = tk_sb_line(l0, TK_S("    size_t len = strlen(s);"));
+    t441 = tk_sb_line(l0, TK_S("    while (len > 0 && isspace((unsigned char)s[len - 1])) len--;"));
+    t442 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup_n(s, len));"));
+    t443 = tk_sb_line(l0, TK_S("}"));
+    t444 = tk_sb_line(l0, TK_S(""));
+    t445 = tk_sb_line(l0, TK_S("tk_w str_char_at(tk_w s_w, tk_w idx) {"));
+    t446 = tk_sb_line(l0, TK_S("    const char *s = TK_STR(s_w);"));
+    t447 = tk_sb_line(l0, TK_S("    if (!s || idx < 0) return 0;"));
+    t448 = tk_sb_line(l0, TK_S("    size_t len = strnlen(s, (size_t)idx + 1);"));
+    t449 = tk_sb_line(l0, TK_S("    if ((size_t)idx >= len) return 0;"));
+    t450 = tk_sb_line(l0, TK_S("    return (unsigned char)s[idx];"));
+    t451 = tk_sb_line(l0, TK_S("}"));
+    t452 = tk_sb_line(l0, TK_S(""));
+    t453 = tk_sb_line(l0, TK_S("/* Copy a string's bytes into a collection for O(1) bounds-checked access. */"));
+    t454 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_new(tk_w requested_cap);"));
+    t455 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_push(tk_w handle, tk_w value);"));
+    t456 = tk_sb_line(l0, TK_S(""));
+    t457 = tk_sb_line(l0, TK_S("tk_w track_str_bytes(tk_w s_w) {"));
+    t458 = tk_sb_line(l0, TK_S("    const unsigned char *s = (const unsigned char *)TK_STR(s_w);"));
+    t459 = tk_sb_line(l0, TK_S("    size_t len = s \? strlen((const char *)s) : 0;"));
+    t460 = tk_sb_line(l0, TK_S("    tk_w out = track_i64_collection_new((tk_w)len + 1);"));
+    t461 = tk_sb_line(l0, TK_S("    for (size_t i = 0; i < len; i++) track_i64_collection_push(out, s[i]);"));
+    t462 = tk_sb_line(l0, TK_S("    return out;"));
+    t463 = tk_sb_line(l0, TK_S("}"));
+    t464 = tk_sb_line(l0, TK_S(""));
+    t465 = tk_sb_line(l0, TK_S("tk_w char_is_digit(tk_w c) { return c >= 0 && c < 256 && isdigit((int)c) \? 1 : 0; }"));
+    t466 = tk_sb_line(l0, TK_S("tk_w char_is_alpha(tk_w c) { return c >= 0 && c < 256 && isalpha((int)c) \? 1 : 0; }"));
+    t467 = tk_sb_line(l0, TK_S("tk_w char_is_alphanumeric(tk_w c) { return c >= 0 && c < 256 && isalnum((int)c) \? 1 : 0; }"));
+    t468 = tk_sb_line(l0, TK_S("tk_w char_is_space(tk_w c) { return c >= 0 && c < 256 && isspace((int)c) \? 1 : 0; }"));
+    t469 = tk_sb_line(l0, TK_S("tk_w char_to_upper(tk_w c) { return c >= 0 && c < 256 \? (unsigned char)toupper((int)c) : c; }"));
+    t470 = tk_sb_line(l0, TK_S("tk_w char_to_lower(tk_w c) { return c >= 0 && c < 256 \? (unsigned char)tolower((int)c) : c; }"));
+    t471 = tk_sb_line(l0, TK_S(""));
+    t472 = tk_sb_line(l0, TK_S("/* ------------------------------------------------------------------ paths */"));
+    t473 = tk_sb_line(l0, TK_S(""));
+    t474 = tk_sb_line(l0, TK_S("tk_w path_basename(tk_w path_w) {"));
+    t475 = tk_sb_line(l0, TK_S("    const char *path = TK_STR(path_w);"));
+    t476 = tk_sb_line(l0, TK_S("    if (!path) return TK_WORD(tk_dup(\"\"));"));
+    t477 = tk_sb_line(l0, TK_S("    const char *slash = strrchr(path, '/');"));
+    t478 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup(slash \? slash + 1 : path));"));
+    t479 = tk_sb_line(l0, TK_S("}"));
+    t480 = tk_sb_line(l0, TK_S(""));
+    t481 = tk_sb_line(l0, TK_S("tk_w path_ext(tk_w path_w) {"));
+    t482 = tk_sb_line(l0, TK_S("    const char *path = TK_STR(path_w);"));
+    t483 = tk_sb_line(l0, TK_S("    if (!path) return TK_WORD(tk_dup(\"\"));"));
+    t484 = tk_sb_line(l0, TK_S("    const char *dot = strrchr(path, '.');"));
+    t485 = tk_sb_line(l0, TK_S("    if (!dot || dot == path) return TK_WORD(tk_dup(\"\"));"));
+    t486 = tk_sb_line(l0, TK_S("    return TK_WORD(tk_dup(dot + 1));"));
+    t487 = tk_sb_line(l0, TK_S("}"));
+    t488 = tk_sb_line(l0, TK_S(""));
+    t489 = tk_sb_line(l0, TK_S("tk_w path_join(tk_w a_w, tk_w b_w) {"));
+    t490 = tk_sb_line(l0, TK_S("    const char *a = a_w \? TK_STR(a_w) : \"\";"));
+    t491 = tk_sb_line(l0, TK_S("    const char *b = b_w \? TK_STR(b_w) : \"\";"));
+    t492 = tk_sb_line(l0, TK_S("    size_t la = strlen(a), lb = strlen(b);"));
+    t493 = tk_sb_line(l0, TK_S("    int slash = la > 0 && a[la - 1] != '/' && (lb == 0 || b[0] != '/');"));
+    t494 = tk_sb_line(l0, TK_S("    char *out = tk_dup_n(a, la);"));
+    t495 = tk_sb_line(l0, TK_S("    out = (char *)realloc(out, la + (size_t)slash + lb + 1);"));
+    t496 = tk_sb_line(l0, TK_S("    if (!out) exit(137);"));
+    t497 = tk_sb_line(l0, TK_S("    if (slash) out[la] = '/';"));
+    t498 = tk_sb_line(l0, TK_S("    memcpy(out + la + slash, b, lb + 1);"));
+    t499 = tk_sb_line(l0, TK_S("    return TK_WORD(out);"));
+    t500 = tk_sb_line(l0, TK_S("}"));
+    t501 = tk_sb_line(l0, TK_S(""));
+    t502 = tk_sb_line(l0, TK_S("/* ------------------------------------------------------------------ files */"));
+    t503 = tk_sb_line(l0, TK_S(""));
+    t504 = tk_sb_line(l0, TK_S("tk_w file_open(tk_w path, tk_w mode) {"));
+    t505 = tk_sb_line(l0, TK_S("    if (!path || !mode) return 0;"));
+    t506 = tk_sb_line(l0, TK_S("    return TK_WORD(fopen(TK_STR(path), TK_STR(mode)));"));
+    t507 = tk_sb_line(l0, TK_S("}"));
+    t508 = tk_sb_line(l0, TK_S(""));
+    t509 = tk_sb_line(l0, TK_S("tk_w file_close(tk_w f) {"));
+    t510 = tk_sb_line(l0, TK_S("    if (f) fclose((FILE *)TK_PTR(f));"));
+    t511 = tk_sb_line(l0, TK_S("    return 0;"));
+    t512 = tk_sb_line(l0, TK_S("}"));
+    t513 = tk_sb_line(l0, TK_S(""));
+    t514 = tk_sb_line(l0, TK_S("tk_w file_read_all(tk_w handle) {"));
+    t515 = tk_sb_line(l0, TK_S("    /* Read to end of file, as rt/sys.trk's rt_read_fd does: files whose size"));
+    t516 = tk_sb_line(l0, TK_S("     * is not known up front (/proc, pipes) read whole too. */"));
+    t517 = tk_sb_line(l0, TK_S("    FILE *f = (FILE *)TK_PTR(handle);"));
+    t518 = tk_sb_line(l0, TK_S("    if (!f) return TK_WORD(tk_dup(\"\"));"));
+    t519 = tk_sb_line(l0, TK_S("    size_t cap = 4096, got = 0, n;"));
+    t520 = tk_sb_line(l0, TK_S("    char *buf = (char *)malloc(cap + 1);"));
+    t521 = tk_sb_line(l0, TK_S("    if (!buf) exit(137);"));
+    t522 = tk_sb_line(l0, TK_S("    while ((n = fread(buf + got, 1, cap - got, f)) > 0) {"));
+    t523 = tk_sb_line(l0, TK_S("        got += n;"));
+    t524 = tk_sb_line(l0, TK_S("        if (got == cap) {"));
+    t525 = tk_sb_line(l0, TK_S("            cap *= 2;"));
+    t526 = tk_sb_line(l0, TK_S("            buf = (char *)realloc(buf, cap + 1);"));
+    t527 = tk_sb_line(l0, TK_S("            if (!buf) exit(137);"));
+    t528 = tk_sb_line(l0, TK_S("        }"));
+    t529 = tk_sb_line(l0, TK_S("    }"));
+    t530 = tk_sb_line(l0, TK_S("    buf[got] = '\\0';"));
+    t531 = tk_sb_line(l0, TK_S("    return TK_WORD(buf);"));
+    t532 = tk_sb_line(l0, TK_S("}"));
+    t533 = tk_sb_line(l0, TK_S(""));
+    t534 = tk_sb_line(l0, TK_S("tk_w file_write(tk_w handle, tk_w content) {"));
+    t535 = tk_sb_line(l0, TK_S("    FILE *f = (FILE *)TK_PTR(handle);"));
+    t536 = tk_sb_line(l0, TK_S("    if (!f || !content) return -1;"));
+    t537 = tk_sb_line(l0, TK_S("    size_t len = strlen(TK_STR(content));"));
+    t538 = tk_sb_line(l0, TK_S("    return fwrite(TK_STR(content), 1, len, f) == len \? 0 : -1;"));
+    t539 = tk_sb_line(l0, TK_S("}"));
+    t540 = tk_sb_line(l0, TK_S(""));
+    t541 = tk_sb_line(l0, TK_S("tk_w file_exists(tk_w path) { return path && access(TK_STR(path), F_OK) == 0 \? 1 : 0; }"));
+    t542 = tk_sb_line(l0, TK_S(""));
+    t543 = tk_sb_line(l0, TK_S("tk_w file_remove(tk_w path) { return path && unlink(TK_STR(path)) == 0 \? 0 : -1; }"));
+    t544 = tk_sb_line(l0, TK_S(""));
+    t545 = tk_sb_line(l0, TK_S("tk_w file_size(tk_w path) {"));
+    t546 = tk_sb_line(l0, TK_S("    struct stat st;"));
+    t547 = tk_sb_line(l0, TK_S("    if (!path || stat(TK_STR(path), &st) != 0) return -1;"));
+    t548 = tk_sb_line(l0, TK_S("    return (tk_w)st.st_size;"));
+    t549 = tk_sb_line(l0, TK_S("}"));
+    t550 = tk_sb_line(l0, TK_S(""));
+    t551 = tk_sb_line(l0, TK_S("tk_w dir_exists(tk_w path) {"));
+    t552 = tk_sb_line(l0, TK_S("    struct stat st;"));
+    t553 = tk_sb_line(l0, TK_S("    return path && stat(TK_STR(path), &st) == 0 && S_ISDIR(st.st_mode) \? 1 : 0;"));
+    t554 = tk_sb_line(l0, TK_S("}"));
+    t555 = tk_sb_line(l0, TK_S(""));
+    t556 = tk_sb_line(l0, TK_S("tk_w file_copy(tk_w src, tk_w dst) {"));
+    t557 = tk_sb_line(l0, TK_S("    if (!src || !dst) return -1;"));
+    t558 = tk_sb_line(l0, TK_S("    FILE *in = fopen(TK_STR(src), \"rb\");"));
+    t559 = tk_sb_line(l0, TK_S("    if (!in) return -1;"));
+    t560 = tk_sb_line(l0, TK_S("    FILE *out = fopen(TK_STR(dst), \"wb\");"));
+    t561 = tk_sb_line(l0, TK_S("    if (!out) {"));
+    t562 = tk_sb_line(l0, TK_S("        fclose(in);"));
+    t563 = tk_sb_line(l0, TK_S("        return -1;"));
+    t564 = tk_sb_line(l0, TK_S("    }"));
+    t565 = tk_sb_line(l0, TK_S("    char buf[4096];"));
+    t566 = tk_sb_line(l0, TK_S("    size_t n;"));
+    t567 = tk_sb_line(l0, TK_S("    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) fwrite(buf, 1, n, out);"));
+    t568 = tk_sb_line(l0, TK_S("    fclose(in);"));
+    t569 = tk_sb_line(l0, TK_S("    fclose(out);"));
+    t570 = tk_sb_line(l0, TK_S("    return 0;"));
+    t571 = tk_sb_line(l0, TK_S("}"));
     t572 = tk_sb_line(l0, TK_S(""));
-    t573 = tk_sb_line(l0, TK_S("tk_w math_abs(tk_w x) { return x < 0 \? -x : x; }"));
-    t574 = tk_sb_line(l0, TK_S("tk_w math_min(tk_w a, tk_w b) { return a < b \? a : b; }"));
-    t575 = tk_sb_line(l0, TK_S("tk_w math_max(tk_w a, tk_w b) { return a > b \? a : b; }"));
-    t576 = tk_sb_line(l0, TK_S("tk_w math_clamp(tk_w v, tk_w lo, tk_w hi) { return v < lo \? lo : (v > hi \? hi : v); }"));
-    t577 = tk_sb_line(l0, TK_S("tk_w math_floor(tk_w x) { return x; }"));
-    t578 = tk_sb_line(l0, TK_S("tk_w math_ceil(tk_w x) { return x; }"));
-    t579 = tk_sb_line(l0, TK_S("tk_w math_round(tk_w x) { return x; }"));
-    t580 = tk_sb_line(l0, TK_S(""));
-    t581 = tk_sb_line(l0, TK_S("tk_w math_pow(tk_w base, tk_w exp) {"));
-    t582 = tk_sb_line(l0, TK_S("    tk_w result = 1;"));
-    t583 = tk_sb_line(l0, TK_S("    if (exp < 0) return 0;"));
-    t584 = tk_sb_line(l0, TK_S("    while (exp > 0) {"));
-    t585 = tk_sb_line(l0, TK_S("        if (exp & 1) result = (tk_w)((uint64_t)result * (uint64_t)base);"));
-    t586 = tk_sb_line(l0, TK_S("        base = (tk_w)((uint64_t)base * (uint64_t)base);"));
-    t587 = tk_sb_line(l0, TK_S("        exp >>= 1;"));
-    t588 = tk_sb_line(l0, TK_S("    }"));
-    t589 = tk_sb_line(l0, TK_S("    return result;"));
-    t590 = tk_sb_line(l0, TK_S("}"));
+    t573 = tk_sb_line(l0, TK_S("/* Whole-file helpers: open, transfer, and close in one call. */"));
+    t574 = tk_sb_line(l0, TK_S("tk_w track_file_read(tk_w path) {"));
+    t575 = tk_sb_line(l0, TK_S("    FILE *f = path \? fopen(TK_STR(path), \"rb\") : NULL;"));
+    t576 = tk_sb_line(l0, TK_S("    if (!f) return TK_WORD(tk_dup(\"\"));"));
+    t577 = tk_sb_line(l0, TK_S("    tk_w out = file_read_all(TK_WORD(f));"));
+    t578 = tk_sb_line(l0, TK_S("    fclose(f);"));
+    t579 = tk_sb_line(l0, TK_S("    return out;"));
+    t580 = tk_sb_line(l0, TK_S("}"));
+    t581 = tk_sb_line(l0, TK_S(""));
+    t582 = tk_sb_line(l0, TK_S("tk_w track_file_write_all(tk_w path, tk_w content) {"));
+    t583 = tk_sb_line(l0, TK_S("    FILE *f = path \? fopen(TK_STR(path), \"wb\") : NULL;"));
+    t584 = tk_sb_line(l0, TK_S("    if (!f) return -1;"));
+    t585 = tk_sb_line(l0, TK_S("    tk_w status = file_write(TK_WORD(f), content);"));
+    t586 = tk_sb_line(l0, TK_S("    if (fclose(f) != 0) status = -1;"));
+    t587 = tk_sb_line(l0, TK_S("    return status;"));
+    t588 = tk_sb_line(l0, TK_S("}"));
+    t589 = tk_sb_line(l0, TK_S(""));
+    t590 = tk_sb_line(l0, TK_S("/* ------------------------------------------------------------------- math */"));
     t591 = tk_sb_line(l0, TK_S(""));
-    t592 = tk_sb_line(l0, TK_S("tk_w math_sqrt(tk_w x) {"));
-    t593 = tk_sb_line(l0, TK_S("    if (x <= 0) return 0;"));
-    t594 = tk_sb_line(l0, TK_S("    uint64_t lo = 0, hi = 3037000499ULL; /* floor(sqrt(INT64_MAX)) */"));
-    t595 = tk_sb_line(l0, TK_S("    while (lo < hi) {"));
-    t596 = tk_sb_line(l0, TK_S("        uint64_t mid = (lo + hi + 1) / 2;"));
-    t597 = tk_sb_line(l0, TK_S("        if (mid * mid <= (uint64_t)x) lo = mid; else hi = mid - 1;"));
-    t598 = tk_sb_line(l0, TK_S("    }"));
-    t599 = tk_sb_line(l0, TK_S("    return (tk_w)lo;"));
-    t600 = tk_sb_line(l0, TK_S("}"));
-    t601 = tk_sb_line(l0, TK_S(""));
-    t602 = tk_sb_line(l0, TK_S("static uint64_t g_rng_state = 0x853c49e65d8dbb29ULL;"));
-    t603 = tk_sb_line(l0, TK_S("tk_w math_random(void) {"));
-    t604 = tk_sb_line(l0, TK_S("    uint64_t x = g_rng_state;"));
-    t605 = tk_sb_line(l0, TK_S("    x ^= x << 13;"));
-    t606 = tk_sb_line(l0, TK_S("    x ^= x >> 7;"));
-    t607 = tk_sb_line(l0, TK_S("    x ^= x << 17;"));
-    t608 = tk_sb_line(l0, TK_S("    g_rng_state = x;"));
-    t609 = tk_sb_line(l0, TK_S("    return (tk_w)x;"));
-    t610 = tk_sb_line(l0, TK_S("}"));
-    t611 = tk_sb_line(l0, TK_S(""));
-    t612 = tk_sb_line(l0, TK_S("tk_w add(tk_w a, tk_w b) { return a + b; }"));
-    t613 = tk_sb_line(l0, TK_S("tk_w sum(tk_w a, tk_w b) { return a + b; }"));
-    t614 = tk_sb_line(l0, TK_S("tk_w sub(tk_w a, tk_w b) { return a - b; }"));
-    t615 = tk_sb_line(l0, TK_S(""));
-    t616 = tk_sb_line(l0, TK_S("/* -------------------------------------------------------------------- Vec */"));
-    t617 = tk_sb_line(l0, TK_S(""));
-    t618 = tk_sb_line(l0, TK_S("typedef struct {"));
-    t619 = tk_sb_line(l0, TK_S("    tk_w *data;"));
-    t620 = tk_sb_line(l0, TK_S("    tk_w len;"));
-    t621 = tk_sb_line(l0, TK_S("    tk_w cap;"));
-    t622 = tk_sb_line(l0, TK_S("} TrackVec;"));
-    t623 = tk_sb_line(l0, TK_S(""));
-    t624 = tk_sb_line(l0, TK_S("tk_w vec_init(tk_w cap) {"));
-    t625 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(track_alloc_nz(sizeof(TrackVec)));"));
-    t626 = tk_sb_line(l0, TK_S("    v->cap = cap > 0 \? cap : 16;"));
-    t627 = tk_sb_line(l0, TK_S("    v->data = (tk_w *)TK_PTR(alloc(v->cap * (tk_w)sizeof(tk_w)));"));
-    t628 = tk_sb_line(l0, TK_S("    v->len = 0;"));
-    t629 = tk_sb_line(l0, TK_S("    return TK_WORD(v);"));
-    t630 = tk_sb_line(l0, TK_S("}"));
-    t631 = tk_sb_line(l0, TK_S(""));
-    t632 = tk_sb_line(l0, TK_S("tk_w vec_push(tk_w h, tk_w val) {"));
-    t633 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t634 = tk_sb_line(l0, TK_S("    if (!v) return 0;"));
-    t635 = tk_sb_line(l0, TK_S("    if (v->len == v->cap) {"));
-    t636 = tk_sb_line(l0, TK_S("        v->cap *= 2;"));
-    t637 = tk_sb_line(l0, TK_S("        v->data = (tk_w *)TK_PTR(mem_realloc(TK_WORD(v->data), v->cap * (tk_w)sizeof(tk_w)));"));
-    t638 = tk_sb_line(l0, TK_S("    }"));
-    t639 = tk_sb_line(l0, TK_S("    v->data[v->len++] = val;"));
-    t640 = tk_sb_line(l0, TK_S("    return 0;"));
-    t641 = tk_sb_line(l0, TK_S("}"));
+    t592 = tk_sb_line(l0, TK_S("tk_w math_abs(tk_w x) { return x < 0 \? -x : x; }"));
+    t593 = tk_sb_line(l0, TK_S("tk_w math_min(tk_w a, tk_w b) { return a < b \? a : b; }"));
+    t594 = tk_sb_line(l0, TK_S("tk_w math_max(tk_w a, tk_w b) { return a > b \? a : b; }"));
+    t595 = tk_sb_line(l0, TK_S("tk_w math_clamp(tk_w v, tk_w lo, tk_w hi) { return v < lo \? lo : (v > hi \? hi : v); }"));
+    t596 = tk_sb_line(l0, TK_S("tk_w math_floor(tk_w x) { return x; }"));
+    t597 = tk_sb_line(l0, TK_S("tk_w math_ceil(tk_w x) { return x; }"));
+    t598 = tk_sb_line(l0, TK_S("tk_w math_round(tk_w x) { return x; }"));
+    t599 = tk_sb_line(l0, TK_S(""));
+    t600 = tk_sb_line(l0, TK_S("tk_w math_pow(tk_w base, tk_w exp) {"));
+    t601 = tk_sb_line(l0, TK_S("    tk_w result = 1;"));
+    t602 = tk_sb_line(l0, TK_S("    if (exp < 0) return 0;"));
+    t603 = tk_sb_line(l0, TK_S("    while (exp > 0) {"));
+    t604 = tk_sb_line(l0, TK_S("        if (exp & 1) result = (tk_w)((uint64_t)result * (uint64_t)base);"));
+    t605 = tk_sb_line(l0, TK_S("        base = (tk_w)((uint64_t)base * (uint64_t)base);"));
+    t606 = tk_sb_line(l0, TK_S("        exp >>= 1;"));
+    t607 = tk_sb_line(l0, TK_S("    }"));
+    t608 = tk_sb_line(l0, TK_S("    return result;"));
+    t609 = tk_sb_line(l0, TK_S("}"));
+    t610 = tk_sb_line(l0, TK_S(""));
+    t611 = tk_sb_line(l0, TK_S("tk_w math_sqrt(tk_w x) {"));
+    t612 = tk_sb_line(l0, TK_S("    if (x <= 0) return 0;"));
+    t613 = tk_sb_line(l0, TK_S("    uint64_t lo = 0, hi = 3037000499ULL; /* floor(sqrt(INT64_MAX)) */"));
+    t614 = tk_sb_line(l0, TK_S("    while (lo < hi) {"));
+    t615 = tk_sb_line(l0, TK_S("        uint64_t mid = (lo + hi + 1) / 2;"));
+    t616 = tk_sb_line(l0, TK_S("        if (mid * mid <= (uint64_t)x) lo = mid; else hi = mid - 1;"));
+    t617 = tk_sb_line(l0, TK_S("    }"));
+    t618 = tk_sb_line(l0, TK_S("    return (tk_w)lo;"));
+    t619 = tk_sb_line(l0, TK_S("}"));
+    t620 = tk_sb_line(l0, TK_S(""));
+    t621 = tk_sb_line(l0, TK_S("static uint64_t g_rng_state = 0x853c49e65d8dbb29ULL;"));
+    t622 = tk_sb_line(l0, TK_S("tk_w math_random(void) {"));
+    t623 = tk_sb_line(l0, TK_S("    uint64_t x = g_rng_state;"));
+    t624 = tk_sb_line(l0, TK_S("    x ^= x << 13;"));
+    t625 = tk_sb_line(l0, TK_S("    x ^= x >> 7;"));
+    t626 = tk_sb_line(l0, TK_S("    x ^= x << 17;"));
+    t627 = tk_sb_line(l0, TK_S("    g_rng_state = x;"));
+    t628 = tk_sb_line(l0, TK_S("    return (tk_w)x;"));
+    t629 = tk_sb_line(l0, TK_S("}"));
+    t630 = tk_sb_line(l0, TK_S(""));
+    t631 = tk_sb_line(l0, TK_S("tk_w add(tk_w a, tk_w b) { return a + b; }"));
+    t632 = tk_sb_line(l0, TK_S("tk_w sum(tk_w a, tk_w b) { return a + b; }"));
+    t633 = tk_sb_line(l0, TK_S("tk_w sub(tk_w a, tk_w b) { return a - b; }"));
+    t634 = tk_sb_line(l0, TK_S(""));
+    t635 = tk_sb_line(l0, TK_S("/* -------------------------------------------------------------------- Vec */"));
+    t636 = tk_sb_line(l0, TK_S(""));
+    t637 = tk_sb_line(l0, TK_S("typedef struct {"));
+    t638 = tk_sb_line(l0, TK_S("    tk_w *data;"));
+    t639 = tk_sb_line(l0, TK_S("    tk_w len;"));
+    t640 = tk_sb_line(l0, TK_S("    tk_w cap;"));
+    t641 = tk_sb_line(l0, TK_S("} TrackVec;"));
     t642 = tk_sb_line(l0, TK_S(""));
-    t643 = tk_sb_line(l0, TK_S("tk_w vec_get(tk_w h, tk_w idx) {"));
-    t644 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t645 = tk_sb_line(l0, TK_S("    return v && idx >= 0 && idx < v->len \? v->data[idx] : 0;"));
-    t646 = tk_sb_line(l0, TK_S("}"));
-    t647 = tk_sb_line(l0, TK_S(""));
-    t648 = tk_sb_line(l0, TK_S("tk_w vec_set(tk_w h, tk_w idx, tk_w val) {"));
-    t649 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t650 = tk_sb_line(l0, TK_S("    if (v && idx >= 0 && idx < v->len) v->data[idx] = val;"));
-    t651 = tk_sb_line(l0, TK_S("    return 0;"));
-    t652 = tk_sb_line(l0, TK_S("}"));
-    t653 = tk_sb_line(l0, TK_S(""));
-    t654 = tk_sb_line(l0, TK_S("tk_w vec_pop(tk_w h) {"));
-    t655 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t656 = tk_sb_line(l0, TK_S("    return v && v->len > 0 \? v->data[--v->len] : 0;"));
-    t657 = tk_sb_line(l0, TK_S("}"));
-    t658 = tk_sb_line(l0, TK_S(""));
-    t659 = tk_sb_line(l0, TK_S("tk_w vec_len(tk_w h) {"));
-    t660 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t661 = tk_sb_line(l0, TK_S("    return v \? v->len : 0;"));
-    t662 = tk_sb_line(l0, TK_S("}"));
-    t663 = tk_sb_line(l0, TK_S(""));
-    t664 = tk_sb_line(l0, TK_S("tk_w vec_clear(tk_w h) {"));
-    t665 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t666 = tk_sb_line(l0, TK_S("    if (v) v->len = 0;"));
-    t667 = tk_sb_line(l0, TK_S("    return 0;"));
-    t668 = tk_sb_line(l0, TK_S("}"));
-    t669 = tk_sb_line(l0, TK_S(""));
-    t670 = tk_sb_line(l0, TK_S("tk_w vec_reserve(tk_w h, tk_w cap) {"));
-    t671 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t672 = tk_sb_line(l0, TK_S("    if (v && cap > v->cap) {"));
-    t673 = tk_sb_line(l0, TK_S("        v->data = (tk_w *)TK_PTR(mem_realloc(TK_WORD(v->data), cap * (tk_w)sizeof(tk_w)));"));
-    t674 = tk_sb_line(l0, TK_S("        v->cap = cap;"));
-    t675 = tk_sb_line(l0, TK_S("    }"));
-    t676 = tk_sb_line(l0, TK_S("    return 0;"));
-    t677 = tk_sb_line(l0, TK_S("}"));
-    t678 = tk_sb_line(l0, TK_S(""));
-    t679 = tk_sb_line(l0, TK_S("tk_w vec_free(tk_w h) {"));
-    t680 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
-    t681 = tk_sb_line(l0, TK_S("    if (v) {"));
-    t682 = tk_sb_line(l0, TK_S("        dealloc(TK_WORD(v->data));"));
-    t683 = tk_sb_line(l0, TK_S("        dealloc(h);"));
-    t684 = tk_sb_line(l0, TK_S("    }"));
-    t685 = tk_sb_line(l0, TK_S("    return 0;"));
-    t686 = tk_sb_line(l0, TK_S("}"));
-    t687 = tk_sb_line(l0, TK_S(""));
-    t688 = tk_sb_line(l0, TK_S("/* --------------------------------------------- opaque 64-bit collections */"));
-    t689 = tk_sb_line(l0, TK_S(""));
-    t690 = tk_sb_line(l0, TK_S("/* Growable word vectors used by the self-hosted compiler. Track only carries"));
-    t691 = tk_sb_line(l0, TK_S(" * the stable pointer handle; layout and capacity stay in the runtime. */"));
-    t692 = tk_sb_line(l0, TK_S("typedef struct {"));
-    t693 = tk_sb_line(l0, TK_S("    tk_w *data;"));
-    t694 = tk_sb_line(l0, TK_S("    tk_w len;"));
-    t695 = tk_sb_line(l0, TK_S("    tk_w cap;"));
-    t696 = tk_sb_line(l0, TK_S("} TrackI64Collection;"));
+    t643 = tk_sb_line(l0, TK_S("tk_w vec_init(tk_w cap) {"));
+    t644 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(track_alloc_nz(sizeof(TrackVec)));"));
+    t645 = tk_sb_line(l0, TK_S("    v->cap = cap > 0 \? cap : 16;"));
+    t646 = tk_sb_line(l0, TK_S("    v->data = (tk_w *)TK_PTR(alloc(v->cap * (tk_w)sizeof(tk_w)));"));
+    t647 = tk_sb_line(l0, TK_S("    v->len = 0;"));
+    t648 = tk_sb_line(l0, TK_S("    return TK_WORD(v);"));
+    t649 = tk_sb_line(l0, TK_S("}"));
+    t650 = tk_sb_line(l0, TK_S(""));
+    t651 = tk_sb_line(l0, TK_S("tk_w vec_push(tk_w h, tk_w val) {"));
+    t652 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t653 = tk_sb_line(l0, TK_S("    if (!v) return 0;"));
+    t654 = tk_sb_line(l0, TK_S("    if (v->len == v->cap) {"));
+    t655 = tk_sb_line(l0, TK_S("        v->cap *= 2;"));
+    t656 = tk_sb_line(l0, TK_S("        v->data = (tk_w *)TK_PTR(mem_realloc(TK_WORD(v->data), v->cap * (tk_w)sizeof(tk_w)));"));
+    t657 = tk_sb_line(l0, TK_S("    }"));
+    t658 = tk_sb_line(l0, TK_S("    v->data[v->len++] = val;"));
+    t659 = tk_sb_line(l0, TK_S("    return 0;"));
+    t660 = tk_sb_line(l0, TK_S("}"));
+    t661 = tk_sb_line(l0, TK_S(""));
+    t662 = tk_sb_line(l0, TK_S("tk_w vec_get(tk_w h, tk_w idx) {"));
+    t663 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t664 = tk_sb_line(l0, TK_S("    return v && idx >= 0 && idx < v->len \? v->data[idx] : 0;"));
+    t665 = tk_sb_line(l0, TK_S("}"));
+    t666 = tk_sb_line(l0, TK_S(""));
+    t667 = tk_sb_line(l0, TK_S("tk_w vec_set(tk_w h, tk_w idx, tk_w val) {"));
+    t668 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t669 = tk_sb_line(l0, TK_S("    if (v && idx >= 0 && idx < v->len) v->data[idx] = val;"));
+    t670 = tk_sb_line(l0, TK_S("    return 0;"));
+    t671 = tk_sb_line(l0, TK_S("}"));
+    t672 = tk_sb_line(l0, TK_S(""));
+    t673 = tk_sb_line(l0, TK_S("tk_w vec_pop(tk_w h) {"));
+    t674 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t675 = tk_sb_line(l0, TK_S("    return v && v->len > 0 \? v->data[--v->len] : 0;"));
+    t676 = tk_sb_line(l0, TK_S("}"));
+    t677 = tk_sb_line(l0, TK_S(""));
+    t678 = tk_sb_line(l0, TK_S("tk_w vec_len(tk_w h) {"));
+    t679 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t680 = tk_sb_line(l0, TK_S("    return v \? v->len : 0;"));
+    t681 = tk_sb_line(l0, TK_S("}"));
+    t682 = tk_sb_line(l0, TK_S(""));
+    t683 = tk_sb_line(l0, TK_S("tk_w vec_clear(tk_w h) {"));
+    t684 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t685 = tk_sb_line(l0, TK_S("    if (v) v->len = 0;"));
+    t686 = tk_sb_line(l0, TK_S("    return 0;"));
+    t687 = tk_sb_line(l0, TK_S("}"));
+    t688 = tk_sb_line(l0, TK_S(""));
+    t689 = tk_sb_line(l0, TK_S("tk_w vec_reserve(tk_w h, tk_w cap) {"));
+    t690 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t691 = tk_sb_line(l0, TK_S("    if (v && cap > v->cap) {"));
+    t692 = tk_sb_line(l0, TK_S("        v->data = (tk_w *)TK_PTR(mem_realloc(TK_WORD(v->data), cap * (tk_w)sizeof(tk_w)));"));
+    t693 = tk_sb_line(l0, TK_S("        v->cap = cap;"));
+    t694 = tk_sb_line(l0, TK_S("    }"));
+    t695 = tk_sb_line(l0, TK_S("    return 0;"));
+    t696 = tk_sb_line(l0, TK_S("}"));
     t697 = tk_sb_line(l0, TK_S(""));
-    t698 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_new(tk_w requested_cap) {"));
-    t699 = tk_sb_line(l0, TK_S("    tk_w cap = requested_cap > 0 \? requested_cap : 16;"));
-    t700 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)malloc(sizeof(TrackI64Collection));"));
-    t701 = tk_sb_line(l0, TK_S("    if (!c) exit(137);"));
-    t702 = tk_sb_line(l0, TK_S("    c->data = (tk_w *)malloc((size_t)cap * sizeof(tk_w));"));
-    t703 = tk_sb_line(l0, TK_S("    if (!c->data) exit(137);"));
-    t704 = tk_sb_line(l0, TK_S("    c->len = 0;"));
-    t705 = tk_sb_line(l0, TK_S("    c->cap = cap;"));
-    t706 = tk_sb_line(l0, TK_S("    return TK_WORD(c);"));
-    t707 = tk_sb_line(l0, TK_S("}"));
+    t698 = tk_sb_line(l0, TK_S("tk_w vec_free(tk_w h) {"));
+    t699 = tk_sb_line(l0, TK_S("    TrackVec *v = (TrackVec *)TK_PTR(h);"));
+    t700 = tk_sb_line(l0, TK_S("    if (v) {"));
+    t701 = tk_sb_line(l0, TK_S("        dealloc(TK_WORD(v->data));"));
+    t702 = tk_sb_line(l0, TK_S("        dealloc(h);"));
+    t703 = tk_sb_line(l0, TK_S("    }"));
+    t704 = tk_sb_line(l0, TK_S("    return 0;"));
+    t705 = tk_sb_line(l0, TK_S("}"));
+    t706 = tk_sb_line(l0, TK_S(""));
+    t707 = tk_sb_line(l0, TK_S("/* --------------------------------------------- opaque 64-bit collections */"));
     t708 = tk_sb_line(l0, TK_S(""));
-    t709 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_len(tk_w h) {"));
-    t710 = tk_sb_line(l0, TK_S("    const TrackI64Collection *c = (const TrackI64Collection *)TK_PTR(h);"));
-    t711 = tk_sb_line(l0, TK_S("    return c \? c->len : 0;"));
-    t712 = tk_sb_line(l0, TK_S("}"));
-    t713 = tk_sb_line(l0, TK_S(""));
-    t714 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_push(tk_w h, tk_w value) {"));
-    t715 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
-    t716 = tk_sb_line(l0, TK_S("    if (!c) return -1;"));
-    t717 = tk_sb_line(l0, TK_S("    if (c->len == c->cap) {"));
-    t718 = tk_sb_line(l0, TK_S("        c->cap *= 2;"));
-    t719 = tk_sb_line(l0, TK_S("        c->data = (tk_w *)realloc(c->data, (size_t)c->cap * sizeof(tk_w));"));
-    t720 = tk_sb_line(l0, TK_S("        if (!c->data) exit(137);"));
-    t721 = tk_sb_line(l0, TK_S("    }"));
-    t722 = tk_sb_line(l0, TK_S("    c->data[c->len] = value;"));
-    t723 = tk_sb_line(l0, TK_S("    return c->len++;"));
-    t724 = tk_sb_line(l0, TK_S("}"));
-    t725 = tk_sb_line(l0, TK_S(""));
-    t726 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_get(tk_w h, tk_w index) {"));
-    t727 = tk_sb_line(l0, TK_S("    const TrackI64Collection *c = (const TrackI64Collection *)TK_PTR(h);"));
-    t728 = tk_sb_line(l0, TK_S("    if (!c || index < 0 || index >= c->len) return 0;"));
-    t729 = tk_sb_line(l0, TK_S("    return c->data[index];"));
-    t730 = tk_sb_line(l0, TK_S("}"));
-    t731 = tk_sb_line(l0, TK_S(""));
-    t732 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_set(tk_w h, tk_w index, tk_w value) {"));
-    t733 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
-    t734 = tk_sb_line(l0, TK_S("    if (!c || index < 0 || index >= c->len) return 0;"));
-    t735 = tk_sb_line(l0, TK_S("    c->data[index] = value;"));
-    t736 = tk_sb_line(l0, TK_S("    return 1;"));
-    t737 = tk_sb_line(l0, TK_S("}"));
-    t738 = tk_sb_line(l0, TK_S(""));
-    t739 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_pop(tk_w h) {"));
-    t740 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
-    t741 = tk_sb_line(l0, TK_S("    if (!c || c->len == 0) return 0;"));
-    t742 = tk_sb_line(l0, TK_S("    return c->data[--c->len];"));
+    t709 = tk_sb_line(l0, TK_S("/* Growable word vectors used by the self-hosted compiler. Track only carries"));
+    t710 = tk_sb_line(l0, TK_S(" * the stable pointer handle; layout and capacity stay in the runtime. */"));
+    t711 = tk_sb_line(l0, TK_S("typedef struct {"));
+    t712 = tk_sb_line(l0, TK_S("    tk_w *data;"));
+    t713 = tk_sb_line(l0, TK_S("    tk_w len;"));
+    t714 = tk_sb_line(l0, TK_S("    tk_w cap;"));
+    t715 = tk_sb_line(l0, TK_S("} TrackI64Collection;"));
+    t716 = tk_sb_line(l0, TK_S(""));
+    t717 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_new(tk_w requested_cap) {"));
+    t718 = tk_sb_line(l0, TK_S("    tk_w cap = requested_cap > 0 \? requested_cap : 16;"));
+    t719 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)malloc(sizeof(TrackI64Collection));"));
+    t720 = tk_sb_line(l0, TK_S("    if (!c) exit(137);"));
+    t721 = tk_sb_line(l0, TK_S("    c->data = (tk_w *)malloc((size_t)cap * sizeof(tk_w));"));
+    t722 = tk_sb_line(l0, TK_S("    if (!c->data) exit(137);"));
+    t723 = tk_sb_line(l0, TK_S("    c->len = 0;"));
+    t724 = tk_sb_line(l0, TK_S("    c->cap = cap;"));
+    t725 = tk_sb_line(l0, TK_S("    return TK_WORD(c);"));
+    t726 = tk_sb_line(l0, TK_S("}"));
+    t727 = tk_sb_line(l0, TK_S(""));
+    t728 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_len(tk_w h) {"));
+    t729 = tk_sb_line(l0, TK_S("    const TrackI64Collection *c = (const TrackI64Collection *)TK_PTR(h);"));
+    t730 = tk_sb_line(l0, TK_S("    return c \? c->len : 0;"));
+    t731 = tk_sb_line(l0, TK_S("}"));
+    t732 = tk_sb_line(l0, TK_S(""));
+    t733 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_push(tk_w h, tk_w value) {"));
+    t734 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
+    t735 = tk_sb_line(l0, TK_S("    if (!c) return -1;"));
+    t736 = tk_sb_line(l0, TK_S("    if (c->len == c->cap) {"));
+    t737 = tk_sb_line(l0, TK_S("        c->cap *= 2;"));
+    t738 = tk_sb_line(l0, TK_S("        c->data = (tk_w *)realloc(c->data, (size_t)c->cap * sizeof(tk_w));"));
+    t739 = tk_sb_line(l0, TK_S("        if (!c->data) exit(137);"));
+    t740 = tk_sb_line(l0, TK_S("    }"));
+    t741 = tk_sb_line(l0, TK_S("    c->data[c->len] = value;"));
+    t742 = tk_sb_line(l0, TK_S("    return c->len++;"));
     t743 = tk_sb_line(l0, TK_S("}"));
     t744 = tk_sb_line(l0, TK_S(""));
-    t745 = tk_sb_line(l0, TK_S("/* Free a collection and its storage (fresh handles only, \302\2473.5). */"));
-    t746 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_free(tk_w h) {"));
-    t747 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
-    t748 = tk_sb_line(l0, TK_S("    if (c) {"));
-    t749 = tk_sb_line(l0, TK_S("        free(c->data);"));
-    t750 = tk_sb_line(l0, TK_S("        free(c);"));
-    t751 = tk_sb_line(l0, TK_S("    }"));
-    t752 = tk_sb_line(l0, TK_S("    return 0;"));
-    t753 = tk_sb_line(l0, TK_S("}"));
-    t754 = tk_sb_line(l0, TK_S(""));
-    t755 = tk_sb_line(l0, TK_S("/* Shrink to `len` elements (no-op when already shorter). */"));
-    t756 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_truncate(tk_w h, tk_w len) {"));
-    t757 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
-    t758 = tk_sb_line(l0, TK_S("    if (c && len >= 0 && len < c->len) c->len = len;"));
-    t759 = tk_sb_line(l0, TK_S("    return 0;"));
-    t760 = tk_sb_line(l0, TK_S("}"));
-    t761 = tk_sb_line(l0, TK_S(""));
-    t762 = tk_sb_line(l0, TK_S("/* --------------------------------------------------------- string builder */"));
+    t745 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_get(tk_w h, tk_w index) {"));
+    t746 = tk_sb_line(l0, TK_S("    const TrackI64Collection *c = (const TrackI64Collection *)TK_PTR(h);"));
+    t747 = tk_sb_line(l0, TK_S("    if (!c || index < 0 || index >= c->len) return 0;"));
+    t748 = tk_sb_line(l0, TK_S("    return c->data[index];"));
+    t749 = tk_sb_line(l0, TK_S("}"));
+    t750 = tk_sb_line(l0, TK_S(""));
+    t751 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_set(tk_w h, tk_w index, tk_w value) {"));
+    t752 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
+    t753 = tk_sb_line(l0, TK_S("    if (!c || index < 0 || index >= c->len) return 0;"));
+    t754 = tk_sb_line(l0, TK_S("    c->data[index] = value;"));
+    t755 = tk_sb_line(l0, TK_S("    return 1;"));
+    t756 = tk_sb_line(l0, TK_S("}"));
+    t757 = tk_sb_line(l0, TK_S(""));
+    t758 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_pop(tk_w h) {"));
+    t759 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
+    t760 = tk_sb_line(l0, TK_S("    if (!c || c->len == 0) return 0;"));
+    t761 = tk_sb_line(l0, TK_S("    return c->data[--c->len];"));
+    t762 = tk_sb_line(l0, TK_S("}"));
     t763 = tk_sb_line(l0, TK_S(""));
-    t764 = tk_sb_line(l0, TK_S("typedef struct {"));
-    t765 = tk_sb_line(l0, TK_S("    char *data;"));
-    t766 = tk_sb_line(l0, TK_S("    size_t len;"));
-    t767 = tk_sb_line(l0, TK_S("    size_t cap;"));
-    t768 = tk_sb_line(l0, TK_S("} TrackStrBuf;"));
-    t769 = tk_sb_line(l0, TK_S(""));
-    t770 = tk_sb_line(l0, TK_S("static void sb_reserve(TrackStrBuf *b, size_t extra) {"));
-    t771 = tk_sb_line(l0, TK_S("    if (b->len + extra + 1 <= b->cap) return;"));
-    t772 = tk_sb_line(l0, TK_S("    while (b->len + extra + 1 > b->cap) b->cap *= 2;"));
-    t773 = tk_sb_line(l0, TK_S("    b->data = (char *)realloc(b->data, b->cap);"));
-    t774 = tk_sb_line(l0, TK_S("    if (!b->data) exit(137);"));
-    t775 = tk_sb_line(l0, TK_S("}"));
-    t776 = tk_sb_line(l0, TK_S(""));
-    t777 = tk_sb_line(l0, TK_S("tk_w track_sb_new(void) {"));
-    t778 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)malloc(sizeof(TrackStrBuf));"));
-    t779 = tk_sb_line(l0, TK_S("    if (!b) exit(137);"));
-    t780 = tk_sb_line(l0, TK_S("    b->cap = 256;"));
-    t781 = tk_sb_line(l0, TK_S("    b->len = 0;"));
-    t782 = tk_sb_line(l0, TK_S("    b->data = (char *)malloc(b->cap);"));
-    t783 = tk_sb_line(l0, TK_S("    if (!b->data) exit(137);"));
-    t784 = tk_sb_line(l0, TK_S("    b->data[0] = '\\0';"));
-    t785 = tk_sb_line(l0, TK_S("    return TK_WORD(b);"));
-    t786 = tk_sb_line(l0, TK_S("}"));
-    t787 = tk_sb_line(l0, TK_S(""));
-    t788 = tk_sb_line(l0, TK_S("tk_w track_sb_push(tk_w h, tk_w s) {"));
-    t789 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
-    t790 = tk_sb_line(l0, TK_S("    if (!b || !s) return 0;"));
-    t791 = tk_sb_line(l0, TK_S("    size_t n = strlen(TK_STR(s));"));
-    t792 = tk_sb_line(l0, TK_S("    sb_reserve(b, n);"));
-    t793 = tk_sb_line(l0, TK_S("    memcpy(b->data + b->len, TK_STR(s), n + 1);"));
-    t794 = tk_sb_line(l0, TK_S("    b->len += n;"));
-    t795 = tk_sb_line(l0, TK_S("    return 0;"));
-    t796 = tk_sb_line(l0, TK_S("}"));
-    t797 = tk_sb_line(l0, TK_S(""));
-    t798 = tk_sb_line(l0, TK_S("tk_w track_sb_push_byte(tk_w h, tk_w byte) {"));
-    t799 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
-    t800 = tk_sb_line(l0, TK_S("    if (!b) return 0;"));
-    t801 = tk_sb_line(l0, TK_S("    sb_reserve(b, 1);"));
-    t802 = tk_sb_line(l0, TK_S("    b->data[b->len++] = (char)byte;"));
-    t803 = tk_sb_line(l0, TK_S("    b->data[b->len] = '\\0';"));
-    t804 = tk_sb_line(l0, TK_S("    return 0;"));
+    t764 = tk_sb_line(l0, TK_S("/* Free a collection and its storage (fresh handles only, \302\2473.5). */"));
+    t765 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_free(tk_w h) {"));
+    t766 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
+    t767 = tk_sb_line(l0, TK_S("    if (c) {"));
+    t768 = tk_sb_line(l0, TK_S("        free(c->data);"));
+    t769 = tk_sb_line(l0, TK_S("        free(c);"));
+    t770 = tk_sb_line(l0, TK_S("    }"));
+    t771 = tk_sb_line(l0, TK_S("    return 0;"));
+    t772 = tk_sb_line(l0, TK_S("}"));
+    t773 = tk_sb_line(l0, TK_S(""));
+    t774 = tk_sb_line(l0, TK_S("/* Shrink to `len` elements (no-op when already shorter). */"));
+    t775 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_truncate(tk_w h, tk_w len) {"));
+    t776 = tk_sb_line(l0, TK_S("    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);"));
+    t777 = tk_sb_line(l0, TK_S("    if (c && len >= 0 && len < c->len) c->len = len;"));
+    t778 = tk_sb_line(l0, TK_S("    return 0;"));
+    t779 = tk_sb_line(l0, TK_S("}"));
+    t780 = tk_sb_line(l0, TK_S(""));
+    t781 = tk_sb_line(l0, TK_S("/* --------------------------------------------------------- string builder */"));
+    t782 = tk_sb_line(l0, TK_S(""));
+    t783 = tk_sb_line(l0, TK_S("typedef struct {"));
+    t784 = tk_sb_line(l0, TK_S("    char *data;"));
+    t785 = tk_sb_line(l0, TK_S("    size_t len;"));
+    t786 = tk_sb_line(l0, TK_S("    size_t cap;"));
+    t787 = tk_sb_line(l0, TK_S("} TrackStrBuf;"));
+    t788 = tk_sb_line(l0, TK_S(""));
+    t789 = tk_sb_line(l0, TK_S("static void sb_reserve(TrackStrBuf *b, size_t extra) {"));
+    t790 = tk_sb_line(l0, TK_S("    if (b->len + extra + 1 <= b->cap) return;"));
+    t791 = tk_sb_line(l0, TK_S("    while (b->len + extra + 1 > b->cap) b->cap *= 2;"));
+    t792 = tk_sb_line(l0, TK_S("    b->data = (char *)realloc(b->data, b->cap);"));
+    t793 = tk_sb_line(l0, TK_S("    if (!b->data) exit(137);"));
+    t794 = tk_sb_line(l0, TK_S("}"));
+    t795 = tk_sb_line(l0, TK_S(""));
+    t796 = tk_sb_line(l0, TK_S("tk_w track_sb_new(void) {"));
+    t797 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)malloc(sizeof(TrackStrBuf));"));
+    t798 = tk_sb_line(l0, TK_S("    if (!b) exit(137);"));
+    t799 = tk_sb_line(l0, TK_S("    b->cap = 256;"));
+    t800 = tk_sb_line(l0, TK_S("    b->len = 0;"));
+    t801 = tk_sb_line(l0, TK_S("    b->data = (char *)malloc(b->cap);"));
+    t802 = tk_sb_line(l0, TK_S("    if (!b->data) exit(137);"));
+    t803 = tk_sb_line(l0, TK_S("    b->data[0] = '\\0';"));
+    t804 = tk_sb_line(l0, TK_S("    return TK_WORD(b);"));
     t805 = tk_sb_line(l0, TK_S("}"));
     t806 = tk_sb_line(l0, TK_S(""));
-    t807 = tk_sb_line(l0, TK_S("tk_w track_sb_push_int(tk_w h, tk_w val) {"));
-    t808 = tk_sb_line(l0, TK_S("    char buf[32];"));
-    t809 = tk_sb_line(l0, TK_S("    snprintf(buf, sizeof(buf), \"%lld\", (long long)val);"));
-    t810 = tk_sb_line(l0, TK_S("    return track_sb_push(h, TK_WORD(buf));"));
-    t811 = tk_sb_line(l0, TK_S("}"));
-    t812 = tk_sb_line(l0, TK_S(""));
-    t813 = tk_sb_line(l0, TK_S("tk_w track_sb_len(tk_w h) {"));
-    t814 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
-    t815 = tk_sb_line(l0, TK_S("    return b \? (tk_w)b->len : 0;"));
-    t816 = tk_sb_line(l0, TK_S("}"));
-    t817 = tk_sb_line(l0, TK_S(""));
-    t818 = tk_sb_line(l0, TK_S("/* Copy the builder contents into a new string. */"));
-    t819 = tk_sb_line(l0, TK_S("tk_w track_sb_str(tk_w h) {"));
-    t820 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
-    t821 = tk_sb_line(l0, TK_S("    return TK_WORD(b \? tk_dup_n(b->data, b->len) : tk_dup(\"\"));"));
-    t822 = tk_sb_line(l0, TK_S("}"));
-    t823 = tk_sb_line(l0, TK_S(""));
-    t824 = tk_sb_line(l0, TK_S("/* Free a string builder and its buffer (fresh handles only, \302\2473.5). */"));
-    t825 = tk_sb_line(l0, TK_S("tk_w track_sb_free(tk_w h) {"));
-    t826 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
-    t827 = tk_sb_line(l0, TK_S("    if (b) {"));
-    t828 = tk_sb_line(l0, TK_S("        free(b->data);"));
-    t829 = tk_sb_line(l0, TK_S("        free(b);"));
-    t830 = tk_sb_line(l0, TK_S("    }"));
-    t831 = tk_sb_line(l0, TK_S("    return 0;"));
-    t832 = tk_sb_line(l0, TK_S("}"));
-    t833 = tk_sb_line(l0, TK_S(""));
-    t834 = tk_sb_line(l0, TK_S("tk_w track_sb_clear(tk_w h) {"));
-    t835 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
-    t836 = tk_sb_line(l0, TK_S("    if (b) {"));
-    t837 = tk_sb_line(l0, TK_S("        b->len = 0;"));
-    t838 = tk_sb_line(l0, TK_S("        b->data[0] = '\\0';"));
-    t839 = tk_sb_line(l0, TK_S("    }"));
-    t840 = tk_sb_line(l0, TK_S("    return 0;"));
+    t807 = tk_sb_line(l0, TK_S("tk_w track_sb_push(tk_w h, tk_w s) {"));
+    t808 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
+    t809 = tk_sb_line(l0, TK_S("    if (!b || !s) return 0;"));
+    t810 = tk_sb_line(l0, TK_S("    size_t n = strlen(TK_STR(s));"));
+    t811 = tk_sb_line(l0, TK_S("    sb_reserve(b, n);"));
+    t812 = tk_sb_line(l0, TK_S("    memcpy(b->data + b->len, TK_STR(s), n + 1);"));
+    t813 = tk_sb_line(l0, TK_S("    b->len += n;"));
+    t814 = tk_sb_line(l0, TK_S("    return 0;"));
+    t815 = tk_sb_line(l0, TK_S("}"));
+    t816 = tk_sb_line(l0, TK_S(""));
+    t817 = tk_sb_line(l0, TK_S("tk_w track_sb_push_byte(tk_w h, tk_w byte) {"));
+    t818 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
+    t819 = tk_sb_line(l0, TK_S("    if (!b) return 0;"));
+    t820 = tk_sb_line(l0, TK_S("    sb_reserve(b, 1);"));
+    t821 = tk_sb_line(l0, TK_S("    b->data[b->len++] = (char)byte;"));
+    t822 = tk_sb_line(l0, TK_S("    b->data[b->len] = '\\0';"));
+    t823 = tk_sb_line(l0, TK_S("    return 0;"));
+    t824 = tk_sb_line(l0, TK_S("}"));
+    t825 = tk_sb_line(l0, TK_S(""));
+    t826 = tk_sb_line(l0, TK_S("tk_w track_sb_push_int(tk_w h, tk_w val) {"));
+    t827 = tk_sb_line(l0, TK_S("    char buf[32];"));
+    t828 = tk_sb_line(l0, TK_S("    snprintf(buf, sizeof(buf), \"%lld\", (long long)val);"));
+    t829 = tk_sb_line(l0, TK_S("    return track_sb_push(h, TK_WORD(buf));"));
+    t830 = tk_sb_line(l0, TK_S("}"));
+    t831 = tk_sb_line(l0, TK_S(""));
+    t832 = tk_sb_line(l0, TK_S("tk_w track_sb_len(tk_w h) {"));
+    t833 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
+    t834 = tk_sb_line(l0, TK_S("    return b \? (tk_w)b->len : 0;"));
+    t835 = tk_sb_line(l0, TK_S("}"));
+    t836 = tk_sb_line(l0, TK_S(""));
+    t837 = tk_sb_line(l0, TK_S("/* Copy the builder contents into a new string. */"));
+    t838 = tk_sb_line(l0, TK_S("tk_w track_sb_str(tk_w h) {"));
+    t839 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
+    t840 = tk_sb_line(l0, TK_S("    return TK_WORD(b \? tk_dup_n(b->data, b->len) : tk_dup(\"\"));"));
     t841 = tk_sb_line(l0, TK_S("}"));
     t842 = tk_sb_line(l0, TK_S(""));
-    t843 = tk_sb_line(l0, TK_S("/* ----------------------------------------------------------------- arrays */"));
-    t844 = tk_sb_line(l0, TK_S(""));
-    t845 = tk_sb_line(l0, TK_S("/* Array values are cells [length, elements...]; indexing is bounds checked. */"));
-    t846 = tk_sb_line(l0, TK_S("static void tk_bounds(tk_w a, tk_w i) {"));
-    t847 = tk_sb_line(l0, TK_S("    if (!a) track_abort(TK_WORD(\"index into a null array\"));"));
-    t848 = tk_sb_line(l0, TK_S("    if (i < 0 || i >= ((tk_w *)TK_PTR(a))[0]) track_abort(TK_WORD(\"array index out of bounds\"));"));
-    t849 = tk_sb_line(l0, TK_S("}"));
-    t850 = tk_sb_line(l0, TK_S(""));
-    t851 = tk_sb_line(l0, TK_S("tk_w track_array_get(tk_w a, tk_w i) {"));
-    t852 = tk_sb_line(l0, TK_S("    tk_bounds(a, i);"));
-    t853 = tk_sb_line(l0, TK_S("    return ((tk_w *)TK_PTR(a))[i + 1];"));
-    t854 = tk_sb_line(l0, TK_S("}"));
-    t855 = tk_sb_line(l0, TK_S(""));
-    t856 = tk_sb_line(l0, TK_S("tk_w track_array_set(tk_w a, tk_w i, tk_w v) {"));
-    t857 = tk_sb_line(l0, TK_S("    tk_bounds(a, i);"));
-    t858 = tk_sb_line(l0, TK_S("    ((tk_w *)TK_PTR(a))[i + 1] = v;"));
-    t859 = tk_sb_line(l0, TK_S("    return v;"));
+    t843 = tk_sb_line(l0, TK_S("/* Free a string builder and its buffer (fresh handles only, \302\2473.5). */"));
+    t844 = tk_sb_line(l0, TK_S("tk_w track_sb_free(tk_w h) {"));
+    t845 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
+    t846 = tk_sb_line(l0, TK_S("    if (b) {"));
+    t847 = tk_sb_line(l0, TK_S("        free(b->data);"));
+    t848 = tk_sb_line(l0, TK_S("        free(b);"));
+    t849 = tk_sb_line(l0, TK_S("    }"));
+    t850 = tk_sb_line(l0, TK_S("    return 0;"));
+    t851 = tk_sb_line(l0, TK_S("}"));
+    t852 = tk_sb_line(l0, TK_S(""));
+    t853 = tk_sb_line(l0, TK_S("tk_w track_sb_clear(tk_w h) {"));
+    t854 = tk_sb_line(l0, TK_S("    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);"));
+    t855 = tk_sb_line(l0, TK_S("    if (b) {"));
+    t856 = tk_sb_line(l0, TK_S("        b->len = 0;"));
+    t857 = tk_sb_line(l0, TK_S("        b->data[0] = '\\0';"));
+    t858 = tk_sb_line(l0, TK_S("    }"));
+    t859 = tk_sb_line(l0, TK_S("    return 0;"));
     t860 = tk_sb_line(l0, TK_S("}"));
     t861 = tk_sb_line(l0, TK_S(""));
-    t862 = tk_sb_line(l0, TK_S("/* Copy of a[from..to]; `to` of -1 means the end of the array. */"));
-    t863 = tk_sb_line(l0, TK_S("tk_w track_array_slice(tk_w a, tk_w from, tk_w to) {"));
-    t864 = tk_sb_line(l0, TK_S("    tk_w len = a \? ((tk_w *)TK_PTR(a))[0] : 0;"));
-    t865 = tk_sb_line(l0, TK_S("    if (to < 0) to = len;"));
-    t866 = tk_sb_line(l0, TK_S("    if (from < 0 || from > to || to > len) track_abort(TK_WORD(\"array slice out of bounds\"));"));
-    t867 = tk_sb_line(l0, TK_S("    tk_w out = track_alloc_nz((to - from + 1) * 8);"));
-    t868 = tk_sb_line(l0, TK_S("    ((tk_w *)TK_PTR(out))[0] = to - from;"));
-    t869 = tk_sb_line(l0, TK_S("    if (to > from) memcpy((tk_w *)TK_PTR(out) + 1, (tk_w *)TK_PTR(a) + 1 + from, (size_t)(to - from) * 8);"));
-    t870 = tk_sb_line(l0, TK_S("    return out;"));
-    t871 = tk_sb_line(l0, TK_S("}"));
-    t872 = tk_sb_line(l0, TK_S(""));
-    t873 = tk_sb_line(l0, TK_S("tk_w array_len(tk_w a) { return a \? ((tk_w *)TK_PTR(a))[0] : 0; }"));
+    t862 = tk_sb_line(l0, TK_S("/* ----------------------------------------------------------------- arrays */"));
+    t863 = tk_sb_line(l0, TK_S(""));
+    t864 = tk_sb_line(l0, TK_S("/* Array values are cells [length, elements...]; indexing is bounds checked. */"));
+    t865 = tk_sb_line(l0, TK_S("static void tk_bounds(tk_w a, tk_w i) {"));
+    t866 = tk_sb_line(l0, TK_S("    if (!a) track_abort(TK_WORD(\"index into a null array\"));"));
+    t867 = tk_sb_line(l0, TK_S("    if (i < 0 || i >= ((tk_w *)TK_PTR(a))[0]) track_abort(TK_WORD(\"array index out of bounds\"));"));
+    t868 = tk_sb_line(l0, TK_S("}"));
+    t869 = tk_sb_line(l0, TK_S(""));
+    t870 = tk_sb_line(l0, TK_S("tk_w track_array_get(tk_w a, tk_w i) {"));
+    t871 = tk_sb_line(l0, TK_S("    tk_bounds(a, i);"));
+    t872 = tk_sb_line(l0, TK_S("    return ((tk_w *)TK_PTR(a))[i + 1];"));
+    t873 = tk_sb_line(l0, TK_S("}"));
     t874 = tk_sb_line(l0, TK_S(""));
-    t875 = tk_sb_line(l0, TK_S("/* A field access whose struct tag matched none of the declaring structs. */"));
-    t876 = tk_sb_line(l0, TK_S("tk_w track_bad_field(void) {"));
-    t877 = tk_sb_line(l0, TK_S("    return track_abort(TK_WORD(\"field access on a value of the wrong struct type\"));"));
-    t878 = tk_sb_line(l0, TK_S("}"));
-    t879 = tk_sb_line(l0, TK_S(""));
-    t880 = tk_sb_line(l0, TK_S("/* ---------------------------------------------------------------- network */"));
-    t881 = tk_sb_line(l0, TK_S(""));
-    t882 = tk_sb_line(l0, TK_S("tk_w net_socket_tcp_listen(tk_w port) {"));
-    t883 = tk_sb_line(l0, TK_S("    int fd = socket(AF_INET, SOCK_STREAM, 0);"));
-    t884 = tk_sb_line(l0, TK_S("    if (fd < 0) return -1;"));
-    t885 = tk_sb_line(l0, TK_S("    int opt = 1;"));
-    t886 = tk_sb_line(l0, TK_S("    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));"));
-    t887 = tk_sb_line(l0, TK_S("    struct sockaddr_in addr;"));
-    t888 = tk_sb_line(l0, TK_S("    memset(&addr, 0, sizeof(addr));"));
-    t889 = tk_sb_line(l0, TK_S("    addr.sin_family = AF_INET;"));
-    t890 = tk_sb_line(l0, TK_S("    addr.sin_addr.s_addr = INADDR_ANY;"));
-    t891 = tk_sb_line(l0, TK_S("    addr.sin_port = htons((uint16_t)port);"));
-    t892 = tk_sb_line(l0, TK_S("    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {"));
-    t893 = tk_sb_line(l0, TK_S("        if (errno == EADDRINUSE) {"));
-    t894 = tk_sb_line(l0, TK_S("            fprintf(stderr, \"Track Network Error: Port conflict! Port %d is already in use by another process.\\n\", (int)port);"));
-    t895 = tk_sb_line(l0, TK_S("        } else {"));
-    t896 = tk_sb_line(l0, TK_S("            fprintf(stderr, \"Track Network Error: Failed to bind TCP socket on port %d (errno: %d).\\n\", (int)port, errno);"));
-    t897 = tk_sb_line(l0, TK_S("        }"));
-    t898 = tk_sb_line(l0, TK_S("        fflush(stderr);"));
-    t899 = tk_sb_line(l0, TK_S("        close(fd);"));
-    t900 = tk_sb_line(l0, TK_S("        return -1;"));
-    t901 = tk_sb_line(l0, TK_S("    }"));
-    t902 = tk_sb_line(l0, TK_S("    if (listen(fd, 128) < 0) {"));
-    t903 = tk_sb_line(l0, TK_S("        close(fd);"));
-    t904 = tk_sb_line(l0, TK_S("        return -1;"));
-    t905 = tk_sb_line(l0, TK_S("    }"));
-    t906 = tk_sb_line(l0, TK_S("    return fd;"));
-    t907 = tk_sb_line(l0, TK_S("}"));
-    t908 = tk_sb_line(l0, TK_S(""));
-    t909 = tk_sb_line(l0, TK_S("tk_w net_socket_accept(tk_w server_fd) {"));
-    t910 = tk_sb_line(l0, TK_S("    if (server_fd < 0) return -1;"));
-    t911 = tk_sb_line(l0, TK_S("    struct sockaddr_in client_addr;"));
-    t912 = tk_sb_line(l0, TK_S("    socklen_t addrlen = sizeof(client_addr);"));
-    t913 = tk_sb_line(l0, TK_S("    return accept((int)server_fd, (struct sockaddr *)&client_addr, &addrlen);"));
-    t914 = tk_sb_line(l0, TK_S("}"));
-    t915 = tk_sb_line(l0, TK_S(""));
-    t916 = tk_sb_line(l0, TK_S("tk_w net_socket_connect(tk_w host, tk_w port) {"));
-    t917 = tk_sb_line(l0, TK_S("    if (!host) return -1;"));
-    t918 = tk_sb_line(l0, TK_S("    int fd = socket(AF_INET, SOCK_STREAM, 0);"));
-    t919 = tk_sb_line(l0, TK_S("    if (fd < 0) return -1;"));
-    t920 = tk_sb_line(l0, TK_S("    struct sockaddr_in addr;"));
-    t921 = tk_sb_line(l0, TK_S("    memset(&addr, 0, sizeof(addr));"));
-    t922 = tk_sb_line(l0, TK_S("    addr.sin_family = AF_INET;"));
-    t923 = tk_sb_line(l0, TK_S("    addr.sin_port = htons((uint16_t)port);"));
-    t924 = tk_sb_line(l0, TK_S("    if (inet_pton(AF_INET, TK_STR(host), &addr.sin_addr) <= 0 ||"));
-    t925 = tk_sb_line(l0, TK_S("        connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {"));
-    t926 = tk_sb_line(l0, TK_S("        close(fd);"));
-    t927 = tk_sb_line(l0, TK_S("        return -1;"));
-    t928 = tk_sb_line(l0, TK_S("    }"));
-    t929 = tk_sb_line(l0, TK_S("    return fd;"));
-    t930 = tk_sb_line(l0, TK_S("}"));
-    t931 = tk_sb_line(l0, TK_S(""));
-    t932 = tk_sb_line(l0, TK_S("tk_w net_socket_send(tk_w fd, tk_w data, tk_w len) {"));
-    t933 = tk_sb_line(l0, TK_S("    if (fd < 0 || !data) return -1;"));
-    t934 = tk_sb_line(l0, TK_S("    return (tk_w)send((int)fd, TK_PTR(data), (size_t)len, 0);"));
-    t935 = tk_sb_line(l0, TK_S("}"));
-    t936 = tk_sb_line(l0, TK_S(""));
-    t937 = tk_sb_line(l0, TK_S("tk_w net_socket_recv(tk_w fd, tk_w buf, tk_w max_len) {"));
-    t938 = tk_sb_line(l0, TK_S("    if (fd < 0 || !buf) return -1;"));
-    t939 = tk_sb_line(l0, TK_S("    return (tk_w)recv((int)fd, TK_PTR(buf), (size_t)max_len, 0);"));
-    t940 = tk_sb_line(l0, TK_S("}"));
-    t941 = tk_sb_line(l0, TK_S(""));
-    t942 = tk_sb_line(l0, TK_S("tk_w net_socket_close(tk_w fd) {"));
-    t943 = tk_sb_line(l0, TK_S("    if (fd >= 0) close((int)fd);"));
-    t944 = tk_sb_line(l0, TK_S("    return 0;"));
-    t945 = tk_sb_line(l0, TK_S("}"));
+    t875 = tk_sb_line(l0, TK_S("tk_w track_array_set(tk_w a, tk_w i, tk_w v) {"));
+    t876 = tk_sb_line(l0, TK_S("    tk_bounds(a, i);"));
+    t877 = tk_sb_line(l0, TK_S("    ((tk_w *)TK_PTR(a))[i + 1] = v;"));
+    t878 = tk_sb_line(l0, TK_S("    return v;"));
+    t879 = tk_sb_line(l0, TK_S("}"));
+    t880 = tk_sb_line(l0, TK_S(""));
+    t881 = tk_sb_line(l0, TK_S("/* Copy of a[from..to]; `to` of -1 means the end of the array. */"));
+    t882 = tk_sb_line(l0, TK_S("tk_w track_array_slice(tk_w a, tk_w from, tk_w to) {"));
+    t883 = tk_sb_line(l0, TK_S("    tk_w len = a \? ((tk_w *)TK_PTR(a))[0] : 0;"));
+    t884 = tk_sb_line(l0, TK_S("    if (to < 0) to = len;"));
+    t885 = tk_sb_line(l0, TK_S("    if (from < 0 || from > to || to > len) track_abort(TK_WORD(\"array slice out of bounds\"));"));
+    t886 = tk_sb_line(l0, TK_S("    tk_w out = track_alloc_nz((to - from + 1) * 8);"));
+    t887 = tk_sb_line(l0, TK_S("    ((tk_w *)TK_PTR(out))[0] = to - from;"));
+    t888 = tk_sb_line(l0, TK_S("    if (to > from) memcpy((tk_w *)TK_PTR(out) + 1, (tk_w *)TK_PTR(a) + 1 + from, (size_t)(to - from) * 8);"));
+    t889 = tk_sb_line(l0, TK_S("    return out;"));
+    t890 = tk_sb_line(l0, TK_S("}"));
+    t891 = tk_sb_line(l0, TK_S(""));
+    t892 = tk_sb_line(l0, TK_S("tk_w array_len(tk_w a) { return a \? ((tk_w *)TK_PTR(a))[0] : 0; }"));
+    t893 = tk_sb_line(l0, TK_S(""));
+    t894 = tk_sb_line(l0, TK_S("/* A field access whose struct tag matched none of the declaring structs. */"));
+    t895 = tk_sb_line(l0, TK_S("tk_w track_bad_field(void) {"));
+    t896 = tk_sb_line(l0, TK_S("    return track_abort(TK_WORD(\"field access on a value of the wrong struct type\"));"));
+    t897 = tk_sb_line(l0, TK_S("}"));
+    t898 = tk_sb_line(l0, TK_S(""));
+    t899 = tk_sb_line(l0, TK_S("/* ---------------------------------------------------------------- network */"));
+    t900 = tk_sb_line(l0, TK_S(""));
+    t901 = tk_sb_line(l0, TK_S("tk_w net_socket_tcp_listen(tk_w port) {"));
+    t902 = tk_sb_line(l0, TK_S("    int fd = socket(AF_INET, SOCK_STREAM, 0);"));
+    t903 = tk_sb_line(l0, TK_S("    if (fd < 0) return -1;"));
+    t904 = tk_sb_line(l0, TK_S("    int opt = 1;"));
+    t905 = tk_sb_line(l0, TK_S("    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));"));
+    t906 = tk_sb_line(l0, TK_S("    struct sockaddr_in addr;"));
+    t907 = tk_sb_line(l0, TK_S("    memset(&addr, 0, sizeof(addr));"));
+    t908 = tk_sb_line(l0, TK_S("    addr.sin_family = AF_INET;"));
+    t909 = tk_sb_line(l0, TK_S("    addr.sin_addr.s_addr = INADDR_ANY;"));
+    t910 = tk_sb_line(l0, TK_S("    addr.sin_port = htons((uint16_t)port);"));
+    t911 = tk_sb_line(l0, TK_S("    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {"));
+    t912 = tk_sb_line(l0, TK_S("        if (errno == EADDRINUSE) {"));
+    t913 = tk_sb_line(l0, TK_S("            fprintf(stderr, \"Track Network Error: Port conflict! Port %d is already in use by another process.\\n\", (int)port);"));
+    t914 = tk_sb_line(l0, TK_S("        } else {"));
+    t915 = tk_sb_line(l0, TK_S("            fprintf(stderr, \"Track Network Error: Failed to bind TCP socket on port %d (errno: %d).\\n\", (int)port, errno);"));
+    t916 = tk_sb_line(l0, TK_S("        }"));
+    t917 = tk_sb_line(l0, TK_S("        fflush(stderr);"));
+    t918 = tk_sb_line(l0, TK_S("        close(fd);"));
+    t919 = tk_sb_line(l0, TK_S("        return -1;"));
+    t920 = tk_sb_line(l0, TK_S("    }"));
+    t921 = tk_sb_line(l0, TK_S("    if (listen(fd, 128) < 0) {"));
+    t922 = tk_sb_line(l0, TK_S("        close(fd);"));
+    t923 = tk_sb_line(l0, TK_S("        return -1;"));
+    t924 = tk_sb_line(l0, TK_S("    }"));
+    t925 = tk_sb_line(l0, TK_S("    return fd;"));
+    t926 = tk_sb_line(l0, TK_S("}"));
+    t927 = tk_sb_line(l0, TK_S(""));
+    t928 = tk_sb_line(l0, TK_S("tk_w net_socket_accept(tk_w server_fd) {"));
+    t929 = tk_sb_line(l0, TK_S("    if (server_fd < 0) return -1;"));
+    t930 = tk_sb_line(l0, TK_S("    struct sockaddr_in client_addr;"));
+    t931 = tk_sb_line(l0, TK_S("    socklen_t addrlen = sizeof(client_addr);"));
+    t932 = tk_sb_line(l0, TK_S("    return accept((int)server_fd, (struct sockaddr *)&client_addr, &addrlen);"));
+    t933 = tk_sb_line(l0, TK_S("}"));
+    t934 = tk_sb_line(l0, TK_S(""));
+    t935 = tk_sb_line(l0, TK_S("tk_w net_socket_connect(tk_w host, tk_w port) {"));
+    t936 = tk_sb_line(l0, TK_S("    if (!host) return -1;"));
+    t937 = tk_sb_line(l0, TK_S("    int fd = socket(AF_INET, SOCK_STREAM, 0);"));
+    t938 = tk_sb_line(l0, TK_S("    if (fd < 0) return -1;"));
+    t939 = tk_sb_line(l0, TK_S("    struct sockaddr_in addr;"));
+    t940 = tk_sb_line(l0, TK_S("    memset(&addr, 0, sizeof(addr));"));
+    t941 = tk_sb_line(l0, TK_S("    addr.sin_family = AF_INET;"));
+    t942 = tk_sb_line(l0, TK_S("    addr.sin_port = htons((uint16_t)port);"));
+    t943 = tk_sb_line(l0, TK_S("    if (inet_pton(AF_INET, TK_STR(host), &addr.sin_addr) <= 0 ||"));
+    t944 = tk_sb_line(l0, TK_S("        connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {"));
+    t945 = tk_sb_line(l0, TK_S("        close(fd);"));
+    t946 = tk_sb_line(l0, TK_S("        return -1;"));
+    t947 = tk_sb_line(l0, TK_S("    }"));
+    t948 = tk_sb_line(l0, TK_S("    return fd;"));
+    t949 = tk_sb_line(l0, TK_S("}"));
+    t950 = tk_sb_line(l0, TK_S(""));
+    t951 = tk_sb_line(l0, TK_S("tk_w net_socket_send(tk_w fd, tk_w data, tk_w len) {"));
+    t952 = tk_sb_line(l0, TK_S("    if (fd < 0 || !data) return -1;"));
+    t953 = tk_sb_line(l0, TK_S("    return (tk_w)send((int)fd, TK_PTR(data), (size_t)len, 0);"));
+    t954 = tk_sb_line(l0, TK_S("}"));
+    t955 = tk_sb_line(l0, TK_S(""));
+    t956 = tk_sb_line(l0, TK_S("tk_w net_socket_recv(tk_w fd, tk_w buf, tk_w max_len) {"));
+    t957 = tk_sb_line(l0, TK_S("    if (fd < 0 || !buf) return -1;"));
+    t958 = tk_sb_line(l0, TK_S("    return (tk_w)recv((int)fd, TK_PTR(buf), (size_t)max_len, 0);"));
+    t959 = tk_sb_line(l0, TK_S("}"));
+    t960 = tk_sb_line(l0, TK_S(""));
+    t961 = tk_sb_line(l0, TK_S("tk_w net_socket_close(tk_w fd) {"));
+    t962 = tk_sb_line(l0, TK_S("    if (fd >= 0) close((int)fd);"));
+    t963 = tk_sb_line(l0, TK_S("    return 0;"));
+    t964 = tk_sb_line(l0, TK_S("}"));
     return 0;
     return 0;
 }
@@ -11680,6 +11776,7 @@ tk_w tk_runtime_prototypes(tk_w a0) {
     tk_w t111 = 0;
     tk_w t112 = 0;
     tk_w t113 = 0;
+    tk_w t114 = 0;
     l0 = a0;
     t0 = tk_sb_line(l0, TK_S("tk_w track_runtime_init(tk_w, tk_w);"));
     t1 = tk_sb_line(l0, TK_S("tk_w os_args_count(void);"));
@@ -11709,92 +11806,93 @@ tk_w tk_runtime_prototypes(tk_w a0) {
     t25 = tk_sb_line(l0, TK_S("tk_w track_out(tk_w);"));
     t26 = tk_sb_line(l0, TK_S("tk_w track_err(tk_w);"));
     t27 = tk_sb_line(l0, TK_S("tk_w read_line(void);"));
-    t28 = tk_sb_line(l0, TK_S("tk_w str_from_literal(tk_w);"));
-    t29 = tk_sb_line(l0, TK_S("tk_w str_free(tk_w);"));
-    t30 = tk_sb_line(l0, TK_S("tk_w track_str_free(tk_w);"));
-    t31 = tk_sb_line(l0, TK_S("tk_w str_len(tk_w);"));
-    t32 = tk_sb_line(l0, TK_S("tk_w str_eq(tk_w, tk_w);"));
-    t33 = tk_sb_line(l0, TK_S("tk_w str_concat(tk_w, tk_w);"));
-    t34 = tk_sb_line(l0, TK_S("tk_w str_find(tk_w, tk_w);"));
-    t35 = tk_sb_line(l0, TK_S("tk_w str_contains(tk_w, tk_w);"));
-    t36 = tk_sb_line(l0, TK_S("tk_w str_to_int(tk_w);"));
-    t37 = tk_sb_line(l0, TK_S("tk_w str_is_int(tk_w);"));
-    t38 = tk_sb_line(l0, TK_S("tk_w int_to_str(tk_w);"));
-    t39 = tk_sb_line(l0, TK_S("tk_w str_starts_with(tk_w, tk_w);"));
-    t40 = tk_sb_line(l0, TK_S("tk_w str_ends_with(tk_w, tk_w);"));
-    t41 = tk_sb_line(l0, TK_S("tk_w str_substr(tk_w, tk_w, tk_w);"));
-    t42 = tk_sb_line(l0, TK_S("tk_w str_trim(tk_w);"));
-    t43 = tk_sb_line(l0, TK_S("tk_w str_char_at(tk_w, tk_w);"));
-    t44 = tk_sb_line(l0, TK_S("tk_w track_str_bytes(tk_w);"));
-    t45 = tk_sb_line(l0, TK_S("tk_w char_is_digit(tk_w);"));
-    t46 = tk_sb_line(l0, TK_S("tk_w char_is_alpha(tk_w);"));
-    t47 = tk_sb_line(l0, TK_S("tk_w char_is_alphanumeric(tk_w);"));
-    t48 = tk_sb_line(l0, TK_S("tk_w char_is_space(tk_w);"));
-    t49 = tk_sb_line(l0, TK_S("tk_w char_to_upper(tk_w);"));
-    t50 = tk_sb_line(l0, TK_S("tk_w char_to_lower(tk_w);"));
-    t51 = tk_sb_line(l0, TK_S("tk_w path_basename(tk_w);"));
-    t52 = tk_sb_line(l0, TK_S("tk_w path_ext(tk_w);"));
-    t53 = tk_sb_line(l0, TK_S("tk_w path_join(tk_w, tk_w);"));
-    t54 = tk_sb_line(l0, TK_S("tk_w file_open(tk_w, tk_w);"));
-    t55 = tk_sb_line(l0, TK_S("tk_w file_close(tk_w);"));
-    t56 = tk_sb_line(l0, TK_S("tk_w file_read_all(tk_w);"));
-    t57 = tk_sb_line(l0, TK_S("tk_w file_write(tk_w, tk_w);"));
-    t58 = tk_sb_line(l0, TK_S("tk_w file_exists(tk_w);"));
-    t59 = tk_sb_line(l0, TK_S("tk_w file_remove(tk_w);"));
-    t60 = tk_sb_line(l0, TK_S("tk_w file_size(tk_w);"));
-    t61 = tk_sb_line(l0, TK_S("tk_w dir_exists(tk_w);"));
-    t62 = tk_sb_line(l0, TK_S("tk_w file_copy(tk_w, tk_w);"));
-    t63 = tk_sb_line(l0, TK_S("tk_w track_file_read(tk_w);"));
-    t64 = tk_sb_line(l0, TK_S("tk_w track_file_write_all(tk_w, tk_w);"));
-    t65 = tk_sb_line(l0, TK_S("tk_w math_abs(tk_w);"));
-    t66 = tk_sb_line(l0, TK_S("tk_w math_min(tk_w, tk_w);"));
-    t67 = tk_sb_line(l0, TK_S("tk_w math_max(tk_w, tk_w);"));
-    t68 = tk_sb_line(l0, TK_S("tk_w math_clamp(tk_w, tk_w, tk_w);"));
-    t69 = tk_sb_line(l0, TK_S("tk_w math_floor(tk_w);"));
-    t70 = tk_sb_line(l0, TK_S("tk_w math_ceil(tk_w);"));
-    t71 = tk_sb_line(l0, TK_S("tk_w math_round(tk_w);"));
-    t72 = tk_sb_line(l0, TK_S("tk_w math_pow(tk_w, tk_w);"));
-    t73 = tk_sb_line(l0, TK_S("tk_w math_sqrt(tk_w);"));
-    t74 = tk_sb_line(l0, TK_S("tk_w math_random(void);"));
-    t75 = tk_sb_line(l0, TK_S("tk_w add(tk_w, tk_w);"));
-    t76 = tk_sb_line(l0, TK_S("tk_w sum(tk_w, tk_w);"));
-    t77 = tk_sb_line(l0, TK_S("tk_w sub(tk_w, tk_w);"));
-    t78 = tk_sb_line(l0, TK_S("tk_w vec_init(tk_w);"));
-    t79 = tk_sb_line(l0, TK_S("tk_w vec_push(tk_w, tk_w);"));
-    t80 = tk_sb_line(l0, TK_S("tk_w vec_get(tk_w, tk_w);"));
-    t81 = tk_sb_line(l0, TK_S("tk_w vec_set(tk_w, tk_w, tk_w);"));
-    t82 = tk_sb_line(l0, TK_S("tk_w vec_pop(tk_w);"));
-    t83 = tk_sb_line(l0, TK_S("tk_w vec_len(tk_w);"));
-    t84 = tk_sb_line(l0, TK_S("tk_w vec_clear(tk_w);"));
-    t85 = tk_sb_line(l0, TK_S("tk_w vec_reserve(tk_w, tk_w);"));
-    t86 = tk_sb_line(l0, TK_S("tk_w vec_free(tk_w);"));
-    t87 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_new(tk_w);"));
-    t88 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_len(tk_w);"));
-    t89 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_push(tk_w, tk_w);"));
-    t90 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_get(tk_w, tk_w);"));
-    t91 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_set(tk_w, tk_w, tk_w);"));
-    t92 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_pop(tk_w);"));
-    t93 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_free(tk_w);"));
-    t94 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_truncate(tk_w, tk_w);"));
-    t95 = tk_sb_line(l0, TK_S("tk_w track_sb_new(void);"));
-    t96 = tk_sb_line(l0, TK_S("tk_w track_sb_push(tk_w, tk_w);"));
-    t97 = tk_sb_line(l0, TK_S("tk_w track_sb_push_byte(tk_w, tk_w);"));
-    t98 = tk_sb_line(l0, TK_S("tk_w track_sb_push_int(tk_w, tk_w);"));
-    t99 = tk_sb_line(l0, TK_S("tk_w track_sb_len(tk_w);"));
-    t100 = tk_sb_line(l0, TK_S("tk_w track_sb_str(tk_w);"));
-    t101 = tk_sb_line(l0, TK_S("tk_w track_sb_free(tk_w);"));
-    t102 = tk_sb_line(l0, TK_S("tk_w track_sb_clear(tk_w);"));
-    t103 = tk_sb_line(l0, TK_S("tk_w track_array_get(tk_w, tk_w);"));
-    t104 = tk_sb_line(l0, TK_S("tk_w track_array_set(tk_w, tk_w, tk_w);"));
-    t105 = tk_sb_line(l0, TK_S("tk_w track_array_slice(tk_w, tk_w, tk_w);"));
-    t106 = tk_sb_line(l0, TK_S("tk_w array_len(tk_w);"));
-    t107 = tk_sb_line(l0, TK_S("tk_w track_bad_field(void);"));
-    t108 = tk_sb_line(l0, TK_S("tk_w net_socket_tcp_listen(tk_w);"));
-    t109 = tk_sb_line(l0, TK_S("tk_w net_socket_accept(tk_w);"));
-    t110 = tk_sb_line(l0, TK_S("tk_w net_socket_connect(tk_w, tk_w);"));
-    t111 = tk_sb_line(l0, TK_S("tk_w net_socket_send(tk_w, tk_w, tk_w);"));
-    t112 = tk_sb_line(l0, TK_S("tk_w net_socket_recv(tk_w, tk_w, tk_w);"));
-    t113 = tk_sb_line(l0, TK_S("tk_w net_socket_close(tk_w);"));
+    t28 = tk_sb_line(l0, TK_S("tk_w track_stdin_read(tk_w);"));
+    t29 = tk_sb_line(l0, TK_S("tk_w str_from_literal(tk_w);"));
+    t30 = tk_sb_line(l0, TK_S("tk_w str_free(tk_w);"));
+    t31 = tk_sb_line(l0, TK_S("tk_w track_str_free(tk_w);"));
+    t32 = tk_sb_line(l0, TK_S("tk_w str_len(tk_w);"));
+    t33 = tk_sb_line(l0, TK_S("tk_w str_eq(tk_w, tk_w);"));
+    t34 = tk_sb_line(l0, TK_S("tk_w str_concat(tk_w, tk_w);"));
+    t35 = tk_sb_line(l0, TK_S("tk_w str_find(tk_w, tk_w);"));
+    t36 = tk_sb_line(l0, TK_S("tk_w str_contains(tk_w, tk_w);"));
+    t37 = tk_sb_line(l0, TK_S("tk_w str_to_int(tk_w);"));
+    t38 = tk_sb_line(l0, TK_S("tk_w str_is_int(tk_w);"));
+    t39 = tk_sb_line(l0, TK_S("tk_w int_to_str(tk_w);"));
+    t40 = tk_sb_line(l0, TK_S("tk_w str_starts_with(tk_w, tk_w);"));
+    t41 = tk_sb_line(l0, TK_S("tk_w str_ends_with(tk_w, tk_w);"));
+    t42 = tk_sb_line(l0, TK_S("tk_w str_substr(tk_w, tk_w, tk_w);"));
+    t43 = tk_sb_line(l0, TK_S("tk_w str_trim(tk_w);"));
+    t44 = tk_sb_line(l0, TK_S("tk_w str_char_at(tk_w, tk_w);"));
+    t45 = tk_sb_line(l0, TK_S("tk_w track_str_bytes(tk_w);"));
+    t46 = tk_sb_line(l0, TK_S("tk_w char_is_digit(tk_w);"));
+    t47 = tk_sb_line(l0, TK_S("tk_w char_is_alpha(tk_w);"));
+    t48 = tk_sb_line(l0, TK_S("tk_w char_is_alphanumeric(tk_w);"));
+    t49 = tk_sb_line(l0, TK_S("tk_w char_is_space(tk_w);"));
+    t50 = tk_sb_line(l0, TK_S("tk_w char_to_upper(tk_w);"));
+    t51 = tk_sb_line(l0, TK_S("tk_w char_to_lower(tk_w);"));
+    t52 = tk_sb_line(l0, TK_S("tk_w path_basename(tk_w);"));
+    t53 = tk_sb_line(l0, TK_S("tk_w path_ext(tk_w);"));
+    t54 = tk_sb_line(l0, TK_S("tk_w path_join(tk_w, tk_w);"));
+    t55 = tk_sb_line(l0, TK_S("tk_w file_open(tk_w, tk_w);"));
+    t56 = tk_sb_line(l0, TK_S("tk_w file_close(tk_w);"));
+    t57 = tk_sb_line(l0, TK_S("tk_w file_read_all(tk_w);"));
+    t58 = tk_sb_line(l0, TK_S("tk_w file_write(tk_w, tk_w);"));
+    t59 = tk_sb_line(l0, TK_S("tk_w file_exists(tk_w);"));
+    t60 = tk_sb_line(l0, TK_S("tk_w file_remove(tk_w);"));
+    t61 = tk_sb_line(l0, TK_S("tk_w file_size(tk_w);"));
+    t62 = tk_sb_line(l0, TK_S("tk_w dir_exists(tk_w);"));
+    t63 = tk_sb_line(l0, TK_S("tk_w file_copy(tk_w, tk_w);"));
+    t64 = tk_sb_line(l0, TK_S("tk_w track_file_read(tk_w);"));
+    t65 = tk_sb_line(l0, TK_S("tk_w track_file_write_all(tk_w, tk_w);"));
+    t66 = tk_sb_line(l0, TK_S("tk_w math_abs(tk_w);"));
+    t67 = tk_sb_line(l0, TK_S("tk_w math_min(tk_w, tk_w);"));
+    t68 = tk_sb_line(l0, TK_S("tk_w math_max(tk_w, tk_w);"));
+    t69 = tk_sb_line(l0, TK_S("tk_w math_clamp(tk_w, tk_w, tk_w);"));
+    t70 = tk_sb_line(l0, TK_S("tk_w math_floor(tk_w);"));
+    t71 = tk_sb_line(l0, TK_S("tk_w math_ceil(tk_w);"));
+    t72 = tk_sb_line(l0, TK_S("tk_w math_round(tk_w);"));
+    t73 = tk_sb_line(l0, TK_S("tk_w math_pow(tk_w, tk_w);"));
+    t74 = tk_sb_line(l0, TK_S("tk_w math_sqrt(tk_w);"));
+    t75 = tk_sb_line(l0, TK_S("tk_w math_random(void);"));
+    t76 = tk_sb_line(l0, TK_S("tk_w add(tk_w, tk_w);"));
+    t77 = tk_sb_line(l0, TK_S("tk_w sum(tk_w, tk_w);"));
+    t78 = tk_sb_line(l0, TK_S("tk_w sub(tk_w, tk_w);"));
+    t79 = tk_sb_line(l0, TK_S("tk_w vec_init(tk_w);"));
+    t80 = tk_sb_line(l0, TK_S("tk_w vec_push(tk_w, tk_w);"));
+    t81 = tk_sb_line(l0, TK_S("tk_w vec_get(tk_w, tk_w);"));
+    t82 = tk_sb_line(l0, TK_S("tk_w vec_set(tk_w, tk_w, tk_w);"));
+    t83 = tk_sb_line(l0, TK_S("tk_w vec_pop(tk_w);"));
+    t84 = tk_sb_line(l0, TK_S("tk_w vec_len(tk_w);"));
+    t85 = tk_sb_line(l0, TK_S("tk_w vec_clear(tk_w);"));
+    t86 = tk_sb_line(l0, TK_S("tk_w vec_reserve(tk_w, tk_w);"));
+    t87 = tk_sb_line(l0, TK_S("tk_w vec_free(tk_w);"));
+    t88 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_new(tk_w);"));
+    t89 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_len(tk_w);"));
+    t90 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_push(tk_w, tk_w);"));
+    t91 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_get(tk_w, tk_w);"));
+    t92 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_set(tk_w, tk_w, tk_w);"));
+    t93 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_pop(tk_w);"));
+    t94 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_free(tk_w);"));
+    t95 = tk_sb_line(l0, TK_S("tk_w track_i64_collection_truncate(tk_w, tk_w);"));
+    t96 = tk_sb_line(l0, TK_S("tk_w track_sb_new(void);"));
+    t97 = tk_sb_line(l0, TK_S("tk_w track_sb_push(tk_w, tk_w);"));
+    t98 = tk_sb_line(l0, TK_S("tk_w track_sb_push_byte(tk_w, tk_w);"));
+    t99 = tk_sb_line(l0, TK_S("tk_w track_sb_push_int(tk_w, tk_w);"));
+    t100 = tk_sb_line(l0, TK_S("tk_w track_sb_len(tk_w);"));
+    t101 = tk_sb_line(l0, TK_S("tk_w track_sb_str(tk_w);"));
+    t102 = tk_sb_line(l0, TK_S("tk_w track_sb_free(tk_w);"));
+    t103 = tk_sb_line(l0, TK_S("tk_w track_sb_clear(tk_w);"));
+    t104 = tk_sb_line(l0, TK_S("tk_w track_array_get(tk_w, tk_w);"));
+    t105 = tk_sb_line(l0, TK_S("tk_w track_array_set(tk_w, tk_w, tk_w);"));
+    t106 = tk_sb_line(l0, TK_S("tk_w track_array_slice(tk_w, tk_w, tk_w);"));
+    t107 = tk_sb_line(l0, TK_S("tk_w array_len(tk_w);"));
+    t108 = tk_sb_line(l0, TK_S("tk_w track_bad_field(void);"));
+    t109 = tk_sb_line(l0, TK_S("tk_w net_socket_tcp_listen(tk_w);"));
+    t110 = tk_sb_line(l0, TK_S("tk_w net_socket_accept(tk_w);"));
+    t111 = tk_sb_line(l0, TK_S("tk_w net_socket_connect(tk_w, tk_w);"));
+    t112 = tk_sb_line(l0, TK_S("tk_w net_socket_send(tk_w, tk_w, tk_w);"));
+    t113 = tk_sb_line(l0, TK_S("tk_w net_socket_recv(tk_w, tk_w, tk_w);"));
+    t114 = tk_sb_line(l0, TK_S("tk_w net_socket_close(tk_w);"));
     return 0;
     return 0;
 }
@@ -12029,6 +12127,8 @@ tk_w tk_register_runtime(tk_w a0) {
     tk_w t225 = 0;
     tk_w t226 = 0;
     tk_w t227 = 0;
+    tk_w t228 = 0;
+    tk_w t229 = 0;
     l0 = a0;
     t0 = tk_intern(l0, TK_S("track_runtime_init"));
     t1 = tk_ni_set(l0, t0, 15, 2);
@@ -12086,178 +12186,180 @@ tk_w tk_register_runtime(tk_w a0) {
     t53 = tk_ni_set(l0, t52, 15, 1);
     t54 = tk_intern(l0, TK_S("read_line"));
     t55 = tk_ni_set(l0, t54, 15, 0);
-    t56 = tk_intern(l0, TK_S("str_from_literal"));
+    t56 = tk_intern(l0, TK_S("track_stdin_read"));
     t57 = tk_ni_set(l0, t56, 15, 1);
-    t58 = tk_intern(l0, TK_S("str_free"));
+    t58 = tk_intern(l0, TK_S("str_from_literal"));
     t59 = tk_ni_set(l0, t58, 15, 1);
-    t60 = tk_intern(l0, TK_S("track_str_free"));
+    t60 = tk_intern(l0, TK_S("str_free"));
     t61 = tk_ni_set(l0, t60, 15, 1);
-    t62 = tk_intern(l0, TK_S("str_len"));
+    t62 = tk_intern(l0, TK_S("track_str_free"));
     t63 = tk_ni_set(l0, t62, 15, 1);
-    t64 = tk_intern(l0, TK_S("str_eq"));
-    t65 = tk_ni_set(l0, t64, 15, 2);
-    t66 = tk_intern(l0, TK_S("str_concat"));
+    t64 = tk_intern(l0, TK_S("str_len"));
+    t65 = tk_ni_set(l0, t64, 15, 1);
+    t66 = tk_intern(l0, TK_S("str_eq"));
     t67 = tk_ni_set(l0, t66, 15, 2);
-    t68 = tk_intern(l0, TK_S("str_find"));
+    t68 = tk_intern(l0, TK_S("str_concat"));
     t69 = tk_ni_set(l0, t68, 15, 2);
-    t70 = tk_intern(l0, TK_S("str_contains"));
+    t70 = tk_intern(l0, TK_S("str_find"));
     t71 = tk_ni_set(l0, t70, 15, 2);
-    t72 = tk_intern(l0, TK_S("str_to_int"));
-    t73 = tk_ni_set(l0, t72, 15, 1);
-    t74 = tk_intern(l0, TK_S("str_is_int"));
+    t72 = tk_intern(l0, TK_S("str_contains"));
+    t73 = tk_ni_set(l0, t72, 15, 2);
+    t74 = tk_intern(l0, TK_S("str_to_int"));
     t75 = tk_ni_set(l0, t74, 15, 1);
-    t76 = tk_intern(l0, TK_S("int_to_str"));
+    t76 = tk_intern(l0, TK_S("str_is_int"));
     t77 = tk_ni_set(l0, t76, 15, 1);
-    t78 = tk_intern(l0, TK_S("str_starts_with"));
-    t79 = tk_ni_set(l0, t78, 15, 2);
-    t80 = tk_intern(l0, TK_S("str_ends_with"));
+    t78 = tk_intern(l0, TK_S("int_to_str"));
+    t79 = tk_ni_set(l0, t78, 15, 1);
+    t80 = tk_intern(l0, TK_S("str_starts_with"));
     t81 = tk_ni_set(l0, t80, 15, 2);
-    t82 = tk_intern(l0, TK_S("str_substr"));
-    t83 = tk_ni_set(l0, t82, 15, 3);
-    t84 = tk_intern(l0, TK_S("str_trim"));
-    t85 = tk_ni_set(l0, t84, 15, 1);
-    t86 = tk_intern(l0, TK_S("str_char_at"));
-    t87 = tk_ni_set(l0, t86, 15, 2);
-    t88 = tk_intern(l0, TK_S("track_str_bytes"));
-    t89 = tk_ni_set(l0, t88, 15, 1);
-    t90 = tk_intern(l0, TK_S("char_is_digit"));
+    t82 = tk_intern(l0, TK_S("str_ends_with"));
+    t83 = tk_ni_set(l0, t82, 15, 2);
+    t84 = tk_intern(l0, TK_S("str_substr"));
+    t85 = tk_ni_set(l0, t84, 15, 3);
+    t86 = tk_intern(l0, TK_S("str_trim"));
+    t87 = tk_ni_set(l0, t86, 15, 1);
+    t88 = tk_intern(l0, TK_S("str_char_at"));
+    t89 = tk_ni_set(l0, t88, 15, 2);
+    t90 = tk_intern(l0, TK_S("track_str_bytes"));
     t91 = tk_ni_set(l0, t90, 15, 1);
-    t92 = tk_intern(l0, TK_S("char_is_alpha"));
+    t92 = tk_intern(l0, TK_S("char_is_digit"));
     t93 = tk_ni_set(l0, t92, 15, 1);
-    t94 = tk_intern(l0, TK_S("char_is_alphanumeric"));
+    t94 = tk_intern(l0, TK_S("char_is_alpha"));
     t95 = tk_ni_set(l0, t94, 15, 1);
-    t96 = tk_intern(l0, TK_S("char_is_space"));
+    t96 = tk_intern(l0, TK_S("char_is_alphanumeric"));
     t97 = tk_ni_set(l0, t96, 15, 1);
-    t98 = tk_intern(l0, TK_S("char_to_upper"));
+    t98 = tk_intern(l0, TK_S("char_is_space"));
     t99 = tk_ni_set(l0, t98, 15, 1);
-    t100 = tk_intern(l0, TK_S("char_to_lower"));
+    t100 = tk_intern(l0, TK_S("char_to_upper"));
     t101 = tk_ni_set(l0, t100, 15, 1);
-    t102 = tk_intern(l0, TK_S("path_basename"));
+    t102 = tk_intern(l0, TK_S("char_to_lower"));
     t103 = tk_ni_set(l0, t102, 15, 1);
-    t104 = tk_intern(l0, TK_S("path_ext"));
+    t104 = tk_intern(l0, TK_S("path_basename"));
     t105 = tk_ni_set(l0, t104, 15, 1);
-    t106 = tk_intern(l0, TK_S("path_join"));
-    t107 = tk_ni_set(l0, t106, 15, 2);
-    t108 = tk_intern(l0, TK_S("file_open"));
+    t106 = tk_intern(l0, TK_S("path_ext"));
+    t107 = tk_ni_set(l0, t106, 15, 1);
+    t108 = tk_intern(l0, TK_S("path_join"));
     t109 = tk_ni_set(l0, t108, 15, 2);
-    t110 = tk_intern(l0, TK_S("file_close"));
-    t111 = tk_ni_set(l0, t110, 15, 1);
-    t112 = tk_intern(l0, TK_S("file_read_all"));
+    t110 = tk_intern(l0, TK_S("file_open"));
+    t111 = tk_ni_set(l0, t110, 15, 2);
+    t112 = tk_intern(l0, TK_S("file_close"));
     t113 = tk_ni_set(l0, t112, 15, 1);
-    t114 = tk_intern(l0, TK_S("file_write"));
-    t115 = tk_ni_set(l0, t114, 15, 2);
-    t116 = tk_intern(l0, TK_S("file_exists"));
-    t117 = tk_ni_set(l0, t116, 15, 1);
-    t118 = tk_intern(l0, TK_S("file_remove"));
+    t114 = tk_intern(l0, TK_S("file_read_all"));
+    t115 = tk_ni_set(l0, t114, 15, 1);
+    t116 = tk_intern(l0, TK_S("file_write"));
+    t117 = tk_ni_set(l0, t116, 15, 2);
+    t118 = tk_intern(l0, TK_S("file_exists"));
     t119 = tk_ni_set(l0, t118, 15, 1);
-    t120 = tk_intern(l0, TK_S("file_size"));
+    t120 = tk_intern(l0, TK_S("file_remove"));
     t121 = tk_ni_set(l0, t120, 15, 1);
-    t122 = tk_intern(l0, TK_S("dir_exists"));
+    t122 = tk_intern(l0, TK_S("file_size"));
     t123 = tk_ni_set(l0, t122, 15, 1);
-    t124 = tk_intern(l0, TK_S("file_copy"));
-    t125 = tk_ni_set(l0, t124, 15, 2);
-    t126 = tk_intern(l0, TK_S("track_file_read"));
-    t127 = tk_ni_set(l0, t126, 15, 1);
-    t128 = tk_intern(l0, TK_S("track_file_write_all"));
-    t129 = tk_ni_set(l0, t128, 15, 2);
-    t130 = tk_intern(l0, TK_S("math_abs"));
-    t131 = tk_ni_set(l0, t130, 15, 1);
-    t132 = tk_intern(l0, TK_S("math_min"));
-    t133 = tk_ni_set(l0, t132, 15, 2);
-    t134 = tk_intern(l0, TK_S("math_max"));
+    t124 = tk_intern(l0, TK_S("dir_exists"));
+    t125 = tk_ni_set(l0, t124, 15, 1);
+    t126 = tk_intern(l0, TK_S("file_copy"));
+    t127 = tk_ni_set(l0, t126, 15, 2);
+    t128 = tk_intern(l0, TK_S("track_file_read"));
+    t129 = tk_ni_set(l0, t128, 15, 1);
+    t130 = tk_intern(l0, TK_S("track_file_write_all"));
+    t131 = tk_ni_set(l0, t130, 15, 2);
+    t132 = tk_intern(l0, TK_S("math_abs"));
+    t133 = tk_ni_set(l0, t132, 15, 1);
+    t134 = tk_intern(l0, TK_S("math_min"));
     t135 = tk_ni_set(l0, t134, 15, 2);
-    t136 = tk_intern(l0, TK_S("math_clamp"));
-    t137 = tk_ni_set(l0, t136, 15, 3);
-    t138 = tk_intern(l0, TK_S("math_floor"));
-    t139 = tk_ni_set(l0, t138, 15, 1);
-    t140 = tk_intern(l0, TK_S("math_ceil"));
+    t136 = tk_intern(l0, TK_S("math_max"));
+    t137 = tk_ni_set(l0, t136, 15, 2);
+    t138 = tk_intern(l0, TK_S("math_clamp"));
+    t139 = tk_ni_set(l0, t138, 15, 3);
+    t140 = tk_intern(l0, TK_S("math_floor"));
     t141 = tk_ni_set(l0, t140, 15, 1);
-    t142 = tk_intern(l0, TK_S("math_round"));
+    t142 = tk_intern(l0, TK_S("math_ceil"));
     t143 = tk_ni_set(l0, t142, 15, 1);
-    t144 = tk_intern(l0, TK_S("math_pow"));
-    t145 = tk_ni_set(l0, t144, 15, 2);
-    t146 = tk_intern(l0, TK_S("math_sqrt"));
-    t147 = tk_ni_set(l0, t146, 15, 1);
-    t148 = tk_intern(l0, TK_S("math_random"));
-    t149 = tk_ni_set(l0, t148, 15, 0);
-    t150 = tk_intern(l0, TK_S("add"));
-    t151 = tk_ni_set(l0, t150, 15, 2);
-    t152 = tk_intern(l0, TK_S("sum"));
+    t144 = tk_intern(l0, TK_S("math_round"));
+    t145 = tk_ni_set(l0, t144, 15, 1);
+    t146 = tk_intern(l0, TK_S("math_pow"));
+    t147 = tk_ni_set(l0, t146, 15, 2);
+    t148 = tk_intern(l0, TK_S("math_sqrt"));
+    t149 = tk_ni_set(l0, t148, 15, 1);
+    t150 = tk_intern(l0, TK_S("math_random"));
+    t151 = tk_ni_set(l0, t150, 15, 0);
+    t152 = tk_intern(l0, TK_S("add"));
     t153 = tk_ni_set(l0, t152, 15, 2);
-    t154 = tk_intern(l0, TK_S("sub"));
+    t154 = tk_intern(l0, TK_S("sum"));
     t155 = tk_ni_set(l0, t154, 15, 2);
-    t156 = tk_intern(l0, TK_S("vec_init"));
-    t157 = tk_ni_set(l0, t156, 15, 1);
-    t158 = tk_intern(l0, TK_S("vec_push"));
-    t159 = tk_ni_set(l0, t158, 15, 2);
-    t160 = tk_intern(l0, TK_S("vec_get"));
+    t156 = tk_intern(l0, TK_S("sub"));
+    t157 = tk_ni_set(l0, t156, 15, 2);
+    t158 = tk_intern(l0, TK_S("vec_init"));
+    t159 = tk_ni_set(l0, t158, 15, 1);
+    t160 = tk_intern(l0, TK_S("vec_push"));
     t161 = tk_ni_set(l0, t160, 15, 2);
-    t162 = tk_intern(l0, TK_S("vec_set"));
-    t163 = tk_ni_set(l0, t162, 15, 3);
-    t164 = tk_intern(l0, TK_S("vec_pop"));
-    t165 = tk_ni_set(l0, t164, 15, 1);
-    t166 = tk_intern(l0, TK_S("vec_len"));
+    t162 = tk_intern(l0, TK_S("vec_get"));
+    t163 = tk_ni_set(l0, t162, 15, 2);
+    t164 = tk_intern(l0, TK_S("vec_set"));
+    t165 = tk_ni_set(l0, t164, 15, 3);
+    t166 = tk_intern(l0, TK_S("vec_pop"));
     t167 = tk_ni_set(l0, t166, 15, 1);
-    t168 = tk_intern(l0, TK_S("vec_clear"));
+    t168 = tk_intern(l0, TK_S("vec_len"));
     t169 = tk_ni_set(l0, t168, 15, 1);
-    t170 = tk_intern(l0, TK_S("vec_reserve"));
-    t171 = tk_ni_set(l0, t170, 15, 2);
-    t172 = tk_intern(l0, TK_S("vec_free"));
-    t173 = tk_ni_set(l0, t172, 15, 1);
-    t174 = tk_intern(l0, TK_S("track_i64_collection_new"));
+    t170 = tk_intern(l0, TK_S("vec_clear"));
+    t171 = tk_ni_set(l0, t170, 15, 1);
+    t172 = tk_intern(l0, TK_S("vec_reserve"));
+    t173 = tk_ni_set(l0, t172, 15, 2);
+    t174 = tk_intern(l0, TK_S("vec_free"));
     t175 = tk_ni_set(l0, t174, 15, 1);
-    t176 = tk_intern(l0, TK_S("track_i64_collection_len"));
+    t176 = tk_intern(l0, TK_S("track_i64_collection_new"));
     t177 = tk_ni_set(l0, t176, 15, 1);
-    t178 = tk_intern(l0, TK_S("track_i64_collection_push"));
-    t179 = tk_ni_set(l0, t178, 15, 2);
-    t180 = tk_intern(l0, TK_S("track_i64_collection_get"));
+    t178 = tk_intern(l0, TK_S("track_i64_collection_len"));
+    t179 = tk_ni_set(l0, t178, 15, 1);
+    t180 = tk_intern(l0, TK_S("track_i64_collection_push"));
     t181 = tk_ni_set(l0, t180, 15, 2);
-    t182 = tk_intern(l0, TK_S("track_i64_collection_set"));
-    t183 = tk_ni_set(l0, t182, 15, 3);
-    t184 = tk_intern(l0, TK_S("track_i64_collection_pop"));
-    t185 = tk_ni_set(l0, t184, 15, 1);
-    t186 = tk_intern(l0, TK_S("track_i64_collection_free"));
+    t182 = tk_intern(l0, TK_S("track_i64_collection_get"));
+    t183 = tk_ni_set(l0, t182, 15, 2);
+    t184 = tk_intern(l0, TK_S("track_i64_collection_set"));
+    t185 = tk_ni_set(l0, t184, 15, 3);
+    t186 = tk_intern(l0, TK_S("track_i64_collection_pop"));
     t187 = tk_ni_set(l0, t186, 15, 1);
-    t188 = tk_intern(l0, TK_S("track_i64_collection_truncate"));
-    t189 = tk_ni_set(l0, t188, 15, 2);
-    t190 = tk_intern(l0, TK_S("track_sb_new"));
-    t191 = tk_ni_set(l0, t190, 15, 0);
-    t192 = tk_intern(l0, TK_S("track_sb_push"));
-    t193 = tk_ni_set(l0, t192, 15, 2);
-    t194 = tk_intern(l0, TK_S("track_sb_push_byte"));
+    t188 = tk_intern(l0, TK_S("track_i64_collection_free"));
+    t189 = tk_ni_set(l0, t188, 15, 1);
+    t190 = tk_intern(l0, TK_S("track_i64_collection_truncate"));
+    t191 = tk_ni_set(l0, t190, 15, 2);
+    t192 = tk_intern(l0, TK_S("track_sb_new"));
+    t193 = tk_ni_set(l0, t192, 15, 0);
+    t194 = tk_intern(l0, TK_S("track_sb_push"));
     t195 = tk_ni_set(l0, t194, 15, 2);
-    t196 = tk_intern(l0, TK_S("track_sb_push_int"));
+    t196 = tk_intern(l0, TK_S("track_sb_push_byte"));
     t197 = tk_ni_set(l0, t196, 15, 2);
-    t198 = tk_intern(l0, TK_S("track_sb_len"));
-    t199 = tk_ni_set(l0, t198, 15, 1);
-    t200 = tk_intern(l0, TK_S("track_sb_str"));
+    t198 = tk_intern(l0, TK_S("track_sb_push_int"));
+    t199 = tk_ni_set(l0, t198, 15, 2);
+    t200 = tk_intern(l0, TK_S("track_sb_len"));
     t201 = tk_ni_set(l0, t200, 15, 1);
-    t202 = tk_intern(l0, TK_S("track_sb_free"));
+    t202 = tk_intern(l0, TK_S("track_sb_str"));
     t203 = tk_ni_set(l0, t202, 15, 1);
-    t204 = tk_intern(l0, TK_S("track_sb_clear"));
+    t204 = tk_intern(l0, TK_S("track_sb_free"));
     t205 = tk_ni_set(l0, t204, 15, 1);
-    t206 = tk_intern(l0, TK_S("track_array_get"));
-    t207 = tk_ni_set(l0, t206, 15, 2);
-    t208 = tk_intern(l0, TK_S("track_array_set"));
-    t209 = tk_ni_set(l0, t208, 15, 3);
-    t210 = tk_intern(l0, TK_S("track_array_slice"));
+    t206 = tk_intern(l0, TK_S("track_sb_clear"));
+    t207 = tk_ni_set(l0, t206, 15, 1);
+    t208 = tk_intern(l0, TK_S("track_array_get"));
+    t209 = tk_ni_set(l0, t208, 15, 2);
+    t210 = tk_intern(l0, TK_S("track_array_set"));
     t211 = tk_ni_set(l0, t210, 15, 3);
-    t212 = tk_intern(l0, TK_S("array_len"));
-    t213 = tk_ni_set(l0, t212, 15, 1);
-    t214 = tk_intern(l0, TK_S("track_bad_field"));
-    t215 = tk_ni_set(l0, t214, 15, 0);
-    t216 = tk_intern(l0, TK_S("net_socket_tcp_listen"));
-    t217 = tk_ni_set(l0, t216, 15, 1);
-    t218 = tk_intern(l0, TK_S("net_socket_accept"));
+    t212 = tk_intern(l0, TK_S("track_array_slice"));
+    t213 = tk_ni_set(l0, t212, 15, 3);
+    t214 = tk_intern(l0, TK_S("array_len"));
+    t215 = tk_ni_set(l0, t214, 15, 1);
+    t216 = tk_intern(l0, TK_S("track_bad_field"));
+    t217 = tk_ni_set(l0, t216, 15, 0);
+    t218 = tk_intern(l0, TK_S("net_socket_tcp_listen"));
     t219 = tk_ni_set(l0, t218, 15, 1);
-    t220 = tk_intern(l0, TK_S("net_socket_connect"));
-    t221 = tk_ni_set(l0, t220, 15, 2);
-    t222 = tk_intern(l0, TK_S("net_socket_send"));
-    t223 = tk_ni_set(l0, t222, 15, 3);
-    t224 = tk_intern(l0, TK_S("net_socket_recv"));
+    t220 = tk_intern(l0, TK_S("net_socket_accept"));
+    t221 = tk_ni_set(l0, t220, 15, 1);
+    t222 = tk_intern(l0, TK_S("net_socket_connect"));
+    t223 = tk_ni_set(l0, t222, 15, 2);
+    t224 = tk_intern(l0, TK_S("net_socket_send"));
     t225 = tk_ni_set(l0, t224, 15, 3);
-    t226 = tk_intern(l0, TK_S("net_socket_close"));
-    t227 = tk_ni_set(l0, t226, 15, 1);
+    t226 = tk_intern(l0, TK_S("net_socket_recv"));
+    t227 = tk_ni_set(l0, t226, 15, 3);
+    t228 = tk_intern(l0, TK_S("net_socket_close"));
+    t229 = tk_ni_set(l0, t228, 15, 1);
     return 0;
     return 0;
 }
@@ -12766,6 +12868,7 @@ tk_w tk_register_builtins(tk_w a0) {
     tk_w t121 = 0;
     tk_w t122 = 0;
     tk_w t123 = 0;
+    tk_w t124 = 0;
     l0 = a0;
     t0 = tk_ck(l0, 11);
     l1 = t0;
@@ -12888,18 +12991,19 @@ tk_w tk_register_builtins(tk_w a0) {
     t109 = tk_bi(l0, TK_S("track_sb_clear"), l3);
     t110 = tk_bi(l0, TK_S("track_str_bytes"), l3);
     t111 = tk_bi(l0, TK_S("track_file_read"), l3);
-    t112 = tk_bi(l0, TK_S("track_file_write_all"), l3);
-    t113 = tk_bi(l0, TK_S("track_out"), l3);
-    t114 = tk_bi(l0, TK_S("track_err"), l3);
-    t115 = tk_bi(l0, TK_S("track_words_copy"), l3);
-    t116 = tk_bi(l0, TK_S("sys_exit"), l3);
-    t117 = tk_bi(l0, TK_S("clock_ms"), l3);
-    t118 = tk_bi(l0, TK_S("array_len"), l3);
-    t119 = tk_bi(l0, TK_S("syscall6"), l3);
-    t120 = tk_bi(l0, TK_S("load64"), l3);
-    t121 = tk_bi(l0, TK_S("store64"), l3);
-    t122 = tk_bi(l0, TK_S("load8"), l3);
-    t123 = tk_bi(l0, TK_S("store8"), l3);
+    t112 = tk_bi(l0, TK_S("track_stdin_read"), l3);
+    t113 = tk_bi(l0, TK_S("track_file_write_all"), l3);
+    t114 = tk_bi(l0, TK_S("track_out"), l3);
+    t115 = tk_bi(l0, TK_S("track_err"), l3);
+    t116 = tk_bi(l0, TK_S("track_words_copy"), l3);
+    t117 = tk_bi(l0, TK_S("sys_exit"), l3);
+    t118 = tk_bi(l0, TK_S("clock_ms"), l3);
+    t119 = tk_bi(l0, TK_S("array_len"), l3);
+    t120 = tk_bi(l0, TK_S("syscall6"), l3);
+    t121 = tk_bi(l0, TK_S("load64"), l3);
+    t122 = tk_bi(l0, TK_S("store64"), l3);
+    t123 = tk_bi(l0, TK_S("load8"), l3);
+    t124 = tk_bi(l0, TK_S("store8"), l3);
     return 0;
     return 0;
 }
@@ -26771,6 +26875,7 @@ tk_w tk_rt_summaries(tk_w a0) {
     tk_w t113 = 0;
     tk_w t114 = 0;
     tk_w t115 = 0;
+    tk_w t116 = 0;
     l0 = a0;
     t0 = tk_rt(l0, TK_S("print"), TK_S("r"), TK_S("-"));
     t1 = tk_rt(l0, TK_S("println"), TK_S("r"), TK_S("-"));
@@ -26853,41 +26958,42 @@ tk_w tk_rt_summaries(tk_w a0) {
     t78 = tk_rt(l0, TK_S("file_copy"), TK_S("rr"), TK_S("-"));
     t79 = tk_rt(l0, TK_S("dir_exists"), TK_S("r"), TK_S("-"));
     t80 = tk_rt(l0, TK_S("track_file_read"), TK_S("r"), TK_S("f"));
-    t81 = tk_rt(l0, TK_S("track_file_write_all"), TK_S("rr"), TK_S("-"));
-    t82 = tk_rt(l0, TK_S("abort"), TK_S("r"), TK_S("-"));
-    t83 = tk_rt(l0, TK_S("exit"), TK_S("n"), TK_S("-"));
-    t84 = tk_rt(l0, TK_S("sys_exit"), TK_S("n"), TK_S("-"));
-    t85 = tk_rt(l0, TK_S("sys_exec"), TK_S("r"), TK_S("-"));
-    t86 = tk_rt(l0, TK_S("process_spawn"), TK_S("r"), TK_S("-"));
-    t87 = tk_rt(l0, TK_S("clock_ms"), TK_S(""), TK_S("-"));
-    t88 = tk_rt(l0, TK_S("env_get"), TK_S("r"), TK_S("f"));
-    t89 = tk_rt(l0, TK_S("env_exists"), TK_S("r"), TK_S("-"));
-    t90 = tk_rt(l0, TK_S("os_args_count"), TK_S(""), TK_S("-"));
-    t91 = tk_rt(l0, TK_S("os_arg"), TK_S("n"), TK_S("f"));
-    t92 = tk_rt(l0, TK_S("sys_set_memory_limit"), TK_S("n"), TK_S("-"));
-    t93 = tk_rt(l0, TK_S("sys_get_memory_used"), TK_S(""), TK_S("-"));
-    t94 = tk_rt(l0, TK_S("net_socket_tcp_listen"), TK_S("n"), TK_S("-"));
-    t95 = tk_rt(l0, TK_S("net_socket_accept"), TK_S("n"), TK_S("-"));
-    t96 = tk_rt(l0, TK_S("net_socket_connect"), TK_S("rn"), TK_S("-"));
-    t97 = tk_rt(l0, TK_S("net_socket_send"), TK_S("nrn"), TK_S("-"));
-    t98 = tk_rt(l0, TK_S("net_socket_recv"), TK_S("nmn"), TK_S("-"));
-    t99 = tk_rt(l0, TK_S("net_socket_close"), TK_S("n"), TK_S("-"));
-    t100 = tk_rt(l0, TK_S("math_abs"), TK_S("n"), TK_S("-"));
-    t101 = tk_rt(l0, TK_S("math_min"), TK_S("nn"), TK_S("-"));
-    t102 = tk_rt(l0, TK_S("math_max"), TK_S("nn"), TK_S("-"));
-    t103 = tk_rt(l0, TK_S("math_clamp"), TK_S("nnn"), TK_S("-"));
-    t104 = tk_rt(l0, TK_S("math_pow"), TK_S("nn"), TK_S("-"));
-    t105 = tk_rt(l0, TK_S("math_sqrt"), TK_S("n"), TK_S("-"));
-    t106 = tk_rt(l0, TK_S("math_floor"), TK_S("n"), TK_S("-"));
-    t107 = tk_rt(l0, TK_S("math_ceil"), TK_S("n"), TK_S("-"));
-    t108 = tk_rt(l0, TK_S("math_round"), TK_S("n"), TK_S("-"));
-    t109 = tk_rt(l0, TK_S("math_random"), TK_S(""), TK_S("-"));
-    t110 = tk_rt(l0, TK_S("char_is_digit"), TK_S("n"), TK_S("-"));
-    t111 = tk_rt(l0, TK_S("char_is_alpha"), TK_S("n"), TK_S("-"));
-    t112 = tk_rt(l0, TK_S("char_is_alphanumeric"), TK_S("n"), TK_S("-"));
-    t113 = tk_rt(l0, TK_S("char_is_space"), TK_S("n"), TK_S("-"));
-    t114 = tk_rt(l0, TK_S("char_to_upper"), TK_S("n"), TK_S("-"));
-    t115 = tk_rt(l0, TK_S("char_to_lower"), TK_S("n"), TK_S("-"));
+    t81 = tk_rt(l0, TK_S("track_stdin_read"), TK_S("n"), TK_S("f"));
+    t82 = tk_rt(l0, TK_S("track_file_write_all"), TK_S("rr"), TK_S("-"));
+    t83 = tk_rt(l0, TK_S("abort"), TK_S("r"), TK_S("-"));
+    t84 = tk_rt(l0, TK_S("exit"), TK_S("n"), TK_S("-"));
+    t85 = tk_rt(l0, TK_S("sys_exit"), TK_S("n"), TK_S("-"));
+    t86 = tk_rt(l0, TK_S("sys_exec"), TK_S("r"), TK_S("-"));
+    t87 = tk_rt(l0, TK_S("process_spawn"), TK_S("r"), TK_S("-"));
+    t88 = tk_rt(l0, TK_S("clock_ms"), TK_S(""), TK_S("-"));
+    t89 = tk_rt(l0, TK_S("env_get"), TK_S("r"), TK_S("f"));
+    t90 = tk_rt(l0, TK_S("env_exists"), TK_S("r"), TK_S("-"));
+    t91 = tk_rt(l0, TK_S("os_args_count"), TK_S(""), TK_S("-"));
+    t92 = tk_rt(l0, TK_S("os_arg"), TK_S("n"), TK_S("f"));
+    t93 = tk_rt(l0, TK_S("sys_set_memory_limit"), TK_S("n"), TK_S("-"));
+    t94 = tk_rt(l0, TK_S("sys_get_memory_used"), TK_S(""), TK_S("-"));
+    t95 = tk_rt(l0, TK_S("net_socket_tcp_listen"), TK_S("n"), TK_S("-"));
+    t96 = tk_rt(l0, TK_S("net_socket_accept"), TK_S("n"), TK_S("-"));
+    t97 = tk_rt(l0, TK_S("net_socket_connect"), TK_S("rn"), TK_S("-"));
+    t98 = tk_rt(l0, TK_S("net_socket_send"), TK_S("nrn"), TK_S("-"));
+    t99 = tk_rt(l0, TK_S("net_socket_recv"), TK_S("nmn"), TK_S("-"));
+    t100 = tk_rt(l0, TK_S("net_socket_close"), TK_S("n"), TK_S("-"));
+    t101 = tk_rt(l0, TK_S("math_abs"), TK_S("n"), TK_S("-"));
+    t102 = tk_rt(l0, TK_S("math_min"), TK_S("nn"), TK_S("-"));
+    t103 = tk_rt(l0, TK_S("math_max"), TK_S("nn"), TK_S("-"));
+    t104 = tk_rt(l0, TK_S("math_clamp"), TK_S("nnn"), TK_S("-"));
+    t105 = tk_rt(l0, TK_S("math_pow"), TK_S("nn"), TK_S("-"));
+    t106 = tk_rt(l0, TK_S("math_sqrt"), TK_S("n"), TK_S("-"));
+    t107 = tk_rt(l0, TK_S("math_floor"), TK_S("n"), TK_S("-"));
+    t108 = tk_rt(l0, TK_S("math_ceil"), TK_S("n"), TK_S("-"));
+    t109 = tk_rt(l0, TK_S("math_round"), TK_S("n"), TK_S("-"));
+    t110 = tk_rt(l0, TK_S("math_random"), TK_S(""), TK_S("-"));
+    t111 = tk_rt(l0, TK_S("char_is_digit"), TK_S("n"), TK_S("-"));
+    t112 = tk_rt(l0, TK_S("char_is_alpha"), TK_S("n"), TK_S("-"));
+    t113 = tk_rt(l0, TK_S("char_is_alphanumeric"), TK_S("n"), TK_S("-"));
+    t114 = tk_rt(l0, TK_S("char_is_space"), TK_S("n"), TK_S("-"));
+    t115 = tk_rt(l0, TK_S("char_to_upper"), TK_S("n"), TK_S("-"));
+    t116 = tk_rt(l0, TK_S("char_to_lower"), TK_S("n"), TK_S("-"));
     return 0;
     return 0;
 }
@@ -32427,6 +32533,7 @@ tk_w tk_hd_kinds(tk_w a0) {
     tk_w t19 = 0;
     tk_w t20 = 0;
     tk_w t21 = 0;
+    tk_w t22 = 0;
     l0 = a0;
     t0 = tk_name_count(l0);
     t1 = tk_vnew_cap((t0 + 1));
@@ -32445,12 +32552,13 @@ tk_w tk_hd_kinds(tk_w a0) {
     t13 = tk_hd_kind(l0, l1, TK_S("read_line"), 1);
     t14 = tk_hd_kind(l0, l1, TK_S("file_read_all"), 1);
     t15 = tk_hd_kind(l0, l1, TK_S("track_file_read"), 1);
-    t16 = tk_hd_kind(l0, l1, TK_S("env_get"), 1);
-    t17 = tk_hd_kind(l0, l1, TK_S("os_arg"), 1);
-    t18 = tk_hd_kind(l0, l1, TK_S("vec_init"), 2);
-    t19 = tk_hd_kind(l0, l1, TK_S("track_i64_collection_new"), 3);
-    t20 = tk_hd_kind(l0, l1, TK_S("track_str_bytes"), 3);
-    t21 = tk_hd_kind(l0, l1, TK_S("track_sb_new"), 4);
+    t16 = tk_hd_kind(l0, l1, TK_S("track_stdin_read"), 1);
+    t17 = tk_hd_kind(l0, l1, TK_S("env_get"), 1);
+    t18 = tk_hd_kind(l0, l1, TK_S("os_arg"), 1);
+    t19 = tk_hd_kind(l0, l1, TK_S("vec_init"), 2);
+    t20 = tk_hd_kind(l0, l1, TK_S("track_i64_collection_new"), 3);
+    t21 = tk_hd_kind(l0, l1, TK_S("track_str_bytes"), 3);
+    t22 = tk_hd_kind(l0, l1, TK_S("track_sb_new"), 4);
     return l1;
     return 0;
 }
@@ -67888,6 +67996,25 @@ tk_w tk_rt_module_source_1(tk_w a0) {
     tk_w t273 = 0;
     tk_w t274 = 0;
     tk_w t275 = 0;
+    tk_w t276 = 0;
+    tk_w t277 = 0;
+    tk_w t278 = 0;
+    tk_w t279 = 0;
+    tk_w t280 = 0;
+    tk_w t281 = 0;
+    tk_w t282 = 0;
+    tk_w t283 = 0;
+    tk_w t284 = 0;
+    tk_w t285 = 0;
+    tk_w t286 = 0;
+    tk_w t287 = 0;
+    tk_w t288 = 0;
+    tk_w t289 = 0;
+    tk_w t290 = 0;
+    tk_w t291 = 0;
+    tk_w t292 = 0;
+    tk_w t293 = 0;
+    tk_w t294 = 0;
     l0 = a0;
     t0 = tk_sb_line(l0, TK_S("// rt/io.trk \342\200\224 Track runtime: entry point, exit, stdout/stderr, printing."));
     t1 = tk_sb_line(l0, TK_S("//"));
@@ -68141,30 +68268,49 @@ tk_w tk_rt_module_source_1(tk_w a0) {
     t249 = tk_sb_line(l0, TK_S("    return buf;"));
     t250 = tk_sb_line(l0, TK_S("}"));
     t251 = tk_sb_line(l0, TK_S(""));
-    t252 = tk_sb_line(l0, TK_S("// Fatal abort: print message and terminate the process with status 134."));
-    t253 = tk_sb_line(l0, TK_S("fn track_abort(msg: i64) -> i64 {"));
-    t254 = tk_sb_line(l0, TK_S("    rt_flush();"));
-    t255 = tk_sb_line(l0, TK_S("    if msg != 0 && rt_readable(msg) {"));
-    t256 = tk_sb_line(l0, TK_S("        rt_err_str(\"Track abort: \");"));
-    t257 = tk_sb_line(l0, TK_S("        rt_err_str(msg);"));
-    t258 = tk_sb_line(l0, TK_S("        rt_err_str(\"\\n\");"));
-    t259 = tk_sb_line(l0, TK_S("    } else {"));
-    t260 = tk_sb_line(l0, TK_S("        rt_err_str(\"Track abort\\n\");"));
-    t261 = tk_sb_line(l0, TK_S("    }"));
-    t262 = tk_sb_line(l0, TK_S("    rt_exit_now(134);"));
-    t263 = tk_sb_line(l0, TK_S("    return 0;"));
-    t264 = tk_sb_line(l0, TK_S("}"));
-    t265 = tk_sb_line(l0, TK_S(""));
-    t266 = tk_sb_line(l0, TK_S("// Integer division by zero or INT64_MIN / -1: flush what was printed, then"));
-    t267 = tk_sb_line(l0, TK_S("// SIGFPE (shell status 136), as runtime/track_runtime.c does."));
-    t268 = tk_sb_line(l0, TK_S("fn track_trap_div() -> i64 {"));
-    t269 = tk_sb_line(l0, TK_S("    rt_flush();"));
-    t270 = tk_sb_line(l0, TK_S("    let pid = sys0(SYS_GETPID);"));
-    t271 = tk_sb_line(l0, TK_S("    sys2(SYS_KILL, pid, 8);"));
-    t272 = tk_sb_line(l0, TK_S("    sys2(SYS_KILL, pid, 6);"));
-    t273 = tk_sb_line(l0, TK_S("    rt_exit_now(134);"));
-    t274 = tk_sb_line(l0, TK_S("    return 0;"));
-    t275 = tk_sb_line(l0, TK_S("}"));
+    t252 = tk_sb_line(l0, TK_S("// Read n >= 0 bytes of stdin (fewer at end of input), flushing stdout"));
+    t253 = tk_sb_line(l0, TK_S("// first, as the C runtime's track_stdin_read does."));
+    t254 = tk_sb_line(l0, TK_S("fn track_stdin_read(n: i64) -> i64 {"));
+    t255 = tk_sb_line(l0, TK_S("    rt_flush();"));
+    t256 = tk_sb_line(l0, TK_S("    let buf = rt_malloc(n + 1);"));
+    t257 = tk_sb_line(l0, TK_S("    let mut got: i64 = 0;"));
+    t258 = tk_sb_line(l0, TK_S("    let mut r: i64 = 1;"));
+    t259 = tk_sb_line(l0, TK_S("    while got < n && r != 0 {"));
+    t260 = tk_sb_line(l0, TK_S("        r = sys3(SYS_READ, 0, buf + got, n - got);"));
+    t261 = tk_sb_line(l0, TK_S("        if r > 0 {"));
+    t262 = tk_sb_line(l0, TK_S("            got = got + r;"));
+    t263 = tk_sb_line(l0, TK_S("        } else if r != -4 {"));
+    t264 = tk_sb_line(l0, TK_S("            r = 0; // end of input or error; -4 is EINTR: retry"));
+    t265 = tk_sb_line(l0, TK_S("        }"));
+    t266 = tk_sb_line(l0, TK_S("    }"));
+    t267 = tk_sb_line(l0, TK_S("    store8(buf + got, 0);"));
+    t268 = tk_sb_line(l0, TK_S("    return buf;"));
+    t269 = tk_sb_line(l0, TK_S("}"));
+    t270 = tk_sb_line(l0, TK_S(""));
+    t271 = tk_sb_line(l0, TK_S("// Fatal abort: print message and terminate the process with status 134."));
+    t272 = tk_sb_line(l0, TK_S("fn track_abort(msg: i64) -> i64 {"));
+    t273 = tk_sb_line(l0, TK_S("    rt_flush();"));
+    t274 = tk_sb_line(l0, TK_S("    if msg != 0 && rt_readable(msg) {"));
+    t275 = tk_sb_line(l0, TK_S("        rt_err_str(\"Track abort: \");"));
+    t276 = tk_sb_line(l0, TK_S("        rt_err_str(msg);"));
+    t277 = tk_sb_line(l0, TK_S("        rt_err_str(\"\\n\");"));
+    t278 = tk_sb_line(l0, TK_S("    } else {"));
+    t279 = tk_sb_line(l0, TK_S("        rt_err_str(\"Track abort\\n\");"));
+    t280 = tk_sb_line(l0, TK_S("    }"));
+    t281 = tk_sb_line(l0, TK_S("    rt_exit_now(134);"));
+    t282 = tk_sb_line(l0, TK_S("    return 0;"));
+    t283 = tk_sb_line(l0, TK_S("}"));
+    t284 = tk_sb_line(l0, TK_S(""));
+    t285 = tk_sb_line(l0, TK_S("// Integer division by zero or INT64_MIN / -1: flush what was printed, then"));
+    t286 = tk_sb_line(l0, TK_S("// SIGFPE (shell status 136), as runtime/track_runtime.c does."));
+    t287 = tk_sb_line(l0, TK_S("fn track_trap_div() -> i64 {"));
+    t288 = tk_sb_line(l0, TK_S("    rt_flush();"));
+    t289 = tk_sb_line(l0, TK_S("    let pid = sys0(SYS_GETPID);"));
+    t290 = tk_sb_line(l0, TK_S("    sys2(SYS_KILL, pid, 8);"));
+    t291 = tk_sb_line(l0, TK_S("    sys2(SYS_KILL, pid, 6);"));
+    t292 = tk_sb_line(l0, TK_S("    rt_exit_now(134);"));
+    t293 = tk_sb_line(l0, TK_S("    return 0;"));
+    t294 = tk_sb_line(l0, TK_S("}"));
     return 0;
     return 0;
 }
@@ -70194,6 +70340,16 @@ tk_w tk_rt_module_source_4(tk_w a0) {
     tk_w t422 = 0;
     tk_w t423 = 0;
     tk_w t424 = 0;
+    tk_w t425 = 0;
+    tk_w t426 = 0;
+    tk_w t427 = 0;
+    tk_w t428 = 0;
+    tk_w t429 = 0;
+    tk_w t430 = 0;
+    tk_w t431 = 0;
+    tk_w t432 = 0;
+    tk_w t433 = 0;
+    tk_w t434 = 0;
     l0 = a0;
     t0 = tk_sb_line(l0, TK_S("// rt/sys.trk \342\200\224 Track runtime: arguments, environment, processes, clock,"));
     t1 = tk_sb_line(l0, TK_S("// files, sockets. All through Linux x86-64 system calls."));
@@ -70346,280 +70502,290 @@ tk_w tk_rt_module_source_4(tk_w a0) {
     t148 = tk_sb_line(l0, TK_S("    return 0;"));
     t149 = tk_sb_line(l0, TK_S("}"));
     t150 = tk_sb_line(l0, TK_S(""));
-    t151 = tk_sb_line(l0, TK_S("// Read everything from `fd`'s current size; \"\" on error."));
-    t152 = tk_sb_line(l0, TK_S("fn rt_read_fd(fd: i64) -> i64 {"));
-    t153 = tk_sb_line(l0, TK_S("    let end = sys3(SYS_LSEEK, fd, 0, 2);"));
-    t154 = tk_sb_line(l0, TK_S("    if end < 0 || sys3(SYS_LSEEK, fd, 0, 0) < 0 {"));
-    t155 = tk_sb_line(l0, TK_S("        return rt_dup_n(\"\", 0);"));
-    t156 = tk_sb_line(l0, TK_S("    }"));
-    t157 = tk_sb_line(l0, TK_S("    let buf = rt_malloc(end + 1);"));
-    t158 = tk_sb_line(l0, TK_S("    let mut got: i64 = 0;"));
-    t159 = tk_sb_line(l0, TK_S("    let mut going = true;"));
-    t160 = tk_sb_line(l0, TK_S("    while going && got < end {"));
-    t161 = tk_sb_line(l0, TK_S("        let r = sys3(SYS_READ, fd, buf + got, end - got);"));
-    t162 = tk_sb_line(l0, TK_S("        if r == -4 {"));
-    t163 = tk_sb_line(l0, TK_S("            // EINTR: retry"));
-    t164 = tk_sb_line(l0, TK_S("        } else if r <= 0 {"));
-    t165 = tk_sb_line(l0, TK_S("            going = false;"));
-    t166 = tk_sb_line(l0, TK_S("        } else {"));
-    t167 = tk_sb_line(l0, TK_S("            got = got + r;"));
-    t168 = tk_sb_line(l0, TK_S("        }"));
-    t169 = tk_sb_line(l0, TK_S("    }"));
-    t170 = tk_sb_line(l0, TK_S("    store8(buf + got, 0);"));
-    t171 = tk_sb_line(l0, TK_S("    return buf;"));
-    t172 = tk_sb_line(l0, TK_S("}"));
-    t173 = tk_sb_line(l0, TK_S(""));
-    t174 = tk_sb_line(l0, TK_S("fn file_read_all(h: i64) -> i64 {"));
-    t175 = tk_sb_line(l0, TK_S("    if h == 0 {"));
-    t176 = tk_sb_line(l0, TK_S("        return rt_dup_n(\"\", 0);"));
-    t177 = tk_sb_line(l0, TK_S("    }"));
-    t178 = tk_sb_line(l0, TK_S("    return rt_read_fd(load64(h));"));
-    t179 = tk_sb_line(l0, TK_S("}"));
-    t180 = tk_sb_line(l0, TK_S(""));
-    t181 = tk_sb_line(l0, TK_S("fn file_write(h: i64, content: i64) -> i64 {"));
-    t182 = tk_sb_line(l0, TK_S("    if h == 0 || content == 0 {"));
-    t183 = tk_sb_line(l0, TK_S("        return -1;"));
-    t184 = tk_sb_line(l0, TK_S("    }"));
-    t185 = tk_sb_line(l0, TK_S("    return rt_write_all(load64(h), content, rt_strlen(content));"));
-    t186 = tk_sb_line(l0, TK_S("}"));
-    t187 = tk_sb_line(l0, TK_S(""));
-    t188 = tk_sb_line(l0, TK_S("fn file_exists(path: i64) -> i64 {"));
-    t189 = tk_sb_line(l0, TK_S("    if path != 0 && sys2(SYS_ACCESS, path, 0) == 0 {"));
-    t190 = tk_sb_line(l0, TK_S("        return 1;"));
-    t191 = tk_sb_line(l0, TK_S("    }"));
-    t192 = tk_sb_line(l0, TK_S("    return 0;"));
-    t193 = tk_sb_line(l0, TK_S("}"));
-    t194 = tk_sb_line(l0, TK_S(""));
-    t195 = tk_sb_line(l0, TK_S("fn file_remove(path: i64) -> i64 {"));
-    t196 = tk_sb_line(l0, TK_S("    if path != 0 && sys1(SYS_UNLINK, path) == 0 {"));
-    t197 = tk_sb_line(l0, TK_S("        return 0;"));
-    t198 = tk_sb_line(l0, TK_S("    }"));
-    t199 = tk_sb_line(l0, TK_S("    return -1;"));
-    t200 = tk_sb_line(l0, TK_S("}"));
-    t201 = tk_sb_line(l0, TK_S(""));
-    t202 = tk_sb_line(l0, TK_S("fn file_size(path: i64) -> i64 {"));
-    t203 = tk_sb_line(l0, TK_S("    let st = RT_BASE + RS_STAT;"));
-    t204 = tk_sb_line(l0, TK_S("    if path == 0 || sys2(SYS_STAT, path, st) != 0 {"));
-    t205 = tk_sb_line(l0, TK_S("        return -1;"));
-    t206 = tk_sb_line(l0, TK_S("    }"));
-    t207 = tk_sb_line(l0, TK_S("    return load64(st + 48);"));
-    t208 = tk_sb_line(l0, TK_S("}"));
-    t209 = tk_sb_line(l0, TK_S(""));
-    t210 = tk_sb_line(l0, TK_S("fn dir_exists(path: i64) -> bool {"));
-    t211 = tk_sb_line(l0, TK_S("    let st = RT_BASE + RS_STAT;"));
-    t212 = tk_sb_line(l0, TK_S("    if path == 0 || sys2(SYS_STAT, path, st) != 0 {"));
-    t213 = tk_sb_line(l0, TK_S("        return false;"));
-    t214 = tk_sb_line(l0, TK_S("    }"));
-    t215 = tk_sb_line(l0, TK_S("    return (load64(st + 24) & 61440) == 16384;"));
-    t216 = tk_sb_line(l0, TK_S("}"));
-    t217 = tk_sb_line(l0, TK_S(""));
-    t218 = tk_sb_line(l0, TK_S("fn file_copy(src: i64, dst: i64) -> i64 {"));
-    t219 = tk_sb_line(l0, TK_S("    if src == 0 || dst == 0 {"));
-    t220 = tk_sb_line(l0, TK_S("        return -1;"));
-    t221 = tk_sb_line(l0, TK_S("    }"));
-    t222 = tk_sb_line(l0, TK_S("    let fin = sys3(SYS_OPEN, src, O_RDONLY | 524288, 0);"));
-    t223 = tk_sb_line(l0, TK_S("    if fin < 0 {"));
-    t224 = tk_sb_line(l0, TK_S("        return -1;"));
-    t225 = tk_sb_line(l0, TK_S("    }"));
-    t226 = tk_sb_line(l0, TK_S("    let fout = sys3(SYS_OPEN, dst, O_WRONLY_CREAT_TRUNC | 524288, 438);"));
-    t227 = tk_sb_line(l0, TK_S("    if fout < 0 {"));
-    t228 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fin);"));
-    t229 = tk_sb_line(l0, TK_S("        return -1;"));
-    t230 = tk_sb_line(l0, TK_S("    }"));
-    t231 = tk_sb_line(l0, TK_S("    let buf = rt_malloc(65536);"));
-    t232 = tk_sb_line(l0, TK_S("    let mut going = true;"));
-    t233 = tk_sb_line(l0, TK_S("    while going {"));
-    t234 = tk_sb_line(l0, TK_S("        let n = sys3(SYS_READ, fin, buf, 65536);"));
-    t235 = tk_sb_line(l0, TK_S("        if n == -4 {"));
-    t236 = tk_sb_line(l0, TK_S("            // EINTR: retry"));
-    t237 = tk_sb_line(l0, TK_S("        } else if n <= 0 {"));
-    t238 = tk_sb_line(l0, TK_S("            going = false;"));
-    t239 = tk_sb_line(l0, TK_S("        } else {"));
-    t240 = tk_sb_line(l0, TK_S("            rt_write_all(fout, buf, n);"));
-    t241 = tk_sb_line(l0, TK_S("        }"));
-    t242 = tk_sb_line(l0, TK_S("    }"));
-    t243 = tk_sb_line(l0, TK_S("    rt_free(buf);"));
-    t244 = tk_sb_line(l0, TK_S("    sys1(SYS_CLOSE, fin);"));
-    t245 = tk_sb_line(l0, TK_S("    sys1(SYS_CLOSE, fout);"));
-    t246 = tk_sb_line(l0, TK_S("    return 0;"));
-    t247 = tk_sb_line(l0, TK_S("}"));
-    t248 = tk_sb_line(l0, TK_S(""));
-    t249 = tk_sb_line(l0, TK_S("// Whole-file helpers: open, transfer, and close in one call."));
-    t250 = tk_sb_line(l0, TK_S("fn track_file_read(path: i64) -> i64 {"));
-    t251 = tk_sb_line(l0, TK_S("    if path == 0 {"));
-    t252 = tk_sb_line(l0, TK_S("        return rt_dup_n(\"\", 0);"));
-    t253 = tk_sb_line(l0, TK_S("    }"));
-    t254 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_OPEN, path, O_RDONLY | 524288, 0);"));
-    t255 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
-    t256 = tk_sb_line(l0, TK_S("        return rt_dup_n(\"\", 0);"));
-    t257 = tk_sb_line(l0, TK_S("    }"));
-    t258 = tk_sb_line(l0, TK_S("    let out = rt_read_fd(fd);"));
-    t259 = tk_sb_line(l0, TK_S("    sys1(SYS_CLOSE, fd);"));
-    t260 = tk_sb_line(l0, TK_S("    return out;"));
-    t261 = tk_sb_line(l0, TK_S("}"));
-    t262 = tk_sb_line(l0, TK_S(""));
-    t263 = tk_sb_line(l0, TK_S("fn track_file_write_all(path: i64, content: i64) -> i64 {"));
-    t264 = tk_sb_line(l0, TK_S("    if path == 0 {"));
-    t265 = tk_sb_line(l0, TK_S("        return -1;"));
-    t266 = tk_sb_line(l0, TK_S("    }"));
-    t267 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_OPEN, path, O_WRONLY_CREAT_TRUNC | 524288, 438);"));
-    t268 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
-    t269 = tk_sb_line(l0, TK_S("        return -1;"));
-    t270 = tk_sb_line(l0, TK_S("    }"));
-    t271 = tk_sb_line(l0, TK_S("    let mut status: i64 = -1;"));
-    t272 = tk_sb_line(l0, TK_S("    if content != 0 {"));
-    t273 = tk_sb_line(l0, TK_S("        status = rt_write_all(fd, content, rt_strlen(content));"));
-    t274 = tk_sb_line(l0, TK_S("    }"));
-    t275 = tk_sb_line(l0, TK_S("    if sys1(SYS_CLOSE, fd) != 0 {"));
-    t276 = tk_sb_line(l0, TK_S("        status = -1;"));
-    t277 = tk_sb_line(l0, TK_S("    }"));
-    t278 = tk_sb_line(l0, TK_S("    return status;"));
-    t279 = tk_sb_line(l0, TK_S("}"));
-    t280 = tk_sb_line(l0, TK_S(""));
-    t281 = tk_sb_line(l0, TK_S("// ---------------------------------------------------------------- network"));
-    t282 = tk_sb_line(l0, TK_S(""));
-    t283 = tk_sb_line(l0, TK_S("const SYS_SOCKET = 41;"));
-    t284 = tk_sb_line(l0, TK_S("const SYS_CONNECT = 42;"));
-    t285 = tk_sb_line(l0, TK_S("const SYS_ACCEPT = 43;"));
-    t286 = tk_sb_line(l0, TK_S("const SYS_SENDTO = 44;"));
-    t287 = tk_sb_line(l0, TK_S("const SYS_RECVFROM = 45;"));
-    t288 = tk_sb_line(l0, TK_S("const SYS_BIND = 49;"));
-    t289 = tk_sb_line(l0, TK_S("const SYS_LISTEN = 50;"));
-    t290 = tk_sb_line(l0, TK_S("const SYS_SETSOCKOPT = 54;"));
-    t291 = tk_sb_line(l0, TK_S(""));
-    t292 = tk_sb_line(l0, TK_S("// struct sockaddr_in for AF_INET, `port`, and the IPv4 address word `addr`"));
-    t293 = tk_sb_line(l0, TK_S("// (network byte order already packed little-endian in memory)."));
-    t294 = tk_sb_line(l0, TK_S("fn rt_sockaddr(port: i64, addr: i64) -> i64 {"));
-    t295 = tk_sb_line(l0, TK_S("    let sa = RT_BASE + RS_SOCK;"));
-    t296 = tk_sb_line(l0, TK_S("    let p = port & 65535;"));
-    t297 = tk_sb_line(l0, TK_S("    store64(sa, 2 | ((p >> 8) << 16) | ((p & 255) << 24) | ((addr & 4294967295) << 32));"));
-    t298 = tk_sb_line(l0, TK_S("    store64(sa + 8, 0);"));
-    t299 = tk_sb_line(l0, TK_S("    return sa;"));
-    t300 = tk_sb_line(l0, TK_S("}"));
+    t151 = tk_sb_line(l0, TK_S("// Read everything from `fd` to end of file; \"\" on error. The size from"));
+    t152 = tk_sb_line(l0, TK_S("// lseek only sizes the first buffer: files whose size is not known up"));
+    t153 = tk_sb_line(l0, TK_S("// front (/proc, pipes) read whole too."));
+    t154 = tk_sb_line(l0, TK_S("fn rt_read_fd(fd: i64) -> i64 {"));
+    t155 = tk_sb_line(l0, TK_S("    let mut cap: i64 = 4096;"));
+    t156 = tk_sb_line(l0, TK_S("    let end = sys3(SYS_LSEEK, fd, 0, 2);"));
+    t157 = tk_sb_line(l0, TK_S("    if end >= 0 {"));
+    t158 = tk_sb_line(l0, TK_S("        if sys3(SYS_LSEEK, fd, 0, 0) < 0 {"));
+    t159 = tk_sb_line(l0, TK_S("            return rt_dup_n(\"\", 0);"));
+    t160 = tk_sb_line(l0, TK_S("        }"));
+    t161 = tk_sb_line(l0, TK_S("        cap = end + 1;"));
+    t162 = tk_sb_line(l0, TK_S("    }"));
+    t163 = tk_sb_line(l0, TK_S("    let mut buf = rt_malloc(cap + 1);"));
+    t164 = tk_sb_line(l0, TK_S("    let mut got: i64 = 0;"));
+    t165 = tk_sb_line(l0, TK_S("    let mut going = true;"));
+    t166 = tk_sb_line(l0, TK_S("    while going {"));
+    t167 = tk_sb_line(l0, TK_S("        if got == cap {"));
+    t168 = tk_sb_line(l0, TK_S("            cap = cap * 2;"));
+    t169 = tk_sb_line(l0, TK_S("            buf = rt_realloc(buf, cap + 1);"));
+    t170 = tk_sb_line(l0, TK_S("        }"));
+    t171 = tk_sb_line(l0, TK_S("        let r = sys3(SYS_READ, fd, buf + got, cap - got);"));
+    t172 = tk_sb_line(l0, TK_S("        if r == -4 {"));
+    t173 = tk_sb_line(l0, TK_S("            // EINTR: retry"));
+    t174 = tk_sb_line(l0, TK_S("        } else if r <= 0 {"));
+    t175 = tk_sb_line(l0, TK_S("            going = false;"));
+    t176 = tk_sb_line(l0, TK_S("        } else {"));
+    t177 = tk_sb_line(l0, TK_S("            got = got + r;"));
+    t178 = tk_sb_line(l0, TK_S("        }"));
+    t179 = tk_sb_line(l0, TK_S("    }"));
+    t180 = tk_sb_line(l0, TK_S("    store8(buf + got, 0);"));
+    t181 = tk_sb_line(l0, TK_S("    return buf;"));
+    t182 = tk_sb_line(l0, TK_S("}"));
+    t183 = tk_sb_line(l0, TK_S(""));
+    t184 = tk_sb_line(l0, TK_S("fn file_read_all(h: i64) -> i64 {"));
+    t185 = tk_sb_line(l0, TK_S("    if h == 0 {"));
+    t186 = tk_sb_line(l0, TK_S("        return rt_dup_n(\"\", 0);"));
+    t187 = tk_sb_line(l0, TK_S("    }"));
+    t188 = tk_sb_line(l0, TK_S("    return rt_read_fd(load64(h));"));
+    t189 = tk_sb_line(l0, TK_S("}"));
+    t190 = tk_sb_line(l0, TK_S(""));
+    t191 = tk_sb_line(l0, TK_S("fn file_write(h: i64, content: i64) -> i64 {"));
+    t192 = tk_sb_line(l0, TK_S("    if h == 0 || content == 0 {"));
+    t193 = tk_sb_line(l0, TK_S("        return -1;"));
+    t194 = tk_sb_line(l0, TK_S("    }"));
+    t195 = tk_sb_line(l0, TK_S("    return rt_write_all(load64(h), content, rt_strlen(content));"));
+    t196 = tk_sb_line(l0, TK_S("}"));
+    t197 = tk_sb_line(l0, TK_S(""));
+    t198 = tk_sb_line(l0, TK_S("fn file_exists(path: i64) -> i64 {"));
+    t199 = tk_sb_line(l0, TK_S("    if path != 0 && sys2(SYS_ACCESS, path, 0) == 0 {"));
+    t200 = tk_sb_line(l0, TK_S("        return 1;"));
+    t201 = tk_sb_line(l0, TK_S("    }"));
+    t202 = tk_sb_line(l0, TK_S("    return 0;"));
+    t203 = tk_sb_line(l0, TK_S("}"));
+    t204 = tk_sb_line(l0, TK_S(""));
+    t205 = tk_sb_line(l0, TK_S("fn file_remove(path: i64) -> i64 {"));
+    t206 = tk_sb_line(l0, TK_S("    if path != 0 && sys1(SYS_UNLINK, path) == 0 {"));
+    t207 = tk_sb_line(l0, TK_S("        return 0;"));
+    t208 = tk_sb_line(l0, TK_S("    }"));
+    t209 = tk_sb_line(l0, TK_S("    return -1;"));
+    t210 = tk_sb_line(l0, TK_S("}"));
+    t211 = tk_sb_line(l0, TK_S(""));
+    t212 = tk_sb_line(l0, TK_S("fn file_size(path: i64) -> i64 {"));
+    t213 = tk_sb_line(l0, TK_S("    let st = RT_BASE + RS_STAT;"));
+    t214 = tk_sb_line(l0, TK_S("    if path == 0 || sys2(SYS_STAT, path, st) != 0 {"));
+    t215 = tk_sb_line(l0, TK_S("        return -1;"));
+    t216 = tk_sb_line(l0, TK_S("    }"));
+    t217 = tk_sb_line(l0, TK_S("    return load64(st + 48);"));
+    t218 = tk_sb_line(l0, TK_S("}"));
+    t219 = tk_sb_line(l0, TK_S(""));
+    t220 = tk_sb_line(l0, TK_S("fn dir_exists(path: i64) -> bool {"));
+    t221 = tk_sb_line(l0, TK_S("    let st = RT_BASE + RS_STAT;"));
+    t222 = tk_sb_line(l0, TK_S("    if path == 0 || sys2(SYS_STAT, path, st) != 0 {"));
+    t223 = tk_sb_line(l0, TK_S("        return false;"));
+    t224 = tk_sb_line(l0, TK_S("    }"));
+    t225 = tk_sb_line(l0, TK_S("    return (load64(st + 24) & 61440) == 16384;"));
+    t226 = tk_sb_line(l0, TK_S("}"));
+    t227 = tk_sb_line(l0, TK_S(""));
+    t228 = tk_sb_line(l0, TK_S("fn file_copy(src: i64, dst: i64) -> i64 {"));
+    t229 = tk_sb_line(l0, TK_S("    if src == 0 || dst == 0 {"));
+    t230 = tk_sb_line(l0, TK_S("        return -1;"));
+    t231 = tk_sb_line(l0, TK_S("    }"));
+    t232 = tk_sb_line(l0, TK_S("    let fin = sys3(SYS_OPEN, src, O_RDONLY | 524288, 0);"));
+    t233 = tk_sb_line(l0, TK_S("    if fin < 0 {"));
+    t234 = tk_sb_line(l0, TK_S("        return -1;"));
+    t235 = tk_sb_line(l0, TK_S("    }"));
+    t236 = tk_sb_line(l0, TK_S("    let fout = sys3(SYS_OPEN, dst, O_WRONLY_CREAT_TRUNC | 524288, 438);"));
+    t237 = tk_sb_line(l0, TK_S("    if fout < 0 {"));
+    t238 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fin);"));
+    t239 = tk_sb_line(l0, TK_S("        return -1;"));
+    t240 = tk_sb_line(l0, TK_S("    }"));
+    t241 = tk_sb_line(l0, TK_S("    let buf = rt_malloc(65536);"));
+    t242 = tk_sb_line(l0, TK_S("    let mut going = true;"));
+    t243 = tk_sb_line(l0, TK_S("    while going {"));
+    t244 = tk_sb_line(l0, TK_S("        let n = sys3(SYS_READ, fin, buf, 65536);"));
+    t245 = tk_sb_line(l0, TK_S("        if n == -4 {"));
+    t246 = tk_sb_line(l0, TK_S("            // EINTR: retry"));
+    t247 = tk_sb_line(l0, TK_S("        } else if n <= 0 {"));
+    t248 = tk_sb_line(l0, TK_S("            going = false;"));
+    t249 = tk_sb_line(l0, TK_S("        } else {"));
+    t250 = tk_sb_line(l0, TK_S("            rt_write_all(fout, buf, n);"));
+    t251 = tk_sb_line(l0, TK_S("        }"));
+    t252 = tk_sb_line(l0, TK_S("    }"));
+    t253 = tk_sb_line(l0, TK_S("    rt_free(buf);"));
+    t254 = tk_sb_line(l0, TK_S("    sys1(SYS_CLOSE, fin);"));
+    t255 = tk_sb_line(l0, TK_S("    sys1(SYS_CLOSE, fout);"));
+    t256 = tk_sb_line(l0, TK_S("    return 0;"));
+    t257 = tk_sb_line(l0, TK_S("}"));
+    t258 = tk_sb_line(l0, TK_S(""));
+    t259 = tk_sb_line(l0, TK_S("// Whole-file helpers: open, transfer, and close in one call."));
+    t260 = tk_sb_line(l0, TK_S("fn track_file_read(path: i64) -> i64 {"));
+    t261 = tk_sb_line(l0, TK_S("    if path == 0 {"));
+    t262 = tk_sb_line(l0, TK_S("        return rt_dup_n(\"\", 0);"));
+    t263 = tk_sb_line(l0, TK_S("    }"));
+    t264 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_OPEN, path, O_RDONLY | 524288, 0);"));
+    t265 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
+    t266 = tk_sb_line(l0, TK_S("        return rt_dup_n(\"\", 0);"));
+    t267 = tk_sb_line(l0, TK_S("    }"));
+    t268 = tk_sb_line(l0, TK_S("    let out = rt_read_fd(fd);"));
+    t269 = tk_sb_line(l0, TK_S("    sys1(SYS_CLOSE, fd);"));
+    t270 = tk_sb_line(l0, TK_S("    return out;"));
+    t271 = tk_sb_line(l0, TK_S("}"));
+    t272 = tk_sb_line(l0, TK_S(""));
+    t273 = tk_sb_line(l0, TK_S("fn track_file_write_all(path: i64, content: i64) -> i64 {"));
+    t274 = tk_sb_line(l0, TK_S("    if path == 0 {"));
+    t275 = tk_sb_line(l0, TK_S("        return -1;"));
+    t276 = tk_sb_line(l0, TK_S("    }"));
+    t277 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_OPEN, path, O_WRONLY_CREAT_TRUNC | 524288, 438);"));
+    t278 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
+    t279 = tk_sb_line(l0, TK_S("        return -1;"));
+    t280 = tk_sb_line(l0, TK_S("    }"));
+    t281 = tk_sb_line(l0, TK_S("    let mut status: i64 = -1;"));
+    t282 = tk_sb_line(l0, TK_S("    if content != 0 {"));
+    t283 = tk_sb_line(l0, TK_S("        status = rt_write_all(fd, content, rt_strlen(content));"));
+    t284 = tk_sb_line(l0, TK_S("    }"));
+    t285 = tk_sb_line(l0, TK_S("    if sys1(SYS_CLOSE, fd) != 0 {"));
+    t286 = tk_sb_line(l0, TK_S("        status = -1;"));
+    t287 = tk_sb_line(l0, TK_S("    }"));
+    t288 = tk_sb_line(l0, TK_S("    return status;"));
+    t289 = tk_sb_line(l0, TK_S("}"));
+    t290 = tk_sb_line(l0, TK_S(""));
+    t291 = tk_sb_line(l0, TK_S("// ---------------------------------------------------------------- network"));
+    t292 = tk_sb_line(l0, TK_S(""));
+    t293 = tk_sb_line(l0, TK_S("const SYS_SOCKET = 41;"));
+    t294 = tk_sb_line(l0, TK_S("const SYS_CONNECT = 42;"));
+    t295 = tk_sb_line(l0, TK_S("const SYS_ACCEPT = 43;"));
+    t296 = tk_sb_line(l0, TK_S("const SYS_SENDTO = 44;"));
+    t297 = tk_sb_line(l0, TK_S("const SYS_RECVFROM = 45;"));
+    t298 = tk_sb_line(l0, TK_S("const SYS_BIND = 49;"));
+    t299 = tk_sb_line(l0, TK_S("const SYS_LISTEN = 50;"));
+    t300 = tk_sb_line(l0, TK_S("const SYS_SETSOCKOPT = 54;"));
     t301 = tk_sb_line(l0, TK_S(""));
-    t302 = tk_sb_line(l0, TK_S("// inet_pton for dotted-quad IPv4; -1 when malformed."));
-    t303 = tk_sb_line(l0, TK_S("fn rt_parse_ipv4(s: i64) -> i64 {"));
-    t304 = tk_sb_line(l0, TK_S("    let mut addr: i64 = 0;"));
-    t305 = tk_sb_line(l0, TK_S("    let mut part: i64 = 0;"));
-    t306 = tk_sb_line(l0, TK_S("    let mut digits: i64 = 0;"));
-    t307 = tk_sb_line(l0, TK_S("    let mut parts: i64 = 0;"));
-    t308 = tk_sb_line(l0, TK_S("    let mut i: i64 = 0;"));
-    t309 = tk_sb_line(l0, TK_S("    while true {"));
-    t310 = tk_sb_line(l0, TK_S("        let ch = load8(s + i);"));
-    t311 = tk_sb_line(l0, TK_S("        if rt_is_digit(ch) {"));
-    t312 = tk_sb_line(l0, TK_S("            part = part * 10 + ch - 48;"));
-    t313 = tk_sb_line(l0, TK_S("            digits = digits + 1;"));
-    t314 = tk_sb_line(l0, TK_S("            if part > 255 || digits > 3 {"));
-    t315 = tk_sb_line(l0, TK_S("                return -1;"));
-    t316 = tk_sb_line(l0, TK_S("            }"));
-    t317 = tk_sb_line(l0, TK_S("        } else if ch == 46 || ch == 0 {"));
-    t318 = tk_sb_line(l0, TK_S("            if digits == 0 || parts == 4 {"));
-    t319 = tk_sb_line(l0, TK_S("                return -1;"));
-    t320 = tk_sb_line(l0, TK_S("            }"));
-    t321 = tk_sb_line(l0, TK_S("            addr = addr | (part << (8 * parts));"));
-    t322 = tk_sb_line(l0, TK_S("            parts = parts + 1;"));
-    t323 = tk_sb_line(l0, TK_S("            part = 0;"));
-    t324 = tk_sb_line(l0, TK_S("            digits = 0;"));
-    t325 = tk_sb_line(l0, TK_S("            if ch == 0 {"));
-    t326 = tk_sb_line(l0, TK_S("                if parts != 4 {"));
-    t327 = tk_sb_line(l0, TK_S("                    return -1;"));
-    t328 = tk_sb_line(l0, TK_S("                }"));
-    t329 = tk_sb_line(l0, TK_S("                return addr;"));
+    t302 = tk_sb_line(l0, TK_S("// struct sockaddr_in for AF_INET, `port`, and the IPv4 address word `addr`"));
+    t303 = tk_sb_line(l0, TK_S("// (network byte order already packed little-endian in memory)."));
+    t304 = tk_sb_line(l0, TK_S("fn rt_sockaddr(port: i64, addr: i64) -> i64 {"));
+    t305 = tk_sb_line(l0, TK_S("    let sa = RT_BASE + RS_SOCK;"));
+    t306 = tk_sb_line(l0, TK_S("    let p = port & 65535;"));
+    t307 = tk_sb_line(l0, TK_S("    store64(sa, 2 | ((p >> 8) << 16) | ((p & 255) << 24) | ((addr & 4294967295) << 32));"));
+    t308 = tk_sb_line(l0, TK_S("    store64(sa + 8, 0);"));
+    t309 = tk_sb_line(l0, TK_S("    return sa;"));
+    t310 = tk_sb_line(l0, TK_S("}"));
+    t311 = tk_sb_line(l0, TK_S(""));
+    t312 = tk_sb_line(l0, TK_S("// inet_pton for dotted-quad IPv4; -1 when malformed."));
+    t313 = tk_sb_line(l0, TK_S("fn rt_parse_ipv4(s: i64) -> i64 {"));
+    t314 = tk_sb_line(l0, TK_S("    let mut addr: i64 = 0;"));
+    t315 = tk_sb_line(l0, TK_S("    let mut part: i64 = 0;"));
+    t316 = tk_sb_line(l0, TK_S("    let mut digits: i64 = 0;"));
+    t317 = tk_sb_line(l0, TK_S("    let mut parts: i64 = 0;"));
+    t318 = tk_sb_line(l0, TK_S("    let mut i: i64 = 0;"));
+    t319 = tk_sb_line(l0, TK_S("    while true {"));
+    t320 = tk_sb_line(l0, TK_S("        let ch = load8(s + i);"));
+    t321 = tk_sb_line(l0, TK_S("        if rt_is_digit(ch) {"));
+    t322 = tk_sb_line(l0, TK_S("            part = part * 10 + ch - 48;"));
+    t323 = tk_sb_line(l0, TK_S("            digits = digits + 1;"));
+    t324 = tk_sb_line(l0, TK_S("            if part > 255 || digits > 3 {"));
+    t325 = tk_sb_line(l0, TK_S("                return -1;"));
+    t326 = tk_sb_line(l0, TK_S("            }"));
+    t327 = tk_sb_line(l0, TK_S("        } else if ch == 46 || ch == 0 {"));
+    t328 = tk_sb_line(l0, TK_S("            if digits == 0 || parts == 4 {"));
+    t329 = tk_sb_line(l0, TK_S("                return -1;"));
     t330 = tk_sb_line(l0, TK_S("            }"));
-    t331 = tk_sb_line(l0, TK_S("        } else {"));
-    t332 = tk_sb_line(l0, TK_S("            return -1;"));
-    t333 = tk_sb_line(l0, TK_S("        }"));
-    t334 = tk_sb_line(l0, TK_S("        i = i + 1;"));
-    t335 = tk_sb_line(l0, TK_S("    }"));
-    t336 = tk_sb_line(l0, TK_S("    return -1;"));
-    t337 = tk_sb_line(l0, TK_S("}"));
-    t338 = tk_sb_line(l0, TK_S(""));
-    t339 = tk_sb_line(l0, TK_S("fn net_socket_tcp_listen(port: i64) -> i64 {"));
-    t340 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_SOCKET, 2, 1, 0);"));
-    t341 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
-    t342 = tk_sb_line(l0, TK_S("        return -1;"));
-    t343 = tk_sb_line(l0, TK_S("    }"));
-    t344 = tk_sb_line(l0, TK_S("    syscall6(SYS_SETSOCKOPT, fd, 1, 2, RT_BASE + RS_ONE, 4, 0);"));
-    t345 = tk_sb_line(l0, TK_S("    let r = sys3(SYS_BIND, fd, rt_sockaddr(port, 0), 16);"));
-    t346 = tk_sb_line(l0, TK_S("    if r < 0 {"));
-    t347 = tk_sb_line(l0, TK_S("        let b = track_sb_new();"));
-    t348 = tk_sb_line(l0, TK_S("        if r == -98 {"));
-    t349 = tk_sb_line(l0, TK_S("            track_sb_push(b, \"Track Network Error: Port conflict! Port \");"));
-    t350 = tk_sb_line(l0, TK_S("            track_sb_push_int(b, port);"));
-    t351 = tk_sb_line(l0, TK_S("            track_sb_push(b, \" is already in use by another process.\\n\");"));
-    t352 = tk_sb_line(l0, TK_S("        } else {"));
-    t353 = tk_sb_line(l0, TK_S("            track_sb_push(b, \"Track Network Error: Failed to bind TCP socket on port \");"));
-    t354 = tk_sb_line(l0, TK_S("            track_sb_push_int(b, port);"));
-    t355 = tk_sb_line(l0, TK_S("            track_sb_push(b, \" (errno: \");"));
-    t356 = tk_sb_line(l0, TK_S("            track_sb_push_int(b, 0 - r);"));
-    t357 = tk_sb_line(l0, TK_S("            track_sb_push(b, \").\\n\");"));
-    t358 = tk_sb_line(l0, TK_S("        }"));
-    t359 = tk_sb_line(l0, TK_S("        rt_err_bytes(load64(b), track_sb_len(b));"));
-    t360 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
-    t361 = tk_sb_line(l0, TK_S("        return -1;"));
-    t362 = tk_sb_line(l0, TK_S("    }"));
-    t363 = tk_sb_line(l0, TK_S("    if sys2(SYS_LISTEN, fd, 128) < 0 {"));
-    t364 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
-    t365 = tk_sb_line(l0, TK_S("        return -1;"));
-    t366 = tk_sb_line(l0, TK_S("    }"));
-    t367 = tk_sb_line(l0, TK_S("    return fd;"));
-    t368 = tk_sb_line(l0, TK_S("}"));
-    t369 = tk_sb_line(l0, TK_S(""));
-    t370 = tk_sb_line(l0, TK_S("fn net_socket_accept(server_fd: i64) -> i64 {"));
-    t371 = tk_sb_line(l0, TK_S("    if server_fd < 0 {"));
-    t372 = tk_sb_line(l0, TK_S("        return -1;"));
-    t373 = tk_sb_line(l0, TK_S("    }"));
-    t374 = tk_sb_line(l0, TK_S("    let r = sys3(SYS_ACCEPT, server_fd, 0, 0);"));
-    t375 = tk_sb_line(l0, TK_S("    if r < 0 {"));
-    t376 = tk_sb_line(l0, TK_S("        return -1;"));
-    t377 = tk_sb_line(l0, TK_S("    }"));
-    t378 = tk_sb_line(l0, TK_S("    return r;"));
-    t379 = tk_sb_line(l0, TK_S("}"));
-    t380 = tk_sb_line(l0, TK_S(""));
-    t381 = tk_sb_line(l0, TK_S("fn net_socket_connect(host: i64, port: i64) -> i64 {"));
-    t382 = tk_sb_line(l0, TK_S("    if host == 0 {"));
-    t383 = tk_sb_line(l0, TK_S("        return -1;"));
-    t384 = tk_sb_line(l0, TK_S("    }"));
-    t385 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_SOCKET, 2, 1, 0);"));
-    t386 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
-    t387 = tk_sb_line(l0, TK_S("        return -1;"));
-    t388 = tk_sb_line(l0, TK_S("    }"));
-    t389 = tk_sb_line(l0, TK_S("    let addr = rt_parse_ipv4(host);"));
-    t390 = tk_sb_line(l0, TK_S("    if addr < 0 || sys3(SYS_CONNECT, fd, rt_sockaddr(port, addr), 16) < 0 {"));
-    t391 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
-    t392 = tk_sb_line(l0, TK_S("        return -1;"));
-    t393 = tk_sb_line(l0, TK_S("    }"));
-    t394 = tk_sb_line(l0, TK_S("    return fd;"));
-    t395 = tk_sb_line(l0, TK_S("}"));
-    t396 = tk_sb_line(l0, TK_S(""));
-    t397 = tk_sb_line(l0, TK_S("fn net_socket_send(fd: i64, data: i64, len: i64) -> i64 {"));
-    t398 = tk_sb_line(l0, TK_S("    if fd < 0 || data == 0 {"));
-    t399 = tk_sb_line(l0, TK_S("        return -1;"));
-    t400 = tk_sb_line(l0, TK_S("    }"));
-    t401 = tk_sb_line(l0, TK_S("    let r = syscall6(SYS_SENDTO, fd, data, len, 0, 0, 0);"));
-    t402 = tk_sb_line(l0, TK_S("    if r < 0 {"));
-    t403 = tk_sb_line(l0, TK_S("        return -1;"));
-    t404 = tk_sb_line(l0, TK_S("    }"));
-    t405 = tk_sb_line(l0, TK_S("    return r;"));
-    t406 = tk_sb_line(l0, TK_S("}"));
-    t407 = tk_sb_line(l0, TK_S(""));
-    t408 = tk_sb_line(l0, TK_S("fn net_socket_recv(fd: i64, buf: i64, max_len: i64) -> i64 {"));
-    t409 = tk_sb_line(l0, TK_S("    if fd < 0 || buf == 0 {"));
-    t410 = tk_sb_line(l0, TK_S("        return -1;"));
-    t411 = tk_sb_line(l0, TK_S("    }"));
-    t412 = tk_sb_line(l0, TK_S("    let r = syscall6(SYS_RECVFROM, fd, buf, max_len, 0, 0, 0);"));
-    t413 = tk_sb_line(l0, TK_S("    if r < 0 {"));
-    t414 = tk_sb_line(l0, TK_S("        return -1;"));
-    t415 = tk_sb_line(l0, TK_S("    }"));
-    t416 = tk_sb_line(l0, TK_S("    return r;"));
-    t417 = tk_sb_line(l0, TK_S("}"));
-    t418 = tk_sb_line(l0, TK_S(""));
-    t419 = tk_sb_line(l0, TK_S("fn net_socket_close(fd: i64) -> i64 {"));
-    t420 = tk_sb_line(l0, TK_S("    if fd >= 0 {"));
-    t421 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
-    t422 = tk_sb_line(l0, TK_S("    }"));
-    t423 = tk_sb_line(l0, TK_S("    return 0;"));
-    t424 = tk_sb_line(l0, TK_S("}"));
+    t331 = tk_sb_line(l0, TK_S("            addr = addr | (part << (8 * parts));"));
+    t332 = tk_sb_line(l0, TK_S("            parts = parts + 1;"));
+    t333 = tk_sb_line(l0, TK_S("            part = 0;"));
+    t334 = tk_sb_line(l0, TK_S("            digits = 0;"));
+    t335 = tk_sb_line(l0, TK_S("            if ch == 0 {"));
+    t336 = tk_sb_line(l0, TK_S("                if parts != 4 {"));
+    t337 = tk_sb_line(l0, TK_S("                    return -1;"));
+    t338 = tk_sb_line(l0, TK_S("                }"));
+    t339 = tk_sb_line(l0, TK_S("                return addr;"));
+    t340 = tk_sb_line(l0, TK_S("            }"));
+    t341 = tk_sb_line(l0, TK_S("        } else {"));
+    t342 = tk_sb_line(l0, TK_S("            return -1;"));
+    t343 = tk_sb_line(l0, TK_S("        }"));
+    t344 = tk_sb_line(l0, TK_S("        i = i + 1;"));
+    t345 = tk_sb_line(l0, TK_S("    }"));
+    t346 = tk_sb_line(l0, TK_S("    return -1;"));
+    t347 = tk_sb_line(l0, TK_S("}"));
+    t348 = tk_sb_line(l0, TK_S(""));
+    t349 = tk_sb_line(l0, TK_S("fn net_socket_tcp_listen(port: i64) -> i64 {"));
+    t350 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_SOCKET, 2, 1, 0);"));
+    t351 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
+    t352 = tk_sb_line(l0, TK_S("        return -1;"));
+    t353 = tk_sb_line(l0, TK_S("    }"));
+    t354 = tk_sb_line(l0, TK_S("    syscall6(SYS_SETSOCKOPT, fd, 1, 2, RT_BASE + RS_ONE, 4, 0);"));
+    t355 = tk_sb_line(l0, TK_S("    let r = sys3(SYS_BIND, fd, rt_sockaddr(port, 0), 16);"));
+    t356 = tk_sb_line(l0, TK_S("    if r < 0 {"));
+    t357 = tk_sb_line(l0, TK_S("        let b = track_sb_new();"));
+    t358 = tk_sb_line(l0, TK_S("        if r == -98 {"));
+    t359 = tk_sb_line(l0, TK_S("            track_sb_push(b, \"Track Network Error: Port conflict! Port \");"));
+    t360 = tk_sb_line(l0, TK_S("            track_sb_push_int(b, port);"));
+    t361 = tk_sb_line(l0, TK_S("            track_sb_push(b, \" is already in use by another process.\\n\");"));
+    t362 = tk_sb_line(l0, TK_S("        } else {"));
+    t363 = tk_sb_line(l0, TK_S("            track_sb_push(b, \"Track Network Error: Failed to bind TCP socket on port \");"));
+    t364 = tk_sb_line(l0, TK_S("            track_sb_push_int(b, port);"));
+    t365 = tk_sb_line(l0, TK_S("            track_sb_push(b, \" (errno: \");"));
+    t366 = tk_sb_line(l0, TK_S("            track_sb_push_int(b, 0 - r);"));
+    t367 = tk_sb_line(l0, TK_S("            track_sb_push(b, \").\\n\");"));
+    t368 = tk_sb_line(l0, TK_S("        }"));
+    t369 = tk_sb_line(l0, TK_S("        rt_err_bytes(load64(b), track_sb_len(b));"));
+    t370 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
+    t371 = tk_sb_line(l0, TK_S("        return -1;"));
+    t372 = tk_sb_line(l0, TK_S("    }"));
+    t373 = tk_sb_line(l0, TK_S("    if sys2(SYS_LISTEN, fd, 128) < 0 {"));
+    t374 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
+    t375 = tk_sb_line(l0, TK_S("        return -1;"));
+    t376 = tk_sb_line(l0, TK_S("    }"));
+    t377 = tk_sb_line(l0, TK_S("    return fd;"));
+    t378 = tk_sb_line(l0, TK_S("}"));
+    t379 = tk_sb_line(l0, TK_S(""));
+    t380 = tk_sb_line(l0, TK_S("fn net_socket_accept(server_fd: i64) -> i64 {"));
+    t381 = tk_sb_line(l0, TK_S("    if server_fd < 0 {"));
+    t382 = tk_sb_line(l0, TK_S("        return -1;"));
+    t383 = tk_sb_line(l0, TK_S("    }"));
+    t384 = tk_sb_line(l0, TK_S("    let r = sys3(SYS_ACCEPT, server_fd, 0, 0);"));
+    t385 = tk_sb_line(l0, TK_S("    if r < 0 {"));
+    t386 = tk_sb_line(l0, TK_S("        return -1;"));
+    t387 = tk_sb_line(l0, TK_S("    }"));
+    t388 = tk_sb_line(l0, TK_S("    return r;"));
+    t389 = tk_sb_line(l0, TK_S("}"));
+    t390 = tk_sb_line(l0, TK_S(""));
+    t391 = tk_sb_line(l0, TK_S("fn net_socket_connect(host: i64, port: i64) -> i64 {"));
+    t392 = tk_sb_line(l0, TK_S("    if host == 0 {"));
+    t393 = tk_sb_line(l0, TK_S("        return -1;"));
+    t394 = tk_sb_line(l0, TK_S("    }"));
+    t395 = tk_sb_line(l0, TK_S("    let fd = sys3(SYS_SOCKET, 2, 1, 0);"));
+    t396 = tk_sb_line(l0, TK_S("    if fd < 0 {"));
+    t397 = tk_sb_line(l0, TK_S("        return -1;"));
+    t398 = tk_sb_line(l0, TK_S("    }"));
+    t399 = tk_sb_line(l0, TK_S("    let addr = rt_parse_ipv4(host);"));
+    t400 = tk_sb_line(l0, TK_S("    if addr < 0 || sys3(SYS_CONNECT, fd, rt_sockaddr(port, addr), 16) < 0 {"));
+    t401 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
+    t402 = tk_sb_line(l0, TK_S("        return -1;"));
+    t403 = tk_sb_line(l0, TK_S("    }"));
+    t404 = tk_sb_line(l0, TK_S("    return fd;"));
+    t405 = tk_sb_line(l0, TK_S("}"));
+    t406 = tk_sb_line(l0, TK_S(""));
+    t407 = tk_sb_line(l0, TK_S("fn net_socket_send(fd: i64, data: i64, len: i64) -> i64 {"));
+    t408 = tk_sb_line(l0, TK_S("    if fd < 0 || data == 0 {"));
+    t409 = tk_sb_line(l0, TK_S("        return -1;"));
+    t410 = tk_sb_line(l0, TK_S("    }"));
+    t411 = tk_sb_line(l0, TK_S("    let r = syscall6(SYS_SENDTO, fd, data, len, 0, 0, 0);"));
+    t412 = tk_sb_line(l0, TK_S("    if r < 0 {"));
+    t413 = tk_sb_line(l0, TK_S("        return -1;"));
+    t414 = tk_sb_line(l0, TK_S("    }"));
+    t415 = tk_sb_line(l0, TK_S("    return r;"));
+    t416 = tk_sb_line(l0, TK_S("}"));
+    t417 = tk_sb_line(l0, TK_S(""));
+    t418 = tk_sb_line(l0, TK_S("fn net_socket_recv(fd: i64, buf: i64, max_len: i64) -> i64 {"));
+    t419 = tk_sb_line(l0, TK_S("    if fd < 0 || buf == 0 {"));
+    t420 = tk_sb_line(l0, TK_S("        return -1;"));
+    t421 = tk_sb_line(l0, TK_S("    }"));
+    t422 = tk_sb_line(l0, TK_S("    let r = syscall6(SYS_RECVFROM, fd, buf, max_len, 0, 0, 0);"));
+    t423 = tk_sb_line(l0, TK_S("    if r < 0 {"));
+    t424 = tk_sb_line(l0, TK_S("        return -1;"));
+    t425 = tk_sb_line(l0, TK_S("    }"));
+    t426 = tk_sb_line(l0, TK_S("    return r;"));
+    t427 = tk_sb_line(l0, TK_S("}"));
+    t428 = tk_sb_line(l0, TK_S(""));
+    t429 = tk_sb_line(l0, TK_S("fn net_socket_close(fd: i64) -> i64 {"));
+    t430 = tk_sb_line(l0, TK_S("    if fd >= 0 {"));
+    t431 = tk_sb_line(l0, TK_S("        sys1(SYS_CLOSE, fd);"));
+    t432 = tk_sb_line(l0, TK_S("    }"));
+    t433 = tk_sb_line(l0, TK_S("    return 0;"));
+    t434 = tk_sb_line(l0, TK_S("}"));
     return 0;
     return 0;
 }
@@ -70750,6 +70916,3040 @@ tk_w tk_rt_module_source(tk_w a0) {
     return 0;
 }
 
+tk_w tk_lj_node(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* kind */
+    tk_w l1 = 0; /* x */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* v */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_vnew_cap(2);
+    l2 = t0;
+    t1 = tk_vpush(l2, l0);
+    t2 = tk_vpush(l2, l1);
+    return l2;
+    return 0;
+}
+
+tk_w tk_lj_peek(tk_w a0) {
+    tk_w l0 = 0; /* st */
+    tk_w t0 = 0;
+    tk_w l1 = 0; /* bytes */
+    tk_w t1 = 0;
+    tk_w l2 = 0; /* pos */
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    l0 = a0;
+    t0 = tk_vget(l0, 0);
+    l1 = t0;
+    t1 = tk_vget(l0, 1);
+    l2 = t1;
+    t3 = tk_vlen(l1);
+    if ((l2 < t3)) {
+        t4 = tk_vget(l1, l2);
+        return t4;
+        t2 = 0;
+    } else {
+        t2 = 0;
+    }
+    return (-1);
+    return 0;
+}
+
+tk_w tk_lj_skip(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* st */
+    tk_w l1 = 0; /* n */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_vget(l0, 1);
+    t1 = tk_vset(l0, 1, (t0 + l1));
+    return t1;
+    return 0;
+}
+
+tk_w tk_lj_bad(tk_w a0) {
+    tk_w l0 = 0; /* st */
+    tk_w t0 = 0;
+    l0 = a0;
+    t0 = tk_vset(l0, 2, 0);
+    return 0;
+    return 0;
+}
+
+tk_w tk_lj_ws(tk_w a0) {
+    tk_w l0 = 0; /* st */
+    tk_w t0 = 0;
+    tk_w l1 = 0; /* b */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    l0 = a0;
+    t0 = tk_lj_peek(l0);
+    l1 = t0;
+    while (1) {
+        t3 = ((l1 == 32) != 0);
+        if (!t3) {
+            t3 = ((l1 == 9) != 0);
+        }
+        t2 = (t3 != 0);
+        if (!t2) {
+            t2 = ((l1 == 10) != 0);
+        }
+        t1 = (t2 != 0);
+        if (!t1) {
+            t1 = ((l1 == 13) != 0);
+        }
+        if (!(t1)) break;
+        t4 = tk_lj_skip(l0, 1);
+        t5 = tk_lj_peek(l0);
+        l1 = t5;
+    }
+    return l1;
+    return 0;
+}
+
+tk_w tk_lsp_hexdigit(tk_w a0) {
+    tk_w l0 = 0; /* b */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    l0 = a0;
+    if ((l0 >= 97)) {
+        return (l0 - 87);
+        t0 = 0;
+    } else {
+        t0 = 0;
+    }
+    if ((l0 >= 65)) {
+        return (l0 - 55);
+        t1 = 0;
+    } else {
+        t1 = 0;
+    }
+    return (l0 - 48);
+    return 0;
+}
+
+tk_w tk_lj_hex(tk_w a0) {
+    tk_w l0 = 0; /* st */
+    tk_w l1 = 0; /* v */
+    tk_w l2 = 0; /* i */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    l0 = a0;
+    l1 = 0;
+    l2 = 0;
+    while (1) {
+        if (!((l2 < 4))) break;
+        t0 = tk_lj_peek(l0);
+        t1 = tk_lsp_hexdigit(t0);
+        l1 = ((l1 * 16) + t1);
+        t2 = tk_lj_skip(l0, 1);
+        l2 = (l2 + 1);
+    }
+    return l1;
+    return 0;
+}
+
+tk_w tk_lj_utf8(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* sb */
+    tk_w l1 = 0; /* cp */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w l2 = 0; /* shift */
+    tk_w l3 = 0; /* room */
+    tk_w l4 = 0; /* lead */
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    l0 = a0;
+    l1 = a1;
+    if ((l1 < 128)) {
+        if ((l1 > 0)) {
+            t2 = tk_sb_byte(l0, l1);
+            t1 = t2;
+        } else {
+            t1 = 0;
+        }
+        return 0;
+        t0 = 0;
+    } else {
+        t0 = 0;
+    }
+    l2 = 64;
+    l3 = 32;
+    l4 = 192;
+    while (1) {
+        if (!((l1 >= (l2 * l3)))) break;
+        l2 = (l2 * 64);
+        l3 = tk_div(l3, 2);
+        l4 = (tk_div(l4, 2) + 128);
+    }
+    t3 = tk_sb_byte(l0, (l4 + tk_div(l1, l2)));
+    while (1) {
+        if (!((l2 > 1))) break;
+        l2 = tk_div(l2, 64);
+        t4 = tk_sb_byte(l0, (128 + tk_mod(tk_div(l1, l2), 64)));
+    }
+    return 0;
+    return 0;
+}
+
+tk_w tk_lj_string(tk_w a0) {
+    tk_w l0 = 0; /* st */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w l1 = 0; /* sb */
+    tk_w t2 = 0;
+    tk_w l2 = 0; /* b */
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w l3 = 0; /* e */
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w l4 = 0; /* cp */
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    tk_w t28 = 0;
+    tk_w t29 = 0;
+    tk_w t30 = 0;
+    tk_w t31 = 0;
+    tk_w t32 = 0;
+    tk_w t33 = 0;
+    tk_w t34 = 0;
+    tk_w t35 = 0;
+    tk_w t36 = 0;
+    l0 = a0;
+    t0 = tk_lj_skip(l0, 1);
+    t1 = tk_sb_new();
+    l1 = t1;
+    t2 = tk_lj_peek(l0);
+    l2 = t2;
+    while (1) {
+        if (!((l2 != 34))) break;
+        if ((l2 < 0)) {
+            t4 = tk_lj_bad(l0);
+            return t4;
+            t3 = 0;
+        } else {
+            t3 = 0;
+        }
+        t5 = tk_lj_skip(l0, 1);
+        if ((l2 == 92)) {
+            t7 = tk_lj_peek(l0);
+            l3 = t7;
+            t8 = tk_lj_skip(l0, 1);
+            if ((l3 == 110)) {
+                t10 = tk_sb_byte(l1, 10);
+                t9 = t10;
+            } else {
+                if ((l3 == 116)) {
+                    t12 = tk_sb_byte(l1, 9);
+                    t11 = t12;
+                } else {
+                    if ((l3 == 114)) {
+                        t14 = tk_sb_byte(l1, 13);
+                        t13 = t14;
+                    } else {
+                        if ((l3 == 98)) {
+                            t16 = tk_sb_byte(l1, 8);
+                            t15 = t16;
+                        } else {
+                            if ((l3 == 102)) {
+                                t18 = tk_sb_byte(l1, 12);
+                                t17 = t18;
+                            } else {
+                                if ((l3 == 117)) {
+                                    t20 = tk_lj_hex(l0);
+                                    l4 = t20;
+                                    t23 = ((l4 >= 55296) != 0);
+                                    if (t23) {
+                                        t23 = ((l4 < 56320) != 0);
+                                    }
+                                    t22 = (t23 != 0);
+                                    if (t22) {
+                                        t24 = tk_lj_peek(l0);
+                                        t22 = ((t24 == 92) != 0);
+                                    }
+                                    if (t22) {
+                                        t25 = tk_lj_skip(l0, 2);
+                                        t26 = tk_lj_hex(l0);
+                                        l4 = (((65536 + ((l4 - 55296) * 1024)) + t26) - 56320);
+                                        t21 = l4;
+                                    } else {
+                                        t21 = 0;
+                                    }
+                                    t27 = tk_lj_utf8(l1, l4);
+                                    t19 = t27;
+                                } else {
+                                    t30 = ((l3 == 34) != 0);
+                                    if (!t30) {
+                                        t30 = ((l3 == 92) != 0);
+                                    }
+                                    t29 = (t30 != 0);
+                                    if (!t29) {
+                                        t29 = ((l3 == 47) != 0);
+                                    }
+                                    if (t29) {
+                                        t31 = tk_sb_byte(l1, l3);
+                                        t28 = t31;
+                                    } else {
+                                        t32 = tk_lj_bad(l0);
+                                        return t32;
+                                        t28 = 0;
+                                    }
+                                    t19 = t28;
+                                }
+                                t17 = t19;
+                            }
+                            t15 = t17;
+                        }
+                        t13 = t15;
+                    }
+                    t11 = t13;
+                }
+                t9 = t11;
+            }
+            t6 = t9;
+        } else {
+            t33 = tk_sb_byte(l1, l2);
+            t6 = t33;
+        }
+        t34 = tk_lj_peek(l0);
+        l2 = t34;
+    }
+    t35 = tk_lj_skip(l0, 1);
+    t36 = tk_sb_text(l1);
+    return t36;
+    return 0;
+}
+
+tk_w tk_lj_value(tk_w a0) {
+    tk_w l0 = 0; /* st */
+    tk_w t0 = 0;
+    tk_w l1 = 0; /* b */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w l2 = 0; /* items */
+    tk_w l3 = 0; /* close */
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w l4 = 0; /* going */
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w l5 = 0; /* sep */
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    tk_w t28 = 0;
+    tk_w t29 = 0;
+    tk_w t30 = 0;
+    tk_w t31 = 0;
+    tk_w t32 = 0;
+    tk_w l6 = 0; /* start */
+    tk_w t33 = 0;
+    tk_w l7 = 0; /* c */
+    tk_w t34 = 0;
+    tk_w t35 = 0;
+    tk_w t36 = 0;
+    tk_w t37 = 0;
+    tk_w t38 = 0;
+    tk_w t39 = 0;
+    tk_w t40 = 0;
+    tk_w t41 = 0;
+    tk_w t42 = 0;
+    tk_w t43 = 0;
+    tk_w t44 = 0;
+    tk_w t45 = 0;
+    tk_w t46 = 0;
+    tk_w t47 = 0;
+    tk_w t48 = 0;
+    tk_w t49 = 0;
+    l0 = a0;
+    t0 = tk_lj_ws(l0);
+    l1 = t0;
+    if ((l1 == 34)) {
+        t2 = tk_lj_string(l0);
+        t3 = tk_lj_node(3, t2);
+        return t3;
+        t1 = 0;
+    } else {
+        t1 = 0;
+    }
+    t5 = ((l1 == 123) != 0);
+    if (!t5) {
+        t5 = ((l1 == 91) != 0);
+    }
+    if (t5) {
+        t6 = tk_vnew();
+        l2 = t6;
+        l3 = (l1 + 2);
+        t7 = tk_lj_skip(l0, 1);
+        t8 = tk_lj_ws(l0);
+        l4 = (t8 != l3);
+        while (1) {
+            t9 = (l4 != 0);
+            if (t9) {
+                t10 = tk_vget(l0, 2);
+                t9 = ((t10 == 1) != 0);
+            }
+            if (!(t9)) break;
+            if ((l1 == 123)) {
+                t13 = tk_lj_ws(l0);
+                if ((t13 != 34)) {
+                    t14 = tk_lj_bad(l0);
+                    return t14;
+                    t12 = 0;
+                } else {
+                    t12 = 0;
+                }
+                t15 = tk_lj_string(l0);
+                t16 = tk_vpush(l2, t15);
+                t18 = tk_lj_ws(l0);
+                if ((t18 != 58)) {
+                    t19 = tk_lj_bad(l0);
+                    return t19;
+                    t17 = 0;
+                } else {
+                    t17 = 0;
+                }
+                t20 = tk_lj_skip(l0, 1);
+                t11 = t20;
+            } else {
+                t11 = 0;
+            }
+            t21 = tk_lj_value(l0);
+            t22 = tk_vpush(l2, t21);
+            t23 = tk_lj_ws(l0);
+            l5 = t23;
+            if ((l5 == 44)) {
+                t25 = tk_lj_skip(l0, 1);
+                t24 = t25;
+            } else {
+                if ((l5 == l3)) {
+                    l4 = 0;
+                    t26 = l4;
+                } else {
+                    t27 = tk_lj_bad(l0);
+                    return t27;
+                    t26 = 0;
+                }
+                t24 = t26;
+            }
+        }
+        t28 = tk_lj_skip(l0, 1);
+        if ((l1 == 123)) {
+            t30 = tk_lj_node(5, l2);
+            return t30;
+            t29 = 0;
+        } else {
+            t29 = 0;
+        }
+        t31 = tk_lj_node(4, l2);
+        return t31;
+        t4 = 0;
+    } else {
+        t4 = 0;
+    }
+    t32 = tk_vget(l0, 1);
+    l6 = t32;
+    t33 = tk_lj_peek(l0);
+    l7 = t33;
+    while (1) {
+        t39 = ((l7 >= 48) != 0);
+        if (t39) {
+            t39 = ((l7 <= 57) != 0);
+        }
+        t38 = (t39 != 0);
+        if (!t38) {
+            t40 = ((l7 >= 97) != 0);
+            if (t40) {
+                t40 = ((l7 <= 122) != 0);
+            }
+            t38 = (t40 != 0);
+        }
+        t37 = (t38 != 0);
+        if (!t37) {
+            t37 = ((l7 == 45) != 0);
+        }
+        t36 = (t37 != 0);
+        if (!t36) {
+            t36 = ((l7 == 43) != 0);
+        }
+        t35 = (t36 != 0);
+        if (!t35) {
+            t35 = ((l7 == 46) != 0);
+        }
+        t34 = (t35 != 0);
+        if (!t34) {
+            t34 = ((l7 == 69) != 0);
+        }
+        if (!(t34)) break;
+        t41 = tk_lj_skip(l0, 1);
+        t42 = tk_lj_peek(l0);
+        l7 = t42;
+    }
+    t44 = tk_vget(l0, 1);
+    if ((t44 == l6)) {
+        t45 = tk_lj_bad(l0);
+        return t45;
+        t43 = 0;
+    } else {
+        t43 = 0;
+    }
+    t46 = tk_vget(l0, 3);
+    t47 = tk_vget(l0, 1);
+    t48 = str_substr(t46, l6, (t47 - l6));
+    t49 = tk_lj_node(2, t48);
+    return t49;
+    return 0;
+}
+
+tk_w tk_lj_parse(tk_w a0) {
+    tk_w l0 = 0; /* text */
+    tk_w t0 = 0;
+    tk_w l1 = 0; /* st */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w l2 = 0; /* v */
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    l0 = a0;
+    t0 = tk_vnew_cap(4);
+    l1 = t0;
+    t1 = tk_text_bytes(l0);
+    t2 = tk_vpush(l1, t1);
+    t3 = tk_vpush(l1, 0);
+    t4 = tk_vpush(l1, 1);
+    t5 = tk_vpush(l1, l0);
+    t6 = tk_lj_value(l1);
+    l2 = t6;
+    t9 = tk_vget(l1, 2);
+    t8 = ((t9 != 1) != 0);
+    if (!t8) {
+        t10 = tk_lj_ws(l1);
+        t8 = ((t10 != (-1)) != 0);
+    }
+    if (t8) {
+        t11 = 0;
+        track_i64_collection_free(l1);
+        return t11;
+        t7 = 0;
+    } else {
+        t7 = 0;
+    }
+    t12 = l2;
+    track_i64_collection_free(l1);
+    return t12;
+    t13 = 0;
+    track_i64_collection_free(l1);
+    return t13;
+}
+
+tk_w tk_lj_at(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* v */
+    tk_w l1 = 0; /* path */
+    tk_w l2 = 0; /* cur */
+    tk_w l3 = 0; /* rest */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w l4 = 0; /* dot */
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w l5 = 0; /* key */
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w l6 = 0; /* found */
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w l7 = 0; /* items */
+    tk_w l8 = 0; /* i */
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = l0;
+    l3 = l1;
+    while (1) {
+        t0 = ((l2 != 0) != 0);
+        if (t0) {
+            t1 = tk_text_len(l3);
+            t0 = ((t1 > 0) != 0);
+        }
+        if (!(t0)) break;
+        t2 = str_find(l3, TK_S("."));
+        l4 = t2;
+        if ((l4 < 0)) {
+            t4 = tk_text_len(l3);
+            l4 = t4;
+            t3 = l4;
+        } else {
+            t3 = 0;
+        }
+        t5 = str_substr(l3, 0, l4);
+        l5 = t5;
+        t6 = tk_text_len(l3);
+        t7 = str_substr(l3, (l4 + 1), t6);
+        l3 = t7;
+        l6 = 0;
+        t9 = tk_vget(l2, 0);
+        if ((t9 == 5)) {
+            t10 = tk_vget(l2, 1);
+            l7 = t10;
+            l8 = 0;
+            while (1) {
+                t11 = tk_vlen(l7);
+                if (!((l8 < t11))) break;
+                t13 = tk_vget(l7, l8);
+                t14 = tk_text_eq(t13, l5);
+                if (t14) {
+                    t15 = tk_vget(l7, (l8 + 1));
+                    l6 = t15;
+                    t12 = l6;
+                } else {
+                    t12 = 0;
+                }
+                l8 = (l8 + 2);
+            }
+            t8 = 0;
+        } else {
+            t18 = tk_vget(l2, 0);
+            t17 = ((t18 == 4) != 0);
+            if (t17) {
+                t19 = tk_vget(l2, 1);
+                t20 = tk_vlen(t19);
+                t21 = str_to_int(l5);
+                t17 = ((t20 > t21) != 0);
+            }
+            if (t17) {
+                t22 = tk_vget(l2, 1);
+                t23 = str_to_int(l5);
+                t24 = tk_vget(t22, t23);
+                l6 = t24;
+                t16 = l6;
+            } else {
+                t16 = 0;
+            }
+            t8 = t16;
+        }
+        l2 = l6;
+        t25 = l2;
+        track_str_free(l5);
+    }
+    return l2;
+    return 0;
+}
+
+tk_w tk_lj_text(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* v */
+    tk_w l1 = 0; /* path */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* x */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_lj_at(l0, l1);
+    l2 = t0;
+    t2 = ((l2 != 0) != 0);
+    if (t2) {
+        t3 = tk_vget(l2, 0);
+        t2 = ((t3 == 3) != 0);
+    }
+    if (t2) {
+        t4 = tk_vget(l2, 1);
+        return t4;
+        t1 = 0;
+    } else {
+        t1 = 0;
+    }
+    return 0;
+    return 0;
+}
+
+tk_w tk_lj_text_or(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* v */
+    tk_w l1 = 0; /* other */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    l0 = a0;
+    l1 = a1;
+    t1 = ((l0 != 0) != 0);
+    if (t1) {
+        t2 = tk_vget(l0, 0);
+        t1 = ((t2 == 2) != 0);
+    }
+    if (t1) {
+        t3 = tk_vget(l0, 1);
+        return t3;
+        t0 = 0;
+    } else {
+        t0 = 0;
+    }
+    return l1;
+    return 0;
+}
+
+tk_w tk_lj_int(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* v */
+    tk_w l1 = 0; /* path */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_lj_at(l0, l1);
+    t1 = tk_lj_text_or(t0, TK_S("0"));
+    t2 = str_to_int(t1);
+    return t2;
+    return 0;
+}
+
+tk_w tk_lj_quote(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* b */
+    tk_w l1 = 0; /* s */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* bytes */
+    tk_w t1 = 0;
+    tk_w l3 = 0; /* i */
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w l4 = 0; /* x */
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_text_bytes(l1);
+    l2 = t0;
+    t1 = tk_sb_byte(l0, 34);
+    l3 = 0;
+    while (1) {
+        t2 = tk_vlen(l2);
+        if (!((l3 < t2))) break;
+        t3 = tk_vget(l2, l3);
+        l4 = t3;
+        t5 = ((l4 == 34) != 0);
+        if (!t5) {
+            t5 = ((l4 == 92) != 0);
+        }
+        if (t5) {
+            t6 = tk_sb_byte(l0, 92);
+            t7 = tk_sb_byte(l0, l4);
+            t4 = t7;
+        } else {
+            if ((l4 == 10)) {
+                t9 = tk_sb_add(l0, TK_S("\\n"));
+                t8 = t9;
+            } else {
+                if ((l4 < 32)) {
+                    t11 = tk_sb_add(l0, TK_S("\\u00"));
+                    t12 = tk_sb_byte(l0, (48 + tk_div(l4, 16)));
+                    t13 = tk_text_bytes(TK_S("0123456789abcdef"));
+                    t14 = tk_vget(t13, tk_mod(l4, 16));
+                    track_i64_collection_free(t13);
+                    t15 = tk_sb_byte(l0, t14);
+                    t10 = t15;
+                } else {
+                    t16 = tk_sb_byte(l0, l4);
+                    t10 = t16;
+                }
+                t8 = t10;
+            }
+            t4 = t8;
+        }
+        l3 = (l3 + 1);
+    }
+    t17 = tk_sb_byte(l0, 34);
+    t18 = t17;
+    track_i64_collection_free(l2);
+    return t18;
+    t19 = 0;
+    track_i64_collection_free(l2);
+    return t19;
+}
+
+tk_w tk_lsp_send(tk_w a0) {
+    tk_w l0 = 0; /* body */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    l0 = a0;
+    t0 = tk_text_len(l0);
+    t1 = tk_text_of_int(t0);
+    t2 = tk_text_cat3(TK_S("Content-Length: "), t1, TK_S("\015\n\015\n"));
+    track_str_free(t1);
+    t3 = tk_out(t2);
+    track_str_free(t2);
+    t4 = tk_out(l0);
+    return t4;
+    return 0;
+}
+
+tk_w tk_lsp_notify(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* method */
+    tk_w l1 = 0; /* params */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_text_cat3(TK_S("{\"jsonrpc\":\"2.0\",\"method\":\""), l0, TK_S("\",\"params\":"));
+    t1 = tk_text_cat3(t0, l1, TK_S("}"));
+    track_str_free(t0);
+    t2 = tk_lsp_send(t1);
+    track_str_free(t1);
+    return t2;
+    return 0;
+}
+
+tk_w tk_lsp_reply(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* id */
+    tk_w l1 = 0; /* rest */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* b */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_sb_new();
+    l2 = t0;
+    t1 = tk_sb_add(l2, TK_S("{\"jsonrpc\":\"2.0\",\"id\":"));
+    t3 = ((l0 != 0) != 0);
+    if (t3) {
+        t4 = tk_vget(l0, 0);
+        t3 = ((t4 == 3) != 0);
+    }
+    if (t3) {
+        t5 = tk_vget(l0, 1);
+        t6 = tk_lj_quote(l2, t5);
+        t2 = t6;
+    } else {
+        t7 = tk_lj_text_or(l0, TK_S("null"));
+        t8 = tk_sb_add(l2, t7);
+        t2 = t8;
+    }
+    t9 = tk_sb_add(l2, l1);
+    t10 = tk_sb_add(l2, TK_S("}"));
+    t11 = tk_sb_text(l2);
+    t12 = tk_lsp_send(t11);
+    track_str_free(t11);
+    t13 = t12;
+    track_sb_free(l2);
+    return t13;
+    t14 = 0;
+    track_sb_free(l2);
+    return t14;
+}
+
+tk_w tk_lsp_result(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* id */
+    tk_w l1 = 0; /* result */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_text_cat(TK_S(",\"result\":"), l1);
+    t1 = tk_lsp_reply(l0, t0);
+    track_str_free(t0);
+    return t1;
+    return 0;
+}
+
+tk_w tk_lsp_error(tk_w a0, tk_w a1, tk_w a2) {
+    tk_w l0 = 0; /* id */
+    tk_w l1 = 0; /* code */
+    tk_w l2 = 0; /* message */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    t0 = tk_text_of_int(l1);
+    t1 = tk_text_cat3(TK_S(",\"message\":\""), l2, TK_S("\"}"));
+    t2 = tk_text_cat3(TK_S(",\"error\":{\"code\":"), t0, t1);
+    track_str_free(t0);
+    track_str_free(t1);
+    t3 = tk_lsp_reply(l0, t2);
+    track_str_free(t2);
+    return t3;
+    return 0;
+}
+
+tk_w tk_lsp_read(void) {
+    tk_w t0 = 0;
+    tk_w l0 = 0; /* head */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w l1 = 0; /* ch */
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w l2 = 0; /* h */
+    tk_w t13 = 0;
+    tk_w l3 = 0; /* at */
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w l4 = 0; /* length */
+    tk_w t21 = 0;
+    tk_w l5 = 0; /* body */
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    t0 = tk_sb_new();
+    l0 = t0;
+    while (1) {
+        t2 = tk_sb_text(l0);
+        t3 = tk_text_ends(t2, TK_S("\n\n"));
+        track_str_free(t2);
+        t1 = ((t3 == 0) != 0);
+        if (t1) {
+            t4 = tk_sb_text(l0);
+            t5 = tk_text_ends(t4, TK_S("\n\015\n"));
+            track_str_free(t4);
+            t1 = ((t5 == 0) != 0);
+        }
+        if (!(t1)) break;
+        t6 = track_stdin_read(1);
+        l1 = t6;
+        t8 = tk_text_len(l1);
+        if ((t8 == 0)) {
+            t9 = 0;
+            track_str_free(l1);
+            track_sb_free(l0);
+            return t9;
+            t7 = 0;
+        } else {
+            t7 = 0;
+        }
+        t10 = tk_sb_add(l0, l1);
+        t11 = t10;
+        track_str_free(l1);
+    }
+    t12 = tk_sb_text(l0);
+    l2 = t12;
+    t13 = str_find(l2, TK_S("ontent-Length:"));
+    l3 = t13;
+    if ((l3 < 0)) {
+        t15 = tk_lsp_read();
+        t16 = t15;
+        track_str_free(l2);
+        track_sb_free(l0);
+        return t16;
+        t14 = 0;
+    } else {
+        t14 = 0;
+    }
+    t17 = tk_text_len(l2);
+    t18 = str_substr(l2, (l3 + 14), t17);
+    t19 = str_to_int(t18);
+    track_str_free(t18);
+    t20 = math_max(t19, 0);
+    l4 = t20;
+    t21 = track_stdin_read(l4);
+    l5 = t21;
+    t23 = ((l4 > 0) != 0);
+    if (t23) {
+        t24 = tk_text_len(l5);
+        t23 = ((t24 == 0) != 0);
+    }
+    if (t23) {
+        t25 = 0;
+        track_str_free(l2);
+        track_sb_free(l0);
+        return t25;
+        t22 = 0;
+    } else {
+        t22 = 0;
+    }
+    t26 = l5;
+    track_str_free(l2);
+    track_sb_free(l0);
+    return t26;
+    t27 = 0;
+    track_str_free(l2);
+    track_sb_free(l0);
+    return t27;
+}
+
+tk_w tk_lsp_doc(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* uri */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* docs */
+    tk_w l3 = 0; /* i */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_vget(l0, 0);
+    l2 = t0;
+    l3 = 0;
+    while (1) {
+        t1 = tk_vlen(l2);
+        if (!((l3 < t1))) break;
+        t3 = tk_vget(l2, l3);
+        t4 = tk_text_eq(t3, l1);
+        if (t4) {
+            return l3;
+            t2 = 0;
+        } else {
+            t2 = 0;
+        }
+        l3 = (l3 + 3);
+    }
+    t5 = tk_vpush(l2, l1);
+    t6 = tk_vpush(l2, TK_S(""));
+    t7 = tk_vnew();
+    t8 = tk_vpush(l2, t7);
+    return l3;
+    return 0;
+}
+
+tk_w tk_lsp_uri_path(tk_w a0) {
+    tk_w l0 = 0; /* uri */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w l1 = 0; /* bytes */
+    tk_w t3 = 0;
+    tk_w l2 = 0; /* b */
+    tk_w l3 = 0; /* i */
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w l4 = 0; /* x */
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    l0 = a0;
+    t1 = tk_text_starts(l0, TK_S("file://"));
+    if ((t1 == 0)) {
+        return l0;
+        t0 = 0;
+    } else {
+        t0 = 0;
+    }
+    t2 = tk_text_bytes(l0);
+    l1 = t2;
+    t3 = tk_sb_new();
+    l2 = t3;
+    l3 = 7;
+    while (1) {
+        t4 = tk_vlen(l1);
+        if (!((l3 < t4))) break;
+        t5 = tk_vget(l1, l3);
+        l4 = t5;
+        t7 = ((l4 == 37) != 0);
+        if (t7) {
+            t8 = tk_vlen(l1);
+            t7 = (((l3 + 2) < t8) != 0);
+        }
+        if (t7) {
+            t9 = tk_vget(l1, (l3 + 1));
+            t10 = tk_lsp_hexdigit(t9);
+            t11 = tk_vget(l1, (l3 + 2));
+            t12 = tk_lsp_hexdigit(t11);
+            t13 = tk_sb_byte(l2, ((t10 * 16) + t12));
+            l3 = (l3 + 3);
+            t6 = l3;
+        } else {
+            t14 = tk_sb_byte(l2, l4);
+            l3 = (l3 + 1);
+            t6 = l3;
+        }
+    }
+    t15 = tk_sb_text(l2);
+    t16 = t15;
+    track_i64_collection_free(l1);
+    return t16;
+    t17 = 0;
+    track_i64_collection_free(l1);
+    return t17;
+}
+
+tk_w tk_lsp_lines(tk_w a0) {
+    tk_w l0 = 0; /* text */
+    tk_w t0 = 0;
+    tk_w l1 = 0; /* lines */
+    tk_w l2 = 0; /* i */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w l3 = 0; /* l */
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    l0 = a0;
+    t0 = tk_lsp_split(l0, 10);
+    l1 = t0;
+    l2 = 0;
+    while (1) {
+        t1 = tk_vlen(l1);
+        if (!((l2 < t1))) break;
+        t2 = tk_vget(l1, l2);
+        l3 = t2;
+        t4 = tk_text_ends(l3, TK_S("\015"));
+        if (t4) {
+            t5 = tk_text_len(l3);
+            t6 = str_substr(l3, 0, (t5 - 1));
+            t7 = tk_vset(l1, l2, t6);
+            t3 = t7;
+        } else {
+            t3 = 0;
+        }
+        l2 = (l2 + 1);
+    }
+    t9 = tk_vlast(l1);
+    t10 = tk_text_len(t9);
+    if ((t10 == 0)) {
+        t11 = tk_vpop(l1);
+        t8 = t11;
+    } else {
+        t8 = 0;
+    }
+    return l1;
+    return 0;
+}
+
+tk_w tk_lsp_dir(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* tag */
+    tk_w l1 = 0; /* file */
+    tk_w l2 = 0; /* base */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = TK_S("/tmp");
+    t2 = env_exists(TK_S("TMPDIR"));
+    t1 = ((t2 != 0) != 0);
+    if (t1) {
+        t3 = env_get(TK_S("TMPDIR"));
+        t4 = tk_text_len(t3);
+        track_str_free(t3);
+        t1 = ((t4 > 0) != 0);
+    }
+    if (t1) {
+        t5 = env_get(TK_S("TMPDIR"));
+        l2 = t5;
+        t0 = l2;
+    } else {
+        t0 = 0;
+    }
+    t6 = tk_text_cat(TK_S("/trackc-lsp-"), l0);
+    t7 = tk_text_cat3(l2, t6, l1);
+    track_str_free(t6);
+    return t7;
+    return 0;
+}
+
+tk_w tk_lsp_sh(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* tag */
+    tk_w l1 = 0; /* file */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_text_cat(l1, TK_S("\""));
+    t1 = tk_text_cat3(TK_S("\"${TMPDIR:-/tmp}/trackc-lsp-"), l0, t0);
+    track_str_free(t0);
+    return t1;
+    return 0;
+}
+
+tk_w tk_lsp_tag_ok(tk_w a0) {
+    tk_w l0 = 0; /* tag */
+    tk_w t0 = 0;
+    tk_w l1 = 0; /* bytes */
+    tk_w t1 = 0;
+    tk_w l2 = 0; /* ok */
+    tk_w l3 = 0; /* i */
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w l4 = 0; /* x */
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    l0 = a0;
+    t0 = tk_text_bytes(l0);
+    l1 = t0;
+    t1 = tk_vlen(l1);
+    l2 = (t1 == 36);
+    l3 = 0;
+    while (1) {
+        t2 = (l2 != 0);
+        if (t2) {
+            t3 = tk_vlen(l1);
+            t2 = ((l3 < t3) != 0);
+        }
+        if (!(t2)) break;
+        t4 = tk_vget(l1, l3);
+        l4 = t4;
+        t7 = ((l4 >= 48) != 0);
+        if (t7) {
+            t7 = ((l4 <= 57) != 0);
+        }
+        t6 = (t7 != 0);
+        if (!t6) {
+            t8 = ((l4 >= 97) != 0);
+            if (t8) {
+                t8 = ((l4 <= 102) != 0);
+            }
+            t6 = (t8 != 0);
+        }
+        t5 = (t6 != 0);
+        if (!t5) {
+            t5 = ((l4 == 45) != 0);
+        }
+        l2 = t5;
+        l3 = (l3 + 1);
+    }
+    t9 = l2;
+    track_i64_collection_free(l1);
+    return t9;
+    t10 = 0;
+    track_i64_collection_free(l1);
+    return t10;
+}
+
+tk_w tk_lsp_tag(tk_w a0) {
+    tk_w l0 = 0; /* s */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w l1 = 0; /* tag */
+    tk_w t5 = 0;
+    tk_w l2 = 0; /* dir */
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w l3 = 0; /* wait */
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    l0 = a0;
+    t1 = tk_vget(l0, 3);
+    if ((t1 == 0)) {
+        t2 = tk_vset(l0, 3, TK_S(""));
+        t3 = tk_read_text(TK_S("/proc/sys/kernel/random/uuid"));
+        t4 = str_trim(t3);
+        track_str_free(t3);
+        l1 = t4;
+        t5 = tk_lsp_sh(l1, TK_S(""));
+        l2 = t5;
+        t8 = tk_lsp_tag_ok(l1);
+        t7 = (t8 != 0);
+        if (t7) {
+            t9 = tk_text_cat3(TK_S("mkdir -m 700 "), l2, TK_S(" 2>/dev/null"));
+            t10 = tk_shell(t9);
+            track_str_free(t9);
+            t7 = ((t10 == 0) != 0);
+        }
+        if (t7) {
+            t11 = tk_vset(l0, 3, l1);
+            l3 = TK_S("tail --pid=$p -f /dev/null 2>/dev/null || while kill -0 $p 2>/dev/null; do sleep 1; done");
+            t12 = tk_text_cat3(TK_S("p=$PPID; (trap '' HUP INT TERM; "), l3, TK_S("; rm -rf "));
+            t13 = tk_text_cat3(t12, l2, TK_S(") </dev/null >/dev/null 2>&1 &"));
+            track_str_free(t12);
+            t14 = tk_shell(t13);
+            track_str_free(t13);
+            t6 = t14;
+        } else {
+            t15 = tk_lsp_notify(TK_S("window/logMessage"), TK_S("{\"type\":1,\"message\":\"trackc: cannot create a private scratch directory; diagnostics are off\"}"));
+            t6 = t15;
+        }
+        t16 = t6;
+        track_str_free(l2);
+        t0 = t16;
+    } else {
+        t0 = 0;
+    }
+    t18 = tk_vget(l0, 3);
+    t19 = tk_text_len(t18);
+    if ((t19 == 0)) {
+        return 0;
+        t17 = 0;
+    } else {
+        t17 = 0;
+    }
+    t20 = tk_vget(l0, 3);
+    return t20;
+    return 0;
+}
+
+tk_w tk_lsp_timeout(void) {
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w l0 = 0; /* secs */
+    tk_w t2 = 0;
+    t0 = env_get(TK_S("TRACKC_LSP_TIMEOUT"));
+    t1 = str_to_int(t0);
+    track_str_free(t0);
+    l0 = t1;
+    if ((l0 > 0)) {
+        return l0;
+        t2 = 0;
+    } else {
+        t2 = 0;
+    }
+    return 10;
+    return 0;
+}
+
+tk_w tk_lsp_diag(tk_w a0, tk_w a1, tk_w a2, tk_w a3, tk_w a4, tk_w a5) {
+    tk_w l0 = 0; /* diags */
+    tk_w l1 = 0; /* line */
+    tk_w l2 = 0; /* col */
+    tk_w l3 = 0; /* severity */
+    tk_w l4 = 0; /* code */
+    tk_w l5 = 0; /* msg */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w l6 = 0; /* pos */
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    l3 = a3;
+    l4 = a4;
+    l5 = a5;
+    t1 = tk_sb_text(l0);
+    t2 = tk_text_ends(t1, TK_S("["));
+    track_str_free(t1);
+    if ((t2 == 0)) {
+        t3 = tk_sb_add(l0, TK_S(","));
+        t0 = t3;
+    } else {
+        t0 = 0;
+    }
+    t4 = tk_text_of_int(l1);
+    t5 = tk_text_of_int(l2);
+    t6 = tk_text_cat3(t4, TK_S(",\"character\":"), t5);
+    track_str_free(t4);
+    track_str_free(t5);
+    l6 = t6;
+    t7 = tk_text_cat3(TK_S("{\"range\":{\"start\":{\"line\":"), l6, TK_S("},\"end\":{\"line\":"));
+    t8 = tk_sb_add(l0, t7);
+    track_str_free(t7);
+    t9 = tk_text_of_int(l1);
+    t10 = tk_text_of_int((l2 + 1));
+    t11 = tk_text_cat3(t9, TK_S(",\"character\":"), t10);
+    track_str_free(t9);
+    track_str_free(t10);
+    t12 = tk_sb_add(l0, t11);
+    track_str_free(t11);
+    t13 = tk_text_of_int(l3);
+    t14 = tk_text_cat3(TK_S("}},\"severity\":"), t13, TK_S(",\"code\":"));
+    track_str_free(t13);
+    t15 = tk_sb_add(l0, t14);
+    track_str_free(t14);
+    t16 = tk_lj_quote(l0, l4);
+    t17 = tk_sb_add(l0, TK_S(",\"source\":\"trackc\",\"message\":"));
+    t18 = tk_lj_quote(l0, l5);
+    t19 = tk_sb_add(l0, TK_S("}"));
+    t20 = t19;
+    track_str_free(l6);
+    return t20;
+    t21 = 0;
+    track_str_free(l6);
+    return t21;
+}
+
+tk_w tk_lsp_check(tk_w a0, tk_w a1, tk_w a2, tk_w a3, tk_w a4, tk_w a5) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* diags */
+    tk_w l2 = 0; /* path */
+    tk_w l3 = 0; /* text */
+    tk_w l4 = 0; /* line0 */
+    tk_w l5 = 0; /* doc */
+    tk_w t0 = 0;
+    tk_w l6 = 0; /* tag */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w l7 = 0; /* secs */
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w l8 = 0; /* io */
+    tk_w t11 = 0;
+    tk_w l9 = 0; /* child */
+    tk_w t12 = 0;
+    tk_w l10 = 0; /* cmd */
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w l11 = 0; /* status */
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    tk_w t28 = 0;
+    tk_w l12 = 0; /* syms */
+    tk_w t29 = 0;
+    tk_w t30 = 0;
+    tk_w t31 = 0;
+    tk_w t32 = 0;
+    tk_w t33 = 0;
+    tk_w t34 = 0;
+    tk_w t35 = 0;
+    tk_w t36 = 0;
+    tk_w t37 = 0;
+    tk_w t38 = 0;
+    tk_w t39 = 0;
+    tk_w l13 = 0; /* lines */
+    tk_w t40 = 0;
+    tk_w l14 = 0; /* before */
+    tk_w l15 = 0; /* i */
+    tk_w t41 = 0;
+    tk_w t42 = 0;
+    tk_w l16 = 0; /* l */
+    tk_w t43 = 0;
+    tk_w l17 = 0; /* close */
+    tk_w t44 = 0;
+    tk_w t45 = 0;
+    tk_w t46 = 0;
+    tk_w t47 = 0;
+    tk_w t48 = 0;
+    tk_w t49 = 0;
+    tk_w l18 = 0; /* open */
+    tk_w t50 = 0;
+    tk_w t51 = 0;
+    tk_w l19 = 0; /* msg */
+    tk_w l20 = 0; /* line */
+    tk_w l21 = 0; /* col */
+    tk_w t52 = 0;
+    tk_w t53 = 0;
+    tk_w t54 = 0;
+    tk_w t55 = 0;
+    tk_w t56 = 0;
+    tk_w t57 = 0;
+    tk_w t58 = 0;
+    tk_w t59 = 0;
+    tk_w t60 = 0;
+    tk_w l22 = 0; /* loc */
+    tk_w t61 = 0;
+    tk_w t62 = 0;
+    tk_w t63 = 0;
+    tk_w l23 = 0; /* rest */
+    tk_w t64 = 0;
+    tk_w t65 = 0;
+    tk_w t66 = 0;
+    tk_w t67 = 0;
+    tk_w t68 = 0;
+    tk_w t69 = 0;
+    tk_w t70 = 0;
+    tk_w t71 = 0;
+    tk_w t72 = 0;
+    tk_w t73 = 0;
+    tk_w t74 = 0;
+    tk_w t75 = 0;
+    tk_w t76 = 0;
+    tk_w t77 = 0;
+    tk_w t78 = 0;
+    tk_w t79 = 0;
+    tk_w t80 = 0;
+    tk_w t81 = 0;
+    tk_w t82 = 0;
+    tk_w t83 = 0;
+    tk_w t84 = 0;
+    tk_w t85 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    l3 = a3;
+    l4 = a4;
+    l5 = a5;
+    t0 = tk_lsp_tag(l0);
+    l6 = t0;
+    t1 = tk_lsp_dir(l6, TK_S("/buffer.trk"));
+    t2 = tk_write_text(t1, l3);
+    track_str_free(t1);
+    t3 = tk_lsp_dir(l6, TK_S("/path"));
+    t4 = tk_write_text(t3, l2);
+    track_str_free(t3);
+    t5 = tk_lsp_timeout();
+    t6 = tk_text_of_int(t5);
+    l7 = t6;
+    t7 = tk_lsp_sh(l6, TK_S("/out"));
+    t8 = tk_lsp_sh(l6, TK_S("/err"));
+    t9 = tk_text_cat(TK_S(" 2>"), t8);
+    track_str_free(t8);
+    t10 = tk_text_cat3(TK_S(" </dev/null >"), t7, t9);
+    track_str_free(t7);
+    track_str_free(t9);
+    l8 = t10;
+    t11 = tk_text_cat3(TK_S("\"/proc/$PPID/exe\" lsp --check "), l6, l8);
+    l9 = t11;
+    t12 = tk_sb_new();
+    l10 = t12;
+    t13 = tk_text_cat3(TK_S("if command -v timeout >/dev/null 2>&1; then exec timeout -k 1 "), l7, TK_S(" "));
+    t14 = tk_sb_add(l10, t13);
+    track_str_free(t13);
+    t15 = tk_text_cat3(l9, TK_S("; fi; "), l9);
+    t16 = tk_sb_add(l10, t15);
+    track_str_free(t15);
+    t17 = tk_text_cat3(TK_S(" & c=$!; (sleep "), l7, TK_S("; kill -9 $c) >/dev/null 2>&1 & w=$!; wait $c; r=$\?; kill $w 2>/dev/null; exit $r"));
+    t18 = tk_sb_add(l10, t17);
+    track_str_free(t17);
+    t19 = tk_sb_text(l10);
+    t20 = tk_shell(t19);
+    track_str_free(t19);
+    l11 = t20;
+    t22 = ((l11 == 124) != 0);
+    if (!t22) {
+        t22 = ((l11 == 137) != 0);
+    }
+    if (t22) {
+        t23 = tk_text_cat3(TK_S("trackc: check timed out after "), l7, TK_S("s"));
+        t24 = tk_lsp_diag(l1, l4, 0, 1, TK_S("E0000"), t23);
+        track_str_free(t23);
+        t25 = t24;
+        track_sb_free(l10);
+        track_str_free(l9);
+        track_str_free(l8);
+        track_str_free(l7);
+        return t25;
+        t21 = 0;
+    } else {
+        t21 = 0;
+    }
+    t26 = tk_lsp_dir(l6, TK_S("/out"));
+    t27 = tk_read_text(t26);
+    track_str_free(t26);
+    t28 = tk_lsp_lines(t27);
+    track_str_free(t27);
+    l12 = t28;
+    t31 = ((l5 >= 0) != 0);
+    if (t31) {
+        t32 = tk_vlen(l12);
+        t31 = ((t32 > 0) != 0);
+    }
+    t30 = (t31 != 0);
+    if (t30) {
+        t33 = tk_vget(l12, 0);
+        t34 = tk_text_eq(t33, TK_S("#syms"));
+        t30 = (t34 != 0);
+    }
+    if (t30) {
+        t35 = tk_vget(l0, 0);
+        t36 = tk_vset(t35, (l5 + 2), l12);
+        t29 = t36;
+    } else {
+        t29 = 0;
+    }
+    t37 = tk_lsp_dir(l6, TK_S("/err"));
+    t38 = tk_read_text(t37);
+    track_str_free(t37);
+    t39 = tk_lsp_lines(t38);
+    track_str_free(t38);
+    l13 = t39;
+    t40 = tk_sb_size(l1);
+    l14 = t40;
+    l15 = 0;
+    while (1) {
+        t41 = tk_vlen(l13);
+        if (!((l15 < t41))) break;
+        t42 = tk_vget(l13, l15);
+        l16 = t42;
+        t43 = str_find(l16, TK_S("]: "));
+        l17 = t43;
+        t47 = tk_text_starts(l16, TK_S("error["));
+        t46 = (t47 != 0);
+        if (!t46) {
+            t48 = tk_text_starts(l16, TK_S("warning["));
+            t46 = (t48 != 0);
+        }
+        t45 = (t46 != 0);
+        if (t45) {
+            t45 = ((l17 > 0) != 0);
+        }
+        if (t45) {
+            t49 = str_find(l16, TK_S("["));
+            l18 = t49;
+            t50 = tk_text_len(l16);
+            t51 = str_substr(l16, (l17 + 3), t50);
+            l19 = t51;
+            l20 = l4;
+            l21 = 0;
+            t54 = tk_vlen(l13);
+            t53 = (((l15 + 1) < t54) != 0);
+            if (t53) {
+                t55 = tk_vget(l13, (l15 + 1));
+                t56 = tk_text_starts(t55, TK_S(" --> "));
+                t53 = (t56 != 0);
+            }
+            if (t53) {
+                t57 = tk_vget(l13, (l15 + 1));
+                t58 = tk_vget(l13, (l15 + 1));
+                t59 = tk_text_len(t58);
+                t60 = str_substr(t57, 5, t59);
+                l22 = t60;
+                t61 = tk_text_len(l2);
+                t62 = tk_text_len(l22);
+                t63 = str_substr(l22, (t61 + 1), t62);
+                l23 = t63;
+                t65 = tk_text_cat(l2, TK_S(":"));
+                t66 = tk_text_starts(l22, t65);
+                track_str_free(t65);
+                if (t66) {
+                    t67 = str_to_int(l23);
+                    l20 = ((l4 + t67) - 1);
+                    t68 = str_find(l23, TK_S(":"));
+                    t69 = tk_text_len(l23);
+                    t70 = str_substr(l23, (t68 + 1), t69);
+                    t71 = str_to_int(t70);
+                    track_str_free(t70);
+                    l21 = (t71 - 1);
+                    t64 = l21;
+                } else {
+                    t72 = tk_text_cat3(l22, TK_S(": "), l19);
+                    t73 = t72;
+                    track_str_free(l19);
+                    l19 = t73;
+                    t64 = l19;
+                }
+                t74 = t64;
+                track_str_free(l23);
+                track_str_free(l22);
+                t52 = t74;
+            } else {
+                t52 = 0;
+            }
+            t75 = str_substr(l16, (l18 + 1), ((l17 - l18) - 1));
+            t76 = tk_lsp_diag(l1, l20, l21, (tk_div(l18, 6) + 1), t75, l19);
+            track_str_free(t75);
+            t77 = t76;
+            track_str_free(l19);
+            t44 = t77;
+        } else {
+            t44 = 0;
+        }
+        l15 = (l15 + 1);
+    }
+    t79 = ((l11 != 0) != 0);
+    if (t79) {
+        t80 = tk_sb_size(l1);
+        t79 = ((t80 == l14) != 0);
+    }
+    if (t79) {
+        t81 = tk_text_of_int(l11);
+        t82 = tk_text_cat(TK_S("checker exited with status "), t81);
+        track_str_free(t81);
+        t83 = tk_lsp_diag(l1, l4, 0, 1, TK_S("E0000"), t82);
+        track_str_free(t82);
+        t78 = t83;
+    } else {
+        t78 = 0;
+    }
+    t84 = 0;
+    track_sb_free(l10);
+    track_str_free(l9);
+    track_str_free(l8);
+    track_str_free(l7);
+    return t84;
+    t85 = 0;
+    track_sb_free(l10);
+    track_str_free(l9);
+    track_str_free(l8);
+    track_str_free(l7);
+    return t85;
+}
+
+tk_w tk_lsp_update(tk_w a0, tk_w a1, tk_w a2) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* uri */
+    tk_w l2 = 0; /* text */
+    tk_w t0 = 0;
+    tk_w l3 = 0; /* doc */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w l4 = 0; /* path */
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w l5 = 0; /* checked */
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w l6 = 0; /* diags */
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w l7 = 0; /* lines */
+    tk_w t24 = 0;
+    tk_w l8 = 0; /* block */
+    tk_w l9 = 0; /* start */
+    tk_w l10 = 0; /* i */
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    tk_w l11 = 0; /* t */
+    tk_w t28 = 0;
+    tk_w t29 = 0;
+    tk_w t30 = 0;
+    tk_w t31 = 0;
+    tk_w t32 = 0;
+    tk_w t33 = 0;
+    tk_w t34 = 0;
+    tk_w t35 = 0;
+    tk_w t36 = 0;
+    tk_w t37 = 0;
+    tk_w t38 = 0;
+    tk_w t39 = 0;
+    tk_w t40 = 0;
+    tk_w t41 = 0;
+    tk_w t42 = 0;
+    tk_w t43 = 0;
+    tk_w t44 = 0;
+    tk_w t45 = 0;
+    tk_w t46 = 0;
+    tk_w t47 = 0;
+    tk_w t48 = 0;
+    tk_w t49 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    t0 = tk_lsp_doc(l0, l1);
+    l3 = t0;
+    t1 = tk_vget(l0, 0);
+    t2 = tk_vset(t1, (l3 + 1), l2);
+    t3 = tk_lsp_uri_path(l1);
+    l4 = t3;
+    t6 = tk_text_ends(l4, TK_S(".trk"));
+    t5 = (t6 != 0);
+    if (!t5) {
+        t7 = tk_text_ends(l4, TK_S(".md"));
+        t5 = (t7 != 0);
+    }
+    t4 = (t5 != 0);
+    if (!t4) {
+        t8 = tk_text_ends(l4, TK_S(".markdown"));
+        t4 = (t8 != 0);
+    }
+    l5 = t4;
+    t10 = (l5 != 0);
+    if (t10) {
+        t11 = tk_lsp_tag(l0);
+        t10 = ((t11 == 0) != 0);
+    }
+    if (t10) {
+        return 0;
+        t9 = 0;
+    } else {
+        t9 = 0;
+    }
+    t12 = tk_sb_new();
+    l6 = t12;
+    t13 = tk_sb_add(l6, TK_S("{\"uri\":"));
+    t14 = tk_lj_quote(l6, l1);
+    t15 = tk_sb_add(l6, TK_S(",\"diagnostics\":["));
+    t17 = tk_text_ends(l4, TK_S(".trk"));
+    if (t17) {
+        t18 = tk_lsp_check(l0, l6, l4, l2, 0, l3);
+        t16 = t18;
+    } else {
+        t21 = tk_text_ends(l4, TK_S(".md"));
+        t20 = (t21 != 0);
+        if (!t20) {
+            t22 = tk_text_ends(l4, TK_S(".markdown"));
+            t20 = (t22 != 0);
+        }
+        if (t20) {
+            t23 = tk_lsp_lines(l2);
+            l7 = t23;
+            t24 = tk_sb_new();
+            l8 = t24;
+            l9 = (-1);
+            l10 = 0;
+            while (1) {
+                t25 = tk_vlen(l7);
+                if (!((l10 < t25))) break;
+                t26 = tk_vget(l7, l10);
+                t27 = str_trim(t26);
+                l11 = t27;
+                t30 = tk_text_starts(l11, TK_S("```track"));
+                t29 = (t30 != 0);
+                if (!t29) {
+                    t31 = tk_text_starts(l11, TK_S("```trk"));
+                    t29 = (t31 != 0);
+                }
+                if (t29) {
+                    l9 = (l10 + 1);
+                    t32 = tk_sb_reset(l8);
+                    t28 = t32;
+                } else {
+                    t35 = tk_text_eq(l11, TK_S("```"));
+                    t34 = (t35 != 0);
+                    if (t34) {
+                        t34 = ((l9 >= 0) != 0);
+                    }
+                    if (t34) {
+                        t36 = tk_sb_text(l8);
+                        t37 = tk_lsp_check(l0, l6, l4, t36, l9, (-1));
+                        track_str_free(t36);
+                        l9 = (-1);
+                        t33 = l9;
+                    } else {
+                        if ((l9 >= 0)) {
+                            if ((l10 > l9)) {
+                                t40 = tk_sb_byte(l8, 10);
+                                t39 = t40;
+                            } else {
+                                t39 = 0;
+                            }
+                            t41 = tk_vget(l7, l10);
+                            t42 = tk_sb_add(l8, t41);
+                            t38 = t42;
+                        } else {
+                            t38 = 0;
+                        }
+                        t33 = t38;
+                    }
+                    t28 = t33;
+                }
+                l10 = (l10 + 1);
+                t43 = l10;
+                track_str_free(l11);
+            }
+            t44 = 0;
+            track_sb_free(l8);
+            t19 = t44;
+        } else {
+            t19 = 0;
+        }
+        t16 = t19;
+    }
+    t45 = tk_sb_add(l6, TK_S("]}"));
+    t46 = tk_sb_text(l6);
+    t47 = tk_lsp_notify(TK_S("textDocument/publishDiagnostics"), t46);
+    track_str_free(t46);
+    t48 = t47;
+    track_sb_free(l6);
+    return t48;
+    t49 = 0;
+    track_sb_free(l6);
+    return t49;
+}
+
+tk_w tk_lsp_check_child(tk_w a0) {
+    tk_w l0 = 0; /* tag */
+    tk_w t0 = 0;
+    tk_w l1 = 0; /* c */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w l2 = 0; /* path */
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w l3 = 0; /* f */
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w l4 = 0; /* items */
+    tk_w l5 = 0; /* i */
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w l6 = 0; /* item */
+    tk_w t15 = 0;
+    tk_w l7 = 0; /* k */
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w l8 = 0; /* mine */
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    tk_w t28 = 0;
+    tk_w l9 = 0; /* name */
+    tk_w t29 = 0;
+    tk_w l10 = 0; /* vs */
+    tk_w l11 = 0; /* kind */
+    tk_w t30 = 0;
+    tk_w t31 = 0;
+    tk_w l12 = 0; /* j */
+    tk_w t32 = 0;
+    tk_w t33 = 0;
+    tk_w t34 = 0;
+    tk_w t35 = 0;
+    tk_w t36 = 0;
+    tk_w t37 = 0;
+    tk_w t38 = 0;
+    tk_w t39 = 0;
+    tk_w t40 = 0;
+    tk_w t41 = 0;
+    tk_w t42 = 0;
+    tk_w t43 = 0;
+    tk_w t44 = 0;
+    l0 = a0;
+    t0 = tk_cx_new();
+    l1 = t0;
+    t1 = tk_lex_init(l1);
+    t2 = tk_lsp_dir(l0, TK_S("/path"));
+    t3 = tk_read_text(t2);
+    track_str_free(t2);
+    l2 = t3;
+    t4 = tk_cx(l1, 15);
+    t5 = tk_module_key(l2);
+    t6 = tk_vpush(t4, t5);
+    t7 = tk_lsp_dir(l0, TK_S("/buffer.trk"));
+    t8 = tk_read_text(t7);
+    track_str_free(t7);
+    t9 = tk_load_source(l1, l2, t8);
+    l3 = t9;
+    t10 = tk_vset(l1, 17, l3);
+    t11 = tk_out(TK_S("#syms\n"));
+    t12 = tk_cx(l1, 12);
+    l4 = t12;
+    l5 = 0;
+    while (1) {
+        t13 = tk_vlen(l4);
+        if (!((l5 < t13))) break;
+        t14 = tk_vget(l4, l5);
+        l6 = t14;
+        t15 = tk_nk(l1, l6);
+        l7 = t15;
+        t16 = tk_cx(l1, 16);
+        t17 = tk_vget(t16, l5);
+        l8 = (t17 == l3);
+        t19 = (l8 != 0);
+        if (t19) {
+            t19 = ((l7 == 22) != 0);
+        }
+        if (t19) {
+            t20 = tk_na(l1, l6);
+            t21 = tk_name_text(l1, t20);
+            t22 = tk_text_cat3(TK_S("3\t"), t21, TK_S("\tUser-defined function\n"));
+            t23 = tk_out(t22);
+            track_str_free(t22);
+            t18 = t23;
+        } else {
+            t18 = 0;
+        }
+        t25 = (l8 != 0);
+        if (t25) {
+            t26 = ((l7 == 30) != 0);
+            if (!t26) {
+                t26 = ((l7 == 31) != 0);
+            }
+            t25 = (t26 != 0);
+        }
+        if (t25) {
+            t27 = tk_na(l1, l6);
+            t28 = tk_name_text(l1, t27);
+            l9 = t28;
+            t29 = tk_nb(l1, l6);
+            l10 = t29;
+            l11 = TK_S("\tUnion variant of ");
+            if ((l7 == 30)) {
+                t31 = tk_nc(l1, l6);
+                l10 = t31;
+                l11 = TK_S("\tEnum variant of ");
+                t30 = l11;
+            } else {
+                t30 = 0;
+            }
+            l12 = 0;
+            while (1) {
+                t32 = tk_list_len(l1, l10);
+                if (!((l12 < t32))) break;
+                t33 = tk_text_cat3(TK_S("20\t"), l9, TK_S("::"));
+                t34 = tk_list_at(l1, l10, l12);
+                t35 = tk_name_text(l1, t34);
+                t36 = tk_text_cat3(l11, l9, TK_S("\n"));
+                t37 = tk_text_cat3(t33, t35, t36);
+                track_str_free(t33);
+                track_str_free(t36);
+                t38 = tk_out(t37);
+                track_str_free(t37);
+                l12 = (l12 + 2);
+            }
+            t24 = 0;
+        } else {
+            t24 = 0;
+        }
+        l5 = (l5 + 1);
+    }
+    t39 = tk_collect_symbols(l1);
+    t40 = tk_check_program(l1);
+    t41 = tk_life_program(l1);
+    t42 = tk_life_fail_pending(l1);
+    t43 = tk_life_warnings(l1);
+    t44 = tk_flush_warnings(l1);
+    return 0;
+    return 0;
+}
+
+tk_w tk_lsp_split(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* text */
+    tk_w l1 = 0; /* sep */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* parts */
+    tk_w t1 = 0;
+    tk_w l3 = 0; /* bytes */
+    tk_w l4 = 0; /* start */
+    tk_w l5 = 0; /* i */
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_vnew();
+    l2 = t0;
+    t1 = tk_text_bytes(l0);
+    l3 = t1;
+    l4 = 0;
+    l5 = 0;
+    while (1) {
+        t2 = tk_vlen(l3);
+        if (!((l5 <= t2))) break;
+        t5 = tk_vlen(l3);
+        t4 = ((l5 == t5) != 0);
+        if (!t4) {
+            t6 = tk_vget(l3, l5);
+            t4 = ((t6 == l1) != 0);
+        }
+        if (t4) {
+            t7 = str_substr(l0, l4, (l5 - l4));
+            t8 = tk_vpush(l2, t7);
+            l4 = (l5 + 1);
+            t3 = l4;
+        } else {
+            t3 = 0;
+        }
+        l5 = (l5 + 1);
+    }
+    t9 = l2;
+    track_i64_collection_free(l3);
+    return t9;
+    t10 = 0;
+    track_i64_collection_free(l3);
+    return t10;
+}
+
+tk_w tk_lsp_word_byte(tk_w a0) {
+    tk_w l0 = 0; /* x */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    l0 = a0;
+    t4 = ((l0 >= 48) != 0);
+    if (t4) {
+        t4 = ((l0 <= 57) != 0);
+    }
+    t3 = (t4 != 0);
+    if (!t3) {
+        t5 = ((l0 >= 65) != 0);
+        if (t5) {
+            t5 = ((l0 <= 90) != 0);
+        }
+        t3 = (t5 != 0);
+    }
+    t2 = (t3 != 0);
+    if (!t2) {
+        t6 = ((l0 >= 97) != 0);
+        if (t6) {
+            t6 = ((l0 <= 122) != 0);
+        }
+        t2 = (t6 != 0);
+    }
+    t1 = (t2 != 0);
+    if (!t1) {
+        t1 = ((l0 == 95) != 0);
+    }
+    t0 = (t1 != 0);
+    if (!t0) {
+        t0 = ((l0 >= 128) != 0);
+    }
+    return t0;
+    return 0;
+}
+
+tk_w tk_lsp_item(tk_w a0, tk_w a1, tk_w a2, tk_w a3) {
+    tk_w l0 = 0; /* b */
+    tk_w l1 = 0; /* label */
+    tk_w l2 = 0; /* kind */
+    tk_w l3 = 0; /* detail */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    l3 = a3;
+    t1 = tk_sb_size(l0);
+    if ((t1 > 1)) {
+        t2 = tk_sb_add(l0, TK_S(","));
+        t0 = t2;
+    } else {
+        t0 = 0;
+    }
+    t3 = tk_sb_add(l0, TK_S("{\"label\":"));
+    t4 = tk_lj_quote(l0, l1);
+    if ((l2 > 0)) {
+        t6 = tk_sb_add(l0, TK_S(",\"kind\":"));
+        t7 = tk_sb_int(l0, l2);
+        t5 = t7;
+    } else {
+        t5 = 0;
+    }
+    t8 = tk_sb_add(l0, TK_S(",\"detail\":"));
+    t9 = tk_lj_quote(l0, l3);
+    t10 = tk_sb_add(l0, TK_S("}"));
+    return t10;
+    return 0;
+}
+
+tk_w tk_lsp_items(tk_w a0, tk_w a1, tk_w a2, tk_w a3, tk_w a4, tk_w a5) {
+    tk_w l0 = 0; /* b */
+    tk_w l1 = 0; /* word */
+    tk_w l2 = 0; /* words */
+    tk_w l3 = 0; /* prefix */
+    tk_w l4 = 0; /* kind */
+    tk_w l5 = 0; /* detail */
+    tk_w t0 = 0;
+    tk_w l6 = 0; /* list */
+    tk_w l7 = 0; /* i */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    l3 = a3;
+    l4 = a4;
+    l5 = a5;
+    t0 = tk_lsp_split(l2, 32);
+    l6 = t0;
+    l7 = 0;
+    while (1) {
+        t1 = tk_vlen(l6);
+        if (!((l7 < t1))) break;
+        t3 = tk_vget(l6, l7);
+        t4 = tk_text_starts(t3, l1);
+        if (t4) {
+            t5 = tk_vget(l6, l7);
+            t6 = tk_text_cat(l3, t5);
+            t7 = tk_lsp_item(l0, t6, l4, l5);
+            track_str_free(t6);
+            t2 = t7;
+        } else {
+            t2 = 0;
+        }
+        l7 = (l7 + 1);
+    }
+    return 0;
+    return 0;
+}
+
+tk_w tk_lsp_word(tk_w a0, tk_w a1, tk_w a2) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* msg */
+    tk_w l2 = 0; /* hover */
+    tk_w t0 = 0;
+    tk_w l3 = 0; /* uri */
+    tk_w t1 = 0;
+    tk_w l4 = 0; /* docs */
+    tk_w l5 = 0; /* i */
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w l6 = 0; /* n */
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w l7 = 0; /* text */
+    tk_w t18 = 0;
+    tk_w l8 = 0; /* line */
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w l9 = 0; /* start */
+    tk_w l10 = 0; /* end */
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    tk_w t28 = 0;
+    tk_w t29 = 0;
+    tk_w t30 = 0;
+    tk_w t31 = 0;
+    tk_w t32 = 0;
+    tk_w t33 = 0;
+    tk_w t34 = 0;
+    tk_w t35 = 0;
+    tk_w t36 = 0;
+    tk_w l11 = 0; /* w */
+    tk_w t37 = 0;
+    tk_w t38 = 0;
+    tk_w t39 = 0;
+    tk_w t40 = 0;
+    tk_w t41 = 0;
+    l0 = a0;
+    l1 = a1;
+    l2 = a2;
+    t0 = tk_lj_text(l1, TK_S("params.textDocument.uri"));
+    l3 = t0;
+    t1 = tk_vget(l0, 0);
+    l4 = t1;
+    l5 = 0;
+    while (1) {
+        t3 = ((l3 != 0) != 0);
+        if (t3) {
+            t4 = tk_vlen(l4);
+            t3 = ((l5 < t4) != 0);
+        }
+        t2 = (t3 != 0);
+        if (t2) {
+            t5 = tk_vget(l4, l5);
+            t6 = tk_text_eq(t5, l3);
+            t2 = ((t6 == 0) != 0);
+        }
+        if (!(t2)) break;
+        l5 = (l5 + 3);
+    }
+    t7 = tk_lj_int(l1, TK_S("params.position.line"));
+    l6 = t7;
+    t10 = ((l3 == 0) != 0);
+    if (!t10) {
+        t11 = tk_vlen(l4);
+        t10 = ((l5 >= t11) != 0);
+    }
+    t9 = (t10 != 0);
+    if (!t9) {
+        t12 = tk_vget(l4, (l5 + 1));
+        t13 = tk_lsp_lines(t12);
+        t14 = tk_vlen(t13);
+        t9 = ((l6 >= t14) != 0);
+    }
+    if (t9) {
+        return 0;
+        t8 = 0;
+    } else {
+        t8 = 0;
+    }
+    t15 = tk_vget(l4, (l5 + 1));
+    t16 = tk_lsp_lines(t15);
+    t17 = tk_vget(t16, l6);
+    l7 = t17;
+    t18 = tk_text_bytes(l7);
+    l8 = t18;
+    t19 = tk_lj_int(l1, TK_S("params.position.character"));
+    t20 = tk_vlen(l8);
+    t21 = math_min(t19, t20);
+    l9 = t21;
+    l10 = l9;
+    while (1) {
+        t22 = ((l9 > 0) != 0);
+        if (t22) {
+            t23 = tk_vget(l8, (l9 - 1));
+            t24 = tk_lsp_word_byte(t23);
+            t22 = (t24 != 0);
+        }
+        if (!(t22)) break;
+        l9 = (l9 - 1);
+    }
+    while (1) {
+        t26 = (l2 != 0);
+        if (t26) {
+            t27 = tk_vlen(l8);
+            t26 = ((l10 < t27) != 0);
+        }
+        t25 = (t26 != 0);
+        if (t25) {
+            t28 = tk_vget(l8, l10);
+            t29 = tk_lsp_word_byte(t28);
+            t25 = (t29 != 0);
+        }
+        if (!(t25)) break;
+        l10 = (l10 + 1);
+    }
+    t32 = (l2 != 0);
+    if (t32) {
+        t32 = ((l9 > 0) != 0);
+    }
+    t31 = (t32 != 0);
+    if (t31) {
+        t33 = tk_vget(l8, (l9 - 1));
+        t31 = ((t33 == 64) != 0);
+    }
+    if (t31) {
+        l9 = (l9 - 1);
+        t30 = l9;
+    } else {
+        t30 = 0;
+    }
+    if ((l9 == l10)) {
+        t35 = 0;
+        track_i64_collection_free(l8);
+        return t35;
+        t34 = 0;
+    } else {
+        t34 = 0;
+    }
+    t36 = tk_vnew_cap(2);
+    l11 = t36;
+    t37 = str_substr(l7, l9, (l10 - l9));
+    t38 = tk_vpush(l11, t37);
+    t39 = tk_vpush(l11, l5);
+    t40 = l11;
+    track_i64_collection_free(l8);
+    return t40;
+    t41 = 0;
+    track_i64_collection_free(l8);
+    return t41;
+}
+
+tk_w tk_lsp_completion(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* msg */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* w */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w l3 = 0; /* word */
+    tk_w t3 = 0;
+    tk_w l4 = 0; /* b */
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w l5 = 0; /* syms */
+    tk_w l6 = 0; /* i */
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w l7 = 0; /* f */
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_lsp_word(l0, l1, 0);
+    l2 = t0;
+    if ((l2 == 0)) {
+        return TK_S("null");
+        t1 = 0;
+    } else {
+        t1 = 0;
+    }
+    t2 = tk_vget(l2, 0);
+    l3 = t2;
+    t3 = tk_sb_new();
+    l4 = t3;
+    t4 = tk_sb_add(l4, TK_S("["));
+    t5 = tk_lsp_items(l4, l3, TK_S("import use let mut fn return if else while for in struct enum union match with const type true false as"), TK_S(""), 0, TK_S("Keyword"));
+    t6 = tk_lsp_items(l4, l3, TK_S("i8 u8 i32 u32 i64 u64 bool void ptr"), TK_S(""), 25, TK_S("Type"));
+    t7 = tk_lsp_items(l4, l3, TK_S("print println eprint read file_open file_close file_exists dir_exists file_copy clock_ms exit alloc dealloc env_get os_args_count os_arg process_spawn sys_exec sys_set_memory_limit sys_get_memory_used str_starts_with str_ends_with str_contains str_is_int env_exists abort"), TK_S(""), 3, TK_S("Built-in function"));
+    t8 = tk_lsp_items(l4, l3, TK_S("macro now compile_error"), TK_S("@"), 3, TK_S("Macro"));
+    t9 = tk_vget(l0, 0);
+    t10 = tk_vget(l2, 1);
+    t11 = tk_vget(t9, (t10 + 2));
+    l5 = t11;
+    l6 = 1;
+    while (1) {
+        t12 = tk_vlen(l5);
+        if (!((l6 < t12))) break;
+        t13 = tk_vget(l5, l6);
+        t14 = tk_lsp_split(t13, 9);
+        l7 = t14;
+        t16 = tk_vget(l7, 1);
+        t17 = tk_text_starts(t16, l3);
+        if (t17) {
+            t18 = tk_vget(l7, 1);
+            t19 = tk_vget(l7, 0);
+            t20 = str_to_int(t19);
+            t21 = tk_vget(l7, 2);
+            t22 = tk_lsp_item(l4, t18, t20, t21);
+            t15 = t22;
+        } else {
+            t15 = 0;
+        }
+        l6 = (l6 + 1);
+    }
+    t23 = tk_sb_add(l4, TK_S("]"));
+    t24 = tk_sb_text(l4);
+    return t24;
+    return 0;
+}
+
+tk_w tk_lsp_hover_docs(void) {
+    return TK_S("let:Declare a variable\n\n```track\nlet x = 42;\n```$mut:Declare a mutable variable\n\n```track\nlet mut x = 42;\n```$fn:Define a function\n\n```track\nfn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n```$return:Return from function$if:Conditional expression$else:Else branch$while:Loop$for:For-in loop\n\n```track\nfor i in 0..10 {\n    print(i);\n}\n```$in:Iteration in a for-in loop$use:Import items from a module (synonym for `import`)$type:Define a type alias\n\n```track\ntype Matrix = [i32; 16];\n```$struct:Define a struct$enum:Define an enum\n\n```track\nenum Color {\n    Red,\n    Green,\n    Blue,\n}\n```$union:Define a tagged union\n\n```track\nunion Value {\n    Int(i32),\n    Float(f64),\n}\n```$match:Pattern matching$with:Lexical lens block$const:Compile-time constant$true:Boolean true$false:Boolean false$as:Alias import$i8:8-bit signed integer (copy type)$u8:8-bit unsigned integer (copy type)$i32:32-bit signed integer (copy type)$u32:32-bit unsigned integer (copy type)$i64:64-bit signed integer (copy type)$u64:64-bit unsigned integer (copy type)$bool:Boolean (copy type)$void:Unit type (copy type)$ptr:Raw pointer (copy type)\n\n```track\nlet p: ptr<i32>;\n```$print:Print a value to stdout\n\n```track\nprint(42);\nprint(\"hello\");\n```$read:Read input\n\n```track\nlet value = read();\n```$@macro:Define a compile-time macro\n\n```track\n@macro double(n: i32) -> i32 {\n    return n * 2;\n}\n```$@compile_error:Trigger a compile-time error$@now:Get current timestamp");
+    return 0;
+}
+
+tk_w tk_lsp_hover(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* msg */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* w */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w l3 = 0; /* docs */
+    tk_w l4 = 0; /* i */
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w l5 = 0; /* d */
+    tk_w t6 = 0;
+    tk_w l6 = 0; /* colon */
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w l7 = 0; /* b */
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_lsp_word(l0, l1, 1);
+    l2 = t0;
+    t1 = tk_lsp_hover_docs();
+    t2 = tk_lsp_split(t1, 36);
+    l3 = t2;
+    l4 = 0;
+    while (1) {
+        t3 = ((l2 != 0) != 0);
+        if (t3) {
+            t4 = tk_vlen(l3);
+            t3 = ((l4 < t4) != 0);
+        }
+        if (!(t3)) break;
+        t5 = tk_vget(l3, l4);
+        l5 = t5;
+        t6 = str_find(l5, TK_S(":"));
+        l6 = t6;
+        t8 = str_substr(l5, 0, l6);
+        t9 = tk_vget(l2, 0);
+        t10 = tk_text_eq(t8, t9);
+        track_str_free(t8);
+        if (t10) {
+            t11 = tk_sb_new();
+            l7 = t11;
+            t12 = tk_sb_add(l7, TK_S("{\"contents\":{\"kind\":\"markdown\",\"value\":"));
+            t13 = tk_text_len(l5);
+            t14 = str_substr(l5, (l6 + 1), t13);
+            t15 = tk_lj_quote(l7, t14);
+            track_str_free(t14);
+            t16 = tk_sb_add(l7, TK_S("}}"));
+            t17 = tk_sb_text(l7);
+            return t17;
+            t7 = 0;
+        } else {
+            t7 = 0;
+        }
+        l4 = (l4 + 1);
+    }
+    return TK_S("null");
+    return 0;
+}
+
+tk_w tk_lsp_quit(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* code */
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    l0 = a0;
+    l1 = a1;
+    t2 = tk_vget(l0, 3);
+    t1 = ((t2 != 0) != 0);
+    if (t1) {
+        t3 = tk_vget(l0, 3);
+        t4 = tk_text_len(t3);
+        t1 = ((t4 > 0) != 0);
+    }
+    if (t1) {
+        t5 = tk_vget(l0, 3);
+        t6 = tk_lsp_sh(t5, TK_S(""));
+        t7 = tk_text_cat(TK_S("rm -rf "), t6);
+        track_str_free(t6);
+        t8 = tk_shell(t7);
+        track_str_free(t7);
+        t0 = t8;
+    } else {
+        t0 = 0;
+    }
+    t9 = tk_quit(l1);
+    return t9;
+    return 0;
+}
+
+tk_w tk_lsp_handle(tk_w a0, tk_w a1) {
+    tk_w l0 = 0; /* s */
+    tk_w l1 = 0; /* body */
+    tk_w t0 = 0;
+    tk_w l2 = 0; /* msg */
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w l3 = 0; /* id */
+    tk_w t6 = 0;
+    tk_w l4 = 0; /* method */
+    tk_w t7 = 0;
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w l5 = 0; /* ready */
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    tk_w t18 = 0;
+    tk_w t19 = 0;
+    tk_w t20 = 0;
+    tk_w t21 = 0;
+    tk_w t22 = 0;
+    tk_w t23 = 0;
+    tk_w t24 = 0;
+    tk_w t25 = 0;
+    tk_w t26 = 0;
+    tk_w t27 = 0;
+    tk_w t28 = 0;
+    tk_w t29 = 0;
+    tk_w t30 = 0;
+    tk_w t31 = 0;
+    tk_w t32 = 0;
+    tk_w t33 = 0;
+    tk_w t34 = 0;
+    tk_w t35 = 0;
+    tk_w t36 = 0;
+    tk_w t37 = 0;
+    tk_w t38 = 0;
+    tk_w t39 = 0;
+    tk_w t40 = 0;
+    tk_w t41 = 0;
+    tk_w t42 = 0;
+    tk_w t43 = 0;
+    tk_w t44 = 0;
+    tk_w l6 = 0; /* uri */
+    tk_w t45 = 0;
+    tk_w l7 = 0; /* text */
+    tk_w t46 = 0;
+    tk_w t47 = 0;
+    tk_w t48 = 0;
+    tk_w t49 = 0;
+    tk_w t50 = 0;
+    tk_w t51 = 0;
+    tk_w t52 = 0;
+    tk_w t53 = 0;
+    tk_w t54 = 0;
+    tk_w t55 = 0;
+    tk_w t56 = 0;
+    tk_w t57 = 0;
+    tk_w t58 = 0;
+    tk_w t59 = 0;
+    tk_w t60 = 0;
+    tk_w t61 = 0;
+    l0 = a0;
+    l1 = a1;
+    t0 = tk_lj_parse(l1);
+    l2 = t0;
+    t2 = ((l2 == 0) != 0);
+    if (!t2) {
+        t3 = tk_vget(l2, 0);
+        t2 = ((t3 != 5) != 0);
+    }
+    if (t2) {
+        t4 = tk_lsp_error(0, (-32700), TK_S("Parse error"));
+        return t4;
+        t1 = 0;
+    } else {
+        t1 = 0;
+    }
+    t5 = tk_lj_at(l2, TK_S("id"));
+    l3 = t5;
+    t6 = tk_lj_text(l2, TK_S("method"));
+    l4 = t6;
+    t8 = tk_vget(l0, 1);
+    t7 = ((t8 == 1) != 0);
+    if (t7) {
+        t9 = tk_vget(l0, 2);
+        t7 = ((t9 == 0) != 0);
+    }
+    l5 = t7;
+    if ((l4 == 0)) {
+        return 0;
+        t10 = 0;
+    } else {
+        t10 = 0;
+    }
+    t12 = tk_text_eq(l4, TK_S("exit"));
+    if (t12) {
+        t13 = tk_vget(l0, 2);
+        t14 = tk_lsp_quit(l0, (1 - t13));
+        return t14;
+        t11 = 0;
+    } else {
+        t11 = 0;
+    }
+    t16 = ((l3 != 0) != 0);
+    if (t16) {
+        t17 = tk_text_eq(l4, TK_S("initialize"));
+        t16 = (t17 != 0);
+    }
+    if (t16) {
+        t18 = tk_vset(l0, 1, 1);
+        t19 = tk_lsp_result(l3, TK_S("{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\".\",\":\"]},\"hoverProvider\":true},\"serverInfo\":{\"name\":\"trackc\",\"version\":\"1.0.0\"}}"));
+        return t19;
+        t15 = 0;
+    } else {
+        t15 = 0;
+    }
+    t21 = ((l3 != 0) != 0);
+    if (t21) {
+        t22 = tk_vget(l0, 1);
+        t21 = ((t22 == 0) != 0);
+    }
+    if (t21) {
+        t23 = tk_lsp_error(l3, (-32002), TK_S("Server not initialized"));
+        return t23;
+        t20 = 0;
+    } else {
+        t20 = 0;
+    }
+    t25 = ((l3 != 0) != 0);
+    if (t25) {
+        t25 = ((l5 == 0) != 0);
+    }
+    if (t25) {
+        t26 = tk_lsp_error(l3, (-32600), TK_S("Invalid request"));
+        return t26;
+        t24 = 0;
+    } else {
+        t24 = 0;
+    }
+    t28 = ((l3 != 0) != 0);
+    if (t28) {
+        t29 = tk_text_eq(l4, TK_S("shutdown"));
+        t28 = (t29 != 0);
+    }
+    if (t28) {
+        t30 = tk_vset(l0, 2, 1);
+        t31 = tk_lsp_result(l3, TK_S("null"));
+        return t31;
+        t27 = 0;
+    } else {
+        t27 = 0;
+    }
+    t33 = ((l3 != 0) != 0);
+    if (t33) {
+        t34 = tk_text_eq(l4, TK_S("textDocument/completion"));
+        t33 = (t34 != 0);
+    }
+    if (t33) {
+        t35 = tk_lsp_completion(l0, l2);
+        t36 = tk_lsp_result(l3, t35);
+        return t36;
+        t32 = 0;
+    } else {
+        t32 = 0;
+    }
+    t38 = ((l3 != 0) != 0);
+    if (t38) {
+        t39 = tk_text_eq(l4, TK_S("textDocument/hover"));
+        t38 = (t39 != 0);
+    }
+    if (t38) {
+        t40 = tk_lsp_hover(l0, l2);
+        t41 = tk_lsp_result(l3, t40);
+        return t41;
+        t37 = 0;
+    } else {
+        t37 = 0;
+    }
+    if ((l3 != 0)) {
+        t43 = tk_lsp_error(l3, (-32601), TK_S("Method not found"));
+        return t43;
+        t42 = 0;
+    } else {
+        t42 = 0;
+    }
+    t44 = tk_lj_text(l2, TK_S("params.textDocument.uri"));
+    l6 = t44;
+    t45 = tk_lj_text(l2, TK_S("params.textDocument.text"));
+    l7 = t45;
+    t47 = tk_text_eq(l4, TK_S("textDocument/didChange"));
+    if (t47) {
+        t48 = tk_lj_text(l2, TK_S("params.contentChanges.0.text"));
+        l7 = t48;
+        t46 = l7;
+    } else {
+        t46 = 0;
+    }
+    t50 = tk_text_eq(l4, TK_S("textDocument/didSave"));
+    if (t50) {
+        t51 = tk_lj_text(l2, TK_S("params.text"));
+        l7 = t51;
+        t49 = l7;
+    } else {
+        t49 = 0;
+    }
+    t53 = (l5 != 0);
+    if (t53) {
+        t54 = tk_text_eq(l4, TK_S("initialized"));
+        t53 = (t54 != 0);
+    }
+    if (t53) {
+        t55 = tk_lsp_notify(TK_S("window/logMessage"), TK_S("{\"type\":3,\"message\":\"Track LSP server initialized\"}"));
+        t52 = t55;
+    } else {
+        t52 = 0;
+    }
+    t59 = (l5 != 0);
+    if (t59) {
+        t59 = ((l6 != 0) != 0);
+    }
+    t58 = (t59 != 0);
+    if (t58) {
+        t58 = ((l7 != 0) != 0);
+    }
+    t57 = (t58 != 0);
+    if (t57) {
+        t60 = tk_text_starts(l4, TK_S("textDocument/did"));
+        t57 = (t60 != 0);
+    }
+    if (t57) {
+        t61 = tk_lsp_update(l0, l6, l7);
+        t56 = t61;
+    } else {
+        t56 = 0;
+    }
+    return 0;
+    return 0;
+}
+
+tk_w tk_lsp_main(void) {
+    tk_w t0 = 0;
+    tk_w t1 = 0;
+    tk_w t2 = 0;
+    tk_w t3 = 0;
+    tk_w t4 = 0;
+    tk_w t5 = 0;
+    tk_w t6 = 0;
+    tk_w t7 = 0;
+    tk_w l0 = 0; /* s */
+    tk_w t8 = 0;
+    tk_w t9 = 0;
+    tk_w t10 = 0;
+    tk_w t11 = 0;
+    tk_w t12 = 0;
+    tk_w t13 = 0;
+    tk_w l1 = 0; /* body */
+    tk_w t14 = 0;
+    tk_w t15 = 0;
+    tk_w t16 = 0;
+    tk_w t17 = 0;
+    t2 = tk_arg_count();
+    t1 = ((t2 == 4) != 0);
+    if (t1) {
+        t3 = tk_arg_text(2);
+        t4 = tk_text_eq(t3, TK_S("--check"));
+        track_str_free(t3);
+        t1 = (t4 != 0);
+    }
+    if (t1) {
+        t5 = tk_arg_text(3);
+        t6 = tk_lsp_check_child(t5);
+        track_str_free(t5);
+        return t6;
+        t0 = 0;
+    } else {
+        t0 = 0;
+    }
+    t7 = tk_vnew_cap(4);
+    l0 = t7;
+    t8 = tk_vnew();
+    t9 = tk_vpush(l0, t8);
+    t10 = tk_vpush(l0, 0);
+    t11 = tk_vpush(l0, 0);
+    t12 = tk_vpush(l0, 0);
+    t13 = tk_lsp_read();
+    l1 = t13;
+    while (1) {
+        if (!((l1 != 0))) break;
+        t14 = tk_lsp_handle(l0, l1);
+        t15 = tk_lsp_read();
+        l1 = t15;
+    }
+    t16 = tk_vget(l0, 2);
+    t17 = tk_lsp_quit(l0, (1 - t16));
+    return t17;
+    return 0;
+}
+
 tk_w tk_trackc_version(void) {
     return TK_S("1.0.0");
     return 0;
@@ -70772,6 +73972,7 @@ tk_w tk_usage(void) {
     tk_w t13 = 0;
     tk_w t14 = 0;
     tk_w t15 = 0;
+    tk_w t16 = 0;
     t0 = tk_err(TK_S("trackc 1.0.0 \342\200\224 the self-hosted Track compiler\n\n"));
     t1 = tk_err(TK_S("USAGE:\n"));
     t2 = tk_err(TK_S("    trackc build <file.trk> [-o <exe>]     Compile to a native executable\n"));
@@ -70783,11 +73984,12 @@ tk_w tk_usage(void) {
     t8 = tk_err(TK_S("    trackc tokens <file.trk>               Dump the token stream\n"));
     t9 = tk_err(TK_S("    trackc life <file.trk>                 Dump inferred lifecycle summaries\n"));
     t10 = tk_err(TK_S("    trackc life --place <file.trk>         Dump the placement plan per allocation site\n"));
-    t11 = tk_err(TK_S("    trackc --version                       Show version info\n"));
-    t12 = tk_err(TK_S("\nOPTIONS:\n"));
-    t13 = tk_err(TK_S("    --rt=track   link the runtime written in Track (compiler/rt/)\n"));
-    t14 = tk_err(TK_S("                 instead of runtime/track_runtime.c; no libc\n"));
-    t15 = tk_err(TK_S("    --deny-warnings  exit 1 when any warning is reported\n"));
+    t11 = tk_err(TK_S("    trackc lsp                             Language server (JSON-RPC over stdio)\n"));
+    t12 = tk_err(TK_S("    trackc --version                       Show version info\n"));
+    t13 = tk_err(TK_S("\nOPTIONS:\n"));
+    t14 = tk_err(TK_S("    --rt=track   link the runtime written in Track (compiler/rt/)\n"));
+    t15 = tk_err(TK_S("                 instead of runtime/track_runtime.c; no libc\n"));
+    t16 = tk_err(TK_S("    --deny-warnings  exit 1 when any warning is reported\n"));
     return 0;
     return 0;
 }
@@ -72319,6 +75521,10 @@ tk_w tk_main(void) {
     tk_w t75 = 0;
     tk_w t76 = 0;
     tk_w t77 = 0;
+    tk_w t78 = 0;
+    tk_w t79 = 0;
+    tk_w t80 = 0;
+    tk_w t81 = 0;
     t1 = tk_arg_count();
     if ((t1 < 2)) {
         t2 = tk_usage();
@@ -72473,25 +75679,35 @@ tk_w tk_main(void) {
     } else {
         t55 = 0;
     }
-    t69 = tk_text_eq(l0, TK_S("tokens"));
+    t69 = tk_text_eq(l0, TK_S("lsp"));
     if (t69) {
-        t70 = tk_require_file();
-        t71 = tk_cmd_tokens(t70);
-        t72 = 0;
+        t70 = tk_lsp_main();
+        t71 = t70;
         track_str_free(l0);
-        return t72;
+        return t71;
         t68 = 0;
     } else {
         t68 = 0;
     }
-    t73 = tk_text_cat3(TK_S("Unknown command: '"), l0, TK_S("'\n\n"));
-    t74 = tk_err(t73);
-    track_str_free(t73);
-    t75 = tk_usage();
-    t76 = 1;
+    t73 = tk_text_eq(l0, TK_S("tokens"));
+    if (t73) {
+        t74 = tk_require_file();
+        t75 = tk_cmd_tokens(t74);
+        t76 = 0;
+        track_str_free(l0);
+        return t76;
+        t72 = 0;
+    } else {
+        t72 = 0;
+    }
+    t77 = tk_text_cat3(TK_S("Unknown command: '"), l0, TK_S("'\n\n"));
+    t78 = tk_err(t77);
+    track_str_free(t77);
+    t79 = tk_usage();
+    t80 = 1;
     track_str_free(l0);
-    return t76;
-    t77 = 0;
+    return t80;
+    t81 = 0;
     track_str_free(l0);
     return 0;
 }

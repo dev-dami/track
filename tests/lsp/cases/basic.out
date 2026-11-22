@@ -1,0 +1,8 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"triggerCharacters":[".",":"]},"hoverProvider":true},"serverInfo":{"name":"trackc","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"Track LSP server initialized"}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///test.trk","diagnostics":[{"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":5}},"severity":1,"code":"E0200","source":"trackc","message":"Undeclared variable 'le'."}]}}
+{"jsonrpc":"2.0","id":2,"result":[{"label":"let","detail":"Keyword"}]}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///test.trk","diagnostics":[]}}
+{"jsonrpc":"2.0","id":3,"result":{"contents":{"kind":"markdown","value":"Print a value to stdout\n\n```track\nprint(42);\nprint(\"hello\");\n```"}}}
+{"jsonrpc":"2.0","id":4,"result":null}
+exit=0

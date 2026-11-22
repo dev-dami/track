@@ -1,0 +1,3 @@
+# end of input after shutdown is a clean stop
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}
+{"jsonrpc":"2.0","id":2,"method":"shutdown"}

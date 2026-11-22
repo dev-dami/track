@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"triggerCharacters":[".",":"]},"hoverProvider":true},"serverInfo":{"name":"trackc","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///nowhere/main.trk","diagnostics":[]}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///nowhere/main.trk","diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"code":"E0200","source":"trackc","message":"broken_helper.trk:3:12: Undeclared variable 'undefined_name'."}]}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///nowhere/main.trk","diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"code":"E0011","source":"trackc","message":"Unknown module 'missing_module'"}]}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///nowhere/it%27s%20%24HOME%20%60x%60.trk","diagnostics":[{"range":{"start":{"line":2,"character":11},"end":{"line":2,"character":12}},"severity":1,"code":"E0200","source":"trackc","message":"Undeclared variable 'nope'."}]}}
+{"jsonrpc":"2.0","id":2,"result":null}
+exit=0

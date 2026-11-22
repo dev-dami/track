@@ -47,7 +47,7 @@ echo 'augroup track_ft | au! | au BufNewFile,BufRead *.trk setf track | augroup 
 
 - **Filetype** `*.trk` → `track` (`vim.filetype.add` + autocmd fallback)
 - **Flat syntax** keywords, types, macros (`@macro` / `@call`), functions, strings/escapes, numbers (`0x`/`0b`), operators (`->` `=>` `::` `..`), `//` + `/* */` comments with `TODO` highlight
-- **LSP** `track-lsp` via `nvim-lspconfig` — hover/`gd`/`gr`/`K`/`<leader>ca`/`<leader>rn` on attach; warns if binary missing
+- **LSP** `trackc lsp` via `nvim-lspconfig` — diagnostics, completion and `K` hover (`gd`/`gr`/`<leader>ca`/`<leader>rn` are mapped but the server does not implement them yet); warns if `trackc` is missing
 - **Devicons** `nvim-web-devicons` → `trk` icon (`󱐌`, `#7aa2f7`) — *requires Nerd Font; falls back to `T` if missing*
 
 ## Why no SVG in Neovim?

@@ -1,0 +1,10 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"triggerCharacters":[".",":"]},"hoverProvider":true},"serverInfo":{"name":"trackc","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///h.trk","diagnostics":[{"range":{"start":{"line":4,"character":23},"end":{"line":4,"character":24}},"severity":1,"code":"E0100","source":"trackc","message":"expected '=', found ';'"}]}}
+{"jsonrpc":"2.0","id":2,"result":{"contents":{"kind":"markdown","value":"Define a compile-time macro\n\n```track\n@macro double(n: i32) -> i32 {\n    return n * 2;\n}\n```"}}}
+{"jsonrpc":"2.0","id":3,"result":{"contents":{"kind":"markdown","value":"Declare a mutable variable\n\n```track\nlet mut x = 42;\n```"}}}
+{"jsonrpc":"2.0","id":4,"result":{"contents":{"kind":"markdown","value":"Raw pointer (copy type)\n\n```track\nlet p: ptr<i32>;\n```"}}}
+{"jsonrpc":"2.0","id":5,"result":{"contents":{"kind":"markdown","value":"Define a function\n\n```track\nfn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n```"}}}
+{"jsonrpc":"2.0","id":6,"result":null}
+{"jsonrpc":"2.0","id":7,"result":null}
+{"jsonrpc":"2.0","id":8,"result":null}
+exit=0

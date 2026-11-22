@@ -27,6 +27,7 @@ import "cgen";
 import "ngen";
 import "runtime_c";
 import "runtime_trk";
+import "lsp";
 
 fn trackc_version() -> i64 { return "1.0.0"; }
 
@@ -42,6 +43,7 @@ fn usage() -> i64 {
     err("    trackc tokens <file.trk>               Dump the token stream\n");
     err("    trackc life <file.trk>                 Dump inferred lifecycle summaries\n");
     err("    trackc life --place <file.trk>         Dump the placement plan per allocation site\n");
+    err("    trackc lsp                             Language server (JSON-RPC over stdio)\n");
     err("    trackc --version                       Show version info\n");
     err("\nOPTIONS:\n");
     err("    --rt=track   link the runtime written in Track (compiler/rt/)\n");
@@ -546,6 +548,9 @@ fn main() -> i64 {
         }
         out(life_dump(c));
         return 0;
+    }
+    if text_eq(command, "lsp") {
+        return lsp_main();
     }
     if text_eq(command, "tokens") {
         cmd_tokens(require_file());

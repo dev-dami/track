@@ -1,0 +1,8 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"triggerCharacters":[".",":"]},"hoverProvider":true},"serverInfo":{"name":"trackc","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"Track LSP server initialized"}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///test.trk","diagnostics":[{"range":{"start":{"line":0,"character":9},"end":{"line":0,"character":10}},"severity":1,"code":"E0100","source":"trackc","message":"expected identifier, found '->'"}]}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///test.trk","diagnostics":[{"range":{"start":{"line":1,"character":12},"end":{"line":1,"character":13}},"severity":1,"code":"E0003","source":"trackc","message":"unterminated string literal"}]}}
+{"jsonrpc":"2.0","id":2,"result":{"contents":{"kind":"markdown","value":"Declare a variable\n\n```track\nlet x = 42;\n```"}}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///test.trk","diagnostics":[]}}
+{"jsonrpc":"2.0","id":3,"result":null}
+exit=0

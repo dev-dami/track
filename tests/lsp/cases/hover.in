@@ -1,0 +1,11 @@
+# hover docs for keywords, types, built-ins and macros; nothing elsewhere
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}
+{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///h.trk","languageId":"track","version":1,"text":"@macro twice(n: i32) -> i32 {\n    return n * 2;\n}\nfn main() -> i64 {\n    let mut p: ptr<i32>;\n    return 0;\n}\n"}}}
+{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///h.trk"},"position":{"line":0,"character":3}}}
+{"jsonrpc":"2.0","id":3,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///h.trk"},"position":{"line":4,"character":9}}}
+{"jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///h.trk"},"position":{"line":4,"character":16}}}
+{"jsonrpc":"2.0","id":5,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///h.trk"},"position":{"line":3,"character":0}}}
+{"jsonrpc":"2.0","id":6,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///h.trk"},"position":{"line":1,"character":12}}}
+{"jsonrpc":"2.0","id":7,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///h.trk"},"position":{"line":40,"character":0}}}
+{"jsonrpc":"2.0","id":8,"method":"shutdown"}
+{"jsonrpc":"2.0","method":"exit"}
