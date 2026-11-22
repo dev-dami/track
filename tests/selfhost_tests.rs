@@ -2293,7 +2293,13 @@ fn temps_free_fresh_cell_temporaries() {
     // stack as real calls (the C reference may, so it is native only).
     let deep = dir.join("accdeep_nat");
     let out = run_trackc(
-        &["build", "--native", "tests/temps_cell/accdeep.trk", "-o", deep.to_str().unwrap()],
+        &[
+            "build",
+            "--native",
+            "tests/temps_cell/accdeep.trk",
+            "-o",
+            deep.to_str().unwrap(),
+        ],
         &root,
     );
     assert!(out.status.success(), "accdeep: native build failed");
@@ -2350,7 +2356,14 @@ fn temps_free_fresh_cell_temporaries() {
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(
             stem,
-            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr" | "accret" | "accloop"
+            "nested"
+                | "print_loop"
+                | "branch"
+                | "discard"
+                | "str_cell"
+                | "tailr"
+                | "accret"
+                | "accloop"
         );
         // str_alias keeps `keep.name` alive to the end of main and drop glue never
         // frees Str, so LSan may report that one string depending on what the C
