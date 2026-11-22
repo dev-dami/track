@@ -1,0 +1,6 @@
+fn swap_add
+  L8 struct ret-slot ends L8
+fn main
+  L12 struct stack ends L22
+  L15 struct stack ends L16
+  L16 call stack ends L22

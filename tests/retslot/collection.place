@@ -1,0 +1,7 @@
+fn mk
+  L6 struct ret-slot ends L6
+fn main
+  L13 array stack ends L16
+  L13 call heap ends -
+  L13 call heap ends -
+  L13 call heap ends -

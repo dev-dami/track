@@ -1,0 +1,13 @@
+fn down
+  L8 struct ret-slot ends L8
+  L10 call stack ends L11
+  L11 struct ret-slot ends L11
+fn even
+  L16 struct ret-slot ends L16
+  L18 call ret-slot ends L18
+fn odd
+  L23 struct ret-slot ends L23
+  L25 call ret-slot ends L25
+fn main
+  L32 call stack ends L34
+  L33 call stack ends L34

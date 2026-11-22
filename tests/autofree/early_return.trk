@@ -3,8 +3,11 @@
 // read; a block that ends normally frees its own.
 struct Pair { a: i64, b: i64 }
 
+// Returns through a local, so it has no ret-slot entry (L10) and its
+// results stay heap-autofree cells.
 fn mk(a: i64, b: i64) -> Pair {
-    return Pair { a: a, b: b };
+    let p = Pair { a: a, b: b };
+    return p;
 }
 
 fn find(limit: i64) -> i64 {
