@@ -1,0 +1,13 @@
+fn take
+  L11 struct stack ends L12
+  L11 call heap ends -
+fn main
+  L20 call heap ends -
+  L22 struct heap ends -
+  L22 call heap ends -
+  L24 struct stack ends L26
+  L24 call heap ends -
+  L25 struct stack ends L26
+  L30 call heap ends -
+  L31 struct heap ends -
+  L31 call heap ends -

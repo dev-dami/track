@@ -30,3 +30,4 @@ scratch/benchmarks/rec
 !tests/handles/*.out
 !tests/temps/*.out
 !tests/temps_cell/*.out
+!tests/strfield/*.out

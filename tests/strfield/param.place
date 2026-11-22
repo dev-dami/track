@@ -1,0 +1,7 @@
+fn build_local
+  L10 struct heap ends -
+fn build_temp
+  L15 struct temp-autofree deep ends L15
+fn main
+  L19 struct heap-autofree deep strs ends L28
+  L19 call heap ends -

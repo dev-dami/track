@@ -1,0 +1,18 @@
+// L13e: a cell temporary whose Str field is a fresh string owns it, so
+// drop glue frees the string with the cell at the consumer.
+struct Named { name: Str, n: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3000 {
+        total = total + weight(&Named { name: int_to_str(i), n: 1 });
+        total = total + weight(&Named { n: 2, name: str_concat("ab", int_to_str(i)) });
+        i = i + 1;
+    }
+    print(total);
+}
