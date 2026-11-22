@@ -3,11 +3,11 @@
 # three ways (trackc --native, trackc via C/gcc -O2, the Rust compiler), with
 # output checked identical, plus native self-compile time. A second table adds wall ms, page faults and
 # user-vs-total (user+kernel) cycles so never-freed heap cost is visible.
-# Usage: bench/native.sh [trackc]   (default build/bootstrap/stage3/trackc)
+# Usage: bench/native.sh [trackc]   (default $BOOTSTRAP_DIR/stage3/trackc, else build/bootstrap/stage3/trackc)
 # Exit 1 on any output mismatch or build failure.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
-T=${1:-build/bootstrap/stage3/trackc}
+T=${1:-${BOOTSTRAP_DIR:-build/bootstrap}/stage3/trackc}
 case "$T" in /*) ;; *) T="$root/$T" ;; esac
 R=${RUST_TRACK:-$root/target/release/track}
 runs=${RACE_RUNS:-3}
