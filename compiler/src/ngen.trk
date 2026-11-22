@@ -86,7 +86,8 @@ const NG_FREEV = 59;   // name id -> 0 unknown, else ng_free_ok's names for the 
 const NG_NAMESV = 60;  // name id -> 0 unknown, else ng_list_names_ok's names for the function's whole body
 const NG_BARS = 61;    // ng_stack_bars of the function ng_function is generating, for both passes
 const NG_BINDSTK = 62; // (kind, value) pairs of the arguments ng_bind_args is binding, nested calls above
-const NG_SLOTS = 63;
+const NG_ACCCARRY = 63; // accumulator loop: (call, slot, HK_*) per argument temporary its back edges carry, or -1 (F3)
+const NG_SLOTS = 64;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -1623,9 +1624,11 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     let saved_body = ng(c, NG_ACCBODY);
     let saved_pend = ng(c, NG_ACCRET);
     let saved_lvl = ng(c, NG_ACCLVL);
+    let saved_carry = ng(c, NG_ACCCARRY);
     if accmode {
         let acc = ng_slot(c);
         ng_set_imm(c, acc, 0);
+        ng_acc_carry_init(c, f);
         ng_set(c, NG_ACC, acc);
         ng_set(c, NG_ACCTOP, x_here(ncode(c)));
         ng_set(c, NG_ACCBODY, -1);
@@ -1648,6 +1651,7 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
         ng_set(c, NG_ACCBODY, saved_body);
         ng_set(c, NG_ACCRET, saved_pend);
         ng_set(c, NG_ACCLVL, saved_lvl);
+        ng_set(c, NG_ACCCARRY, saved_carry);
     }
     ng_set(c, NG_RETVAL, saved_ret);
     ng_inline_end(c, mark);
@@ -4373,15 +4377,15 @@ fn ng_for(c: i64, n: i64) -> i64 {
     return x_mov_rax_imm(b, 0);
 }
 
-// `return x + f(args)` in f itself: an accumulator-recursion return. Not
-// when the plan frees an argument temporary after the call: the back edge
-// replaces the call, so nothing would free it.
+// `return x + f(args)` in f itself: an accumulator-recursion return. An
+// argument temporary the plan frees after the call is carried by the back
+// edge instead (ng_acc_carry_init).
 fn ng_is_acc_return(c: i64, f: i64, value: i64) -> bool {
     if value < 0 || nk(c, value) != K_BIN || na(c, value) != OP_ADD {
         return false;
     }
     let call = nc(c, value);
-    if nk(c, call) != K_CALL || ng_call_target(c, call) != f || ng_has_temps(c, call) {
+    if nk(c, call) != K_CALL || ng_call_target(c, call) != f {
         return false;
     }
     return list_len(c, nb(c, call)) * 2 == list_len(c, nc(c, f));
@@ -4443,13 +4447,108 @@ fn ng_find_acc_in(c: i64, f: i64, l: i64, autos: i64) -> i64 {
     return found;
 }
 
-// rax += the accumulator of an accumulator-recursive function.
+// rax += the accumulator of an accumulator-recursive function, at an exit
+// of its loop: the temporaries its last back edge carried die here.
 fn ng_add_acc(c: i64) -> i64 {
     let acc = ng(c, NG_ACC);
     if acc < 0 {
         return 0;
     }
+    if vlen(ng(c, NG_ACCCARRY)) > 0 {
+        let b = ncode(c);
+        x_push_rax(b);
+        ng_acc_carry_free(c);
+        x_pop_rax(b);
+    }
     return ng_op_apply(c, OP_ADD, 0, 2, acc);
+}
+
+// Argument temporaries of accumulator loop `f` (card F3). As a call,
+// `x + f(.., &mk(n), ..)` frees the cell after f returns; as a loop the
+// cell becomes the next iteration's parameter. Each one gets a slot,
+// zeroed here before the loop head: a back edge frees what the slots hold
+// (the previous iteration's temporaries, unreachable once the new
+// arguments are stored) and parks its own temporaries in them; every exit
+// frees them too (ng_add_acc). The plan only makes a temporary of an
+// argument f neither keeps nor returns, and never a stack cell in a
+// `return` (pl_temp_cell), so a parked cell is reachable through the
+// parameter alone.
+fn ng_acc_carry_init(c: i64, f: i64) -> i64 {
+    let carry = vnew();
+    let rs = life_fn_rets(c, f);
+    let mut i: i64 = 0;
+    while i < vlen(rs) {
+        let value = na(c, vget(rs, i));
+        if ng_is_acc_return(c, f, value) {
+            let call = nc(c, value);
+            let args = nb(c, call);
+            let mut j: i64 = 0;
+            while j < list_len(c, args) {
+                let mut a = list_at(c, args, j);
+                if nk(c, a) == K_ADDR {
+                    a = na(c, a);
+                }
+                if life_temp_of(c, a) == call {
+                    let k = ng_slot(c);
+                    ng_set_imm(c, k, 0);
+                    vpush(carry, call);
+                    vpush(carry, k);
+                    vpush(carry, gen_temp_code(c, a));
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return ng_set(c, NG_ACCCARRY, carry);
+}
+
+// Free and clear every carry slot that holds a temporary.
+fn ng_acc_carry_free(c: i64) -> i64 {
+    let b = ncode(c);
+    let carry = ng(c, NG_ACCCARRY);
+    let mut i: i64 = 0;
+    while i < vlen(carry) {
+        let k = vget(carry, i + 1);
+        ng_load(c, k);
+        x_test_rax(b);
+        let skip = x_jcc(b, 4);
+        ng_free_temp(c, vget(carry, i + 2));
+        ng_set_imm(c, k, 0);
+        x_patch_here(b, skip);
+        i = i + 3;
+    }
+    return 0;
+}
+
+// Back edge of accumulator return `call`, its new arguments stored in the
+// parameters: free the temporaries the last back edge parked, then park
+// this call's own (its NG_TEMPS entries from `mark` on) in its slots.
+fn ng_acc_carry(c: i64, call: i64, mark: i64) -> i64 {
+    let carry = ng(c, NG_ACCCARRY);
+    if vlen(carry) == 0 {
+        return 0;
+    }
+    ng_acc_carry_free(c);
+    let temps = ng(c, NG_TEMPS);
+    let mut i = mark;
+    let mut j: i64 = 0;
+    while i < vlen(temps) {
+        if vget(temps, i) == call {
+            while vget(carry, j) != call {
+                j = j + 3;
+            }
+            ng_load(c, vget(temps, i + 1));
+            ng_store(c, vget(carry, j + 1));
+            vset(temps, i, -1);
+            j = j + 3;
+        }
+        i = i + 3;
+    }
+    while vlen(temps) > 0 && vget(temps, vlen(temps) - 3) == -1 {
+        vtrunc(temps, vlen(temps) - 3);
+    }
+    return 0;
 }
 
 // Back edge of an accumulator loop. With its guard already passed once
@@ -4511,12 +4610,15 @@ fn ng_return(c: i64, n: i64) -> i64 {
         } else {
             x_rm(b, 1, 0, 5, ng_disp(c, acc));
         }
-        let args = nb(c, nc(c, value));
+        let call = nc(c, value);
+        let args = nb(c, call);
         let tmps = vnew();
         let fparams = nc(c, ng(c, NG_ACCFN));
+        let mark = vlen(ng(c, NG_TEMPS));
         if list_len(c, args) == 1 {
             ng_gen_into(c, list_at(c, args, 0), ni(c, list_at(c, fparams, 0), NI_CVAR));
             ng_frees(c, base);
+            ng_acc_carry(c, call, mark);
             return ng_acc_back(c);
         }
         let mut i: i64 = 0;
@@ -4532,6 +4634,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
             j = j + 1;
         }
         ng_frees(c, base);
+        ng_acc_carry(c, call, mark);
         return ng_acc_back(c);
     }
     // A tail call frees the heap-autofree locals after its arguments are
@@ -5120,6 +5223,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     }
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_ACCLVL, 0);
+    ng_set(c, NG_ACCCARRY, vnew());
     ng_set(c, NG_CURFN, f);
     ng_set(c, NG_NOSTACK, ng(c, NG_BARS));
     vtrunc(ng(c, NG_AUTO), 0);
@@ -5129,6 +5233,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     if returns == 1 && !is_main && mode != 2 && ng_find_acc(c, f, ne(c, f)) {
         let acc = ng_slot(c);
         ng_set_imm(c, acc, 0);
+        ng_acc_carry_init(c, f);
         ng_set(c, NG_ACC, acc);
         ng_set(c, NG_ACCFN, f);
         ng_set(c, NG_ACCTOP, x_here(b));

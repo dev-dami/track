@@ -5,6 +5,7 @@
 // after its free. accdeep.trk runs the same shapes a million levels deep.
 struct In { v: i64 }
 struct Box { r: In, n: i64 }
+struct P { a: i64, c: i64 }
 
 fn mk(i: i64) -> Box { return Box { r: In { v: i }, n: 1 }; }
 
@@ -27,6 +28,9 @@ fn acc2(n: i64, a: &Box, b: &Str) -> i64 {
 // parameter is read again by the exit return
 fn accp(n: i64, b: &Box) -> i64 { if n == 0 { return b.r.v + b.n; } return b.r.v + accp(n - 1, &mk(b.r.v - 1)); }
 
+// a literal temporary built from the parameter it replaces, fields swapped
+fn sw(n: i64, b: &P) -> i64 { if n == 0 { return b.a * 10 + b.c; } return b.a + sw(n - 1, &P { a: b.c, c: b.a }); }
+
 fn main() -> void {
     let before = sys_get_memory_used();
     print(acc(20000, &mk(5)));
@@ -34,5 +38,6 @@ fn main() -> void {
     print(accs(20000, &int_to_str(5)));
     print(acc2(20000, &mk(5), &int_to_str(5)));
     print(accp(20000, &mk(30000)));
+    print(sw(20001, &P { a: 1, c: 2 }));
     print(sys_get_memory_used() - before);
 }
