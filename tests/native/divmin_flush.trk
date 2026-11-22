@@ -1,0 +1,12 @@
+// INT64_MIN / -1 traps like a zero divisor: stdout is flushed, then
+// SIGFPE. Other divisions by -1 compute: x / -1 == -x, x % -1 == 0.
+
+fn main() -> i64 {
+    let m = -1;
+    print(7 / m);
+    print(7 % m);
+    print(9223372036854775807 / m);
+    let a = -9223372036854775807 - 1;
+    print(a / m);
+    return 0;
+}

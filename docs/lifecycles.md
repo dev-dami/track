@@ -26,6 +26,11 @@ and others call the allocating `tk_<f>` (C structs: 74 faults, ~70 ms).
 L12b landed: ngen emits the same `<f>__rs` entries (the cell as one
 more argument, returned in rax) and passes the same cells, so native
 frees match C (native structs 0.83 of C user cycles, 178M vs 222M).
+L13b landed: a fresh Str or handle passed straight to a call whose
+summary for that parameter is die-only (not kept, freed or returned, and
+the result not derived from it), or used as a discarded statement, is
+dumped `temp-autofree` and freed right after that call in both backends
+(ASan self-compile leaks 340,813 allocations, was 584,001).
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors

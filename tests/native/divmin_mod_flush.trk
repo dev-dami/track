@@ -1,0 +1,9 @@
+// INT64_MIN % -1 traps like a zero divisor: stdout is flushed, then SIGFPE.
+
+fn main() -> i64 {
+    let m = -1;
+    print(-5 % m);
+    let a = -9223372036854775807 - 1;
+    print(a % m);
+    return 0;
+}

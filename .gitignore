@@ -28,3 +28,4 @@ scratch/benchmarks/rec
 !tests/retslot/*.out
 !tests/names/*.out
 !tests/handles/*.out
+!tests/temps/*.out

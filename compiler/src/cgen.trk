@@ -33,7 +33,8 @@ const G_PROTOS = 11;  // user function prototypes
 const G_RS = 12;      // current function: C name of its ret-slot cell parameter, or 0
 const G_INTONODE = 13; // literal site `gen_site_cell` writes into G_INTOCELL, or -1
 const G_INTOCELL = 14;
-const G_SLOTS = 15;
+const G_TEMPS = 15;    // current function: (consumer node, value text, HK_*) of live temporaries (L13b)
+const G_SLOTS = 16;
 
 fn g(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn g_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -423,8 +424,38 @@ fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
 }
 
 // A call; when `rs` is not 0 the callee has a ret-slot entry (card L10)
-// and `rs` is the C text of the cell it writes its result into.
+// and `rs` is the C text of the cell it writes its result into. The
+// temporaries the plan says die at this call are freed right after it
+// (card L13b); a temp-autofree result is freed by its consumer, or here
+// when it is a discarded statement.
 fn gen_call_rs(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
+    let t = gen_call_value(c, n, args_list, rs);
+    let temps = g(c, G_TEMPS);
+    let mut i: i64 = 0;
+    while i < vlen(temps) {
+        if vget(temps, i) == n {
+            emit(c, text_cat3(hd_free_name(vget(temps, i + 2)), "(", text_cat(vget(temps, i + 1), ");")));
+            vset(temps, i, -1);
+        }
+        i = i + 3;
+    }
+    while vlen(temps) > 0 && vget(temps, vlen(temps) - 3) == -1 {
+        vtrunc(temps, vlen(temps) - 3);
+    }
+    let consumer = life_temp_of(c, n);
+    if consumer == n {
+        emit(c, text_cat3(hd_free_name(life_auto_handle(c, n)), "(", text_cat(t, ");")));
+        return "0";
+    }
+    if consumer >= 0 {
+        vpush(temps, consumer);
+        vpush(temps, t);
+        vpush(temps, life_auto_handle(c, n));
+    }
+    return t;
+}
+
+fn gen_call_value(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
     let name = na(c, n);
     let args = gen_list_values(c, args_list);
     if is_qualified(c, name) {
@@ -1200,6 +1231,7 @@ fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
     }
     g_set(c, G_RETVAL, returns);
     g_set(c, G_AUTO, vnew());
+    g_set(c, G_TEMPS, vnew());
     g_set(c, G_INTONODE, -1);
     let rs = life_ret_slot_fn(c, f);
     g_set(c, G_RS, 0);
@@ -1405,6 +1437,7 @@ fn generate_c(c: i64) -> i64 {
     vset(c, CX_GEN, state);
     g_set(c, G_BOUND, vnew());
     g_set(c, G_AUTO, vnew());
+    g_set(c, G_TEMPS, vnew());
     g_set(c, G_EXTERNS, vnew());
     g_set(c, G_FUNCS, sb_new());
     g_set(c, G_PROTOS, sb_new());

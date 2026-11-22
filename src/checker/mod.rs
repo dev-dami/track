@@ -23,6 +23,9 @@ pub struct LinearChecker {
     pub current_return_type: Option<TrackType>,
     pub barebones: bool,
     pub loaded_modules: std::collections::HashSet<String>,
+    /// Functions defined so far, across the root file and every module it
+    /// imports, so a clash between them is E0201 as in trackc.
+    pub defined_fns: std::collections::HashSet<String>,
     /// Enum/union layouts and aliases for codegen, including imported modules.
     pub type_info: crate::codegen::TypeInfo,
     pub const_values: HashMap<String, i64>,
@@ -74,6 +77,7 @@ impl LinearChecker {
             current_return_type: None,
             barebones: false,
             loaded_modules: std::collections::HashSet::new(),
+            defined_fns: std::collections::HashSet::new(),
             type_info: crate::codegen::TypeInfo::default(),
             const_values: HashMap::new(),
             structs: HashMap::new(),
@@ -463,7 +467,6 @@ impl LinearChecker {
             }
         } // end if !barebones — std package (import "std") still works via Use handling
 
-        let mut defined = std::collections::HashSet::new();
         for stmt in program {
             match stmt {
                 Expr::ConstDef { name, value } => {
@@ -532,7 +535,7 @@ impl LinearChecker {
                     return_type,
                     ..
                 } => {
-                    if !defined.insert(name.clone()) {
+                    if !self.defined_fns.insert(name.clone()) {
                         return Err(format!(
                             "error[E0201]: duplicate definition of function '{}'",
                             name
@@ -993,6 +996,24 @@ impl LinearChecker {
 
             Expr::ForIn { var, iter, body } => {
                 self.check_expr(iter)?;
+                // As trackc: a known scalar is not iterable (codegen would
+                // read it as an array header and fault).
+                if !matches!(iter.as_ref(), Expr::Range { .. })
+                    && matches!(
+                        self.infer_type(iter),
+                        Some(
+                            TrackType::U8
+                                | TrackType::I8
+                                | TrackType::I32
+                                | TrackType::U32
+                                | TrackType::I64
+                                | TrackType::U64
+                                | TrackType::Bool
+                        )
+                    )
+                {
+                    return Err("error[E0200]: `for` iterates over a range or an array; use `for i in 0..n` to count.".to_string());
+                }
                 let iter_ty = self.infer_type(iter).map(|ty| match ty {
                     TrackType::Ref(inner) => *inner,
                     other => other,

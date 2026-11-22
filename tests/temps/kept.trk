@@ -1,0 +1,21 @@
+// L13b: a temporary passed to a function that keeps it is never freed:
+// the collection owns it afterwards.
+fn stash(keep: i64, s: Str) -> void {
+    track_i64_collection_push(keep, s);
+}
+
+fn main() -> void {
+    let keep: i64 = track_i64_collection_new(4);
+    let mut i: i64 = 0;
+    while i < 4 {
+        track_i64_collection_push(keep, int_to_str(i));
+        stash(keep, str_concat("s", &int_to_str(i)));
+        i = i + 1;
+    }
+    let mut j: i64 = 0;
+    while j < track_i64_collection_len(keep) {
+        print(track_i64_collection_get(keep, j));
+        j = j + 1;
+    }
+    print(sys_get_memory_used());
+}

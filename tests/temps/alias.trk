@@ -1,0 +1,22 @@
+// L13b: a temporary the outer call's result may alias is never freed.
+fn same(s: Str) -> Str {
+    return s;
+}
+
+fn either(a: Str, b: Str, first: bool) -> Str {
+    if first {
+        return a;
+    }
+    return b;
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    while i < 3 {
+        print(same(int_to_str(i)));
+        let e: Str = either(int_to_str(i), str_concat("e", "!"), i % 2 == 0);
+        print(e);
+        i = i + 1;
+    }
+    print(sys_get_memory_used());
+}

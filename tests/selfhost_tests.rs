@@ -1803,6 +1803,157 @@ fn handles_free_fresh_values() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Auto-free of fresh temporaries (card L13b, docs/lifecycles.md §3.5): a
+/// fresh Str or handle passed straight to a call that neither keeps, frees
+/// nor returns it is freed right after that call; a discarded fresh
+/// statement right after itself. Every program in tests/temps/ prints its
+/// `<stem>.out` with both backends and plans as its `<stem>.place` golden
+/// (`UPDATE_LIFE=1` rewrites them). Where gcc has AddressSanitizer, the C
+/// builds run with no memory error, and the programs whose temporaries all
+/// die leak nothing.
+#[test]
+fn temps_free_fresh_temporaries() {
+    let root = repo();
+    let update = env::var("UPDATE_LIFE").is_ok();
+    let dir = scratch("temps");
+    let stems = ["alias", "discard", "kept", "nested", "print_loop"];
+    let mut plans = String::new();
+    for stem in stems {
+        let rel = format!("tests/temps/{}.trk", stem);
+        let want = fs::read_to_string(root.join(format!("tests/temps/{}.out", stem))).unwrap();
+        let exe = dir.join(stem);
+        let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
+        assert!(
+            out.status.success(),
+            "{}: build failed: {}",
+            rel,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            run_exe(&exe),
+            (want.clone(), Some(0)),
+            "{}: C output differs",
+            rel
+        );
+        let nat = dir.join(format!("{}_nat", stem));
+        let out = run_trackc(
+            &["build", "--native", &rel, "-o", nat.to_str().unwrap()],
+            &root,
+        );
+        assert!(out.status.success(), "{}: native build failed", rel);
+        assert_eq!(
+            run_exe(&nat),
+            (want, Some(0)),
+            "{}: native output differs",
+            rel
+        );
+        let plan = run_trackc(&["life", "--place", &rel], &root);
+        let got = String::from_utf8_lossy(&plan.stdout).into_owned();
+        let golden = root.join(format!("tests/temps/{}.place", stem));
+        if update {
+            fs::write(&golden, &got).unwrap();
+        }
+        let want = fs::read_to_string(&golden)
+            .unwrap_or_else(|_| panic!("missing golden {}", golden.display()));
+        assert_eq!(got, want, "{}: placement plan differs", rel);
+        plans.push_str(&format!("{}:\n{}", stem, got));
+    }
+    let block = |prog: &str| -> String {
+        let b = plans.split(&format!("{}:\n", prog)).nth(1).unwrap_or("");
+        b.split(":\n").next().unwrap_or("").to_string()
+    };
+    for (prog, line, count, why) in [
+        (
+            "print_loop",
+            "str temp-autofree",
+            2,
+            "int_to_str passed to print and str_len is freed",
+        ),
+        (
+            "nested",
+            "str temp-autofree",
+            6,
+            "every nested fresh argument is freed",
+        ),
+        (
+            "discard",
+            "str temp-autofree",
+            3,
+            "discarded results and their fresh arguments are freed",
+        ),
+        (
+            "kept",
+            "L12 str temp-autofree ends L12",
+            1,
+            "int_to_str lent to str_concat is freed",
+        ),
+    ] {
+        let got = block(prog).matches(line).count();
+        assert_eq!(got, count, "{}: `{}` x{} in\n{}", why, line, count, plans);
+    }
+    for (prog, kept) in [("kept", "L11 "), ("alias", "temp-autofree")] {
+        assert!(
+            !block(prog)
+                .lines()
+                .any(|l| l.trim_start().starts_with(kept.trim_end()) && l.contains("temp-autofree")),
+            "{}: a temporary that is kept or aliased (`{}`) must not be freed:\n{}",
+            prog,
+            kept,
+            plans
+        );
+    }
+    let asan = Command::new("gcc")
+        .args(["-fsanitize=address", "-x", "c", "-", "-o"])
+        .arg(dir.join("probe"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"int main(void){return 0;}")?;
+            child.wait()
+        })
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !asan {
+        let _ = fs::remove_dir_all(&dir);
+        return;
+    }
+    for stem in stems {
+        let rel = format!("tests/temps/{}.trk", stem);
+        let exe = dir.join(format!("{}_asan", stem));
+        let out = Command::new(trackc())
+            .args(["build", &rel, "-o", exe.to_str().unwrap()])
+            .env("CC", "gcc -fsanitize=address -g")
+            .env("TRACKC_CACHE", dir.join("cache"))
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}: ASan build failed", rel);
+        let all_die = matches!(stem, "discard" | "nested" | "print_loop");
+        let leaks = if all_die {
+            "detect_leaks=1"
+        } else {
+            "detect_leaks=0"
+        };
+        let run = Command::new(&exe)
+            .env("ASAN_OPTIONS", leaks)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success() && !err.contains("Sanitizer"),
+            "{}: ASan reports an error or a leak:\n{}",
+            rel,
+            err
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Caller return slots in the C backend (card L10, docs/lifecycles.md
 /// §3.2): every program in tests/retslot/ builds, prints its `<stem>.out`
 /// and plans as its `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them).
@@ -2156,5 +2307,42 @@ fn for_in_exit_and_div_trap_on_both_runtimes() {
         "for over an integer accepted: {}",
         err
     );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// K3c: `INT64_MIN / -1` (and `% -1`) traps like a zero divisor on every
+/// backend and runtime: what was printed is flushed, then SIGFPE. Native
+/// once took the hardware idiv fault and lost the buffered output.
+#[test]
+fn int64_min_div_minus_one_flushes_on_every_backend() {
+    use std::os::unix::process::ExitStatusExt;
+    let dir = scratch("k3c_divmin");
+    for (stem, want) in [
+        ("divmin_flush", "-7\n0\n-9223372036854775807\n"),
+        ("divmin_mod_flush", "0\n"),
+    ] {
+        let src = repo().join(format!("tests/native/{}.trk", stem));
+        for mode in ["", "--rt=track", "--native"] {
+            let exe = dir.join(format!("{}{}", stem, mode.replace(['-', '='], "_")));
+            let mut args = vec!["build"];
+            if !mode.is_empty() {
+                args.push(mode);
+            }
+            args.extend([src.to_str().unwrap(), "-o", exe.to_str().unwrap()]);
+            let out = run_trackc(&args, &dir);
+            assert!(out.status.success(), "{} {}: build failed", stem, mode);
+            let out = Command::new(&exe).output().unwrap();
+            assert_eq!(
+                (
+                    String::from_utf8_lossy(&out.stdout).to_string(),
+                    out.status.signal()
+                ),
+                (want.to_string(), Some(8)),
+                "{} {}: output lost or wrong signal",
+                stem,
+                mode
+            );
+        }
+    }
     let _ = fs::remove_dir_all(&dir);
 }
