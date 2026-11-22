@@ -153,11 +153,20 @@ t_generics_monomorphization() {
 
 # codegen_semantics_tests.rs ------------------------------------------------
 
-t_executables_are_position_independent() {
+# A static x86-64 ELF: ET_EXEC, machine x86-64, no PT_INTERP (no loader).
+t_executables_are_static_elf() {
     write "$T/pie.trk" 'fn main() -> i64 { print(25988585); return 0; }
 '
     build "$T/pie.trk" "$T/pie"
-    eq "$(u16_at "$T/pie" 16)" 3 "ELF type must be ET_DYN (PIE)"
+    eq "$(u16_at "$T/pie" 16)" 2 "ELF type must be ET_EXEC"
+    eq "$(u16_at "$T/pie" 18)" 62 "machine must be x86-64"
+    local phoff entsize count i
+    phoff=$(u64_at "$T/pie" 32)
+    entsize=$(u16_at "$T/pie" 54)
+    count=$(u16_at "$T/pie" 56)
+    for i in $(seq 0 $((count - 1))); do
+        [ "$(u32_at "$T/pie" $((phoff + i * entsize)))" != 3 ] || fail "PT_INTERP present"
+    done
     observe "$T/pie"
     stdout_is '25988585\n' "stdout"
 }

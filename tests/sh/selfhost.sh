@@ -15,22 +15,14 @@ t_build_creates_missing_output_directories() {
     eq "$OUT" 7 "output"
 }
 
-t_runtime_object_is_cached_and_builds_stay_identical() {
-    local cache="$T/cache"
+t_builds_stay_identical_in_any_directory() {
     write "$T/a.trk" "fn main() -> void { print(1); }"
-    write "$T/b.trk" "fn main() -> void { print(1); }"
-    objects() { find "$cache" -maxdepth 1 -type f -name '*.o' 2>/dev/null | wc -l | tr -d ' '; }
-    cap env TRACKC_CACHE="$cache" "$TRACKC" build "$T/a.trk" -o "$T/out1/a"
+    cap "$TRACKC" build "$T/a.trk" -o "$T/out1/a"
     rc_ok "build 1"
-    eq "$(objects)" 1 "first build should store one runtime object"
-    cap env TRACKC_CACHE="$cache" "$TRACKC" build "$T/a.trk" -o "$T/out2/a"
+    cap_in "$T/out1" "$TRACKC" build "$T/a.trk" -o "$T/out2/a"
     rc_ok "build 2"
-    eq "$(objects)" 1 "second build should reuse it"
-    same_file "$T/out1/a" "$T/out2/a" "cached builds"
-    cap env TRACKC_CACHE="$cache" "$TRACKC" build "$T/b.trk" -o "$T/out3/b"
-    rc_ok "build 3"
-    eq "$(objects)" 1 "third build"
-    observe "$T/out3/b"
+    same_file "$T/out1/a" "$T/out2/a" "builds"
+    observe "$T/out2/a"
     eq "$OUT" 1 "output"
 }
 
@@ -45,12 +37,12 @@ t_native_binaries_carry_a_symbol_table() {
 }
 fn main() -> void { print(sum_down(100)); }
 '
-    trackc build --native -g "$T/s.trk" -o "$T/s"
+    trackc build -g "$T/s.trk" -o "$T/s"
     rc_ok "build -g"
     observe "$T/s"
     eq "$OUT" 5050 "output"
     # without -g: the same loaded image, no sections
-    trackc build --native "$T/s.trk" -o "$T/plain"
+    trackc build "$T/s.trk" -o "$T/plain"
     rc_ok "build"
     local lw lp
     lw=$(fsize "$T/s")
@@ -74,7 +66,6 @@ t_bootstrap_reaches_a_fixed_point() {
     rc_ok "stage1"
     in_repo "$T/stage2/trackc" build compiler/src/main.trk -o "$T/stage3/trackc"
     rc_ok "stage2"
-    same_file "$T/stage2/trackc.c" "$T/stage3/trackc.c" "stage1 and stage2 emitted C"
     same_file "$T/stage2/trackc" "$T/stage3/trackc" "stage2 and stage3 executables"
 }
 
@@ -174,63 +165,14 @@ t_native_test_suite_passes_under_trackc() {
     [ "$n" -gt 0 ] || fail "no compiler/tests"
 }
 
-# run_both_runtimes STEM SRC: build with the C runtime and --rt=track, run
-# both; saved runs "crt" and "trt".
-run_both_runtimes() {
-    trackc build "$2" -o "$T/$1_crt"
-    rc_ok "$1: build"
-    trackc build --rt=track "$2" -o "$T/$1_trt"
-    rc_ok "$1: --rt=track build"
-    is_exe "$T/$1_crt" "$1: build"
-    is_exe "$T/$1_trt" "$1: --rt=track build"
-    observe "$T/$1_crt"
-    save_run crt
-    observe "$T/$1_trt"
-    save_run trt
-}
-
-# The Track runtime (compiler/rt/*.trk) links without libc and behaves like
-# runtime/track_runtime.c on the examples and the runtime smoke tests.
-t_track_runtime_matches_the_c_runtime() {
-    local p s
-    for p in $( (trk_files "$ROOT/examples" | grep -v -e '_err\.trk$' -e '/net_demo\.trk$'
-        echo "$ROOT/compiler/rt/tests/rt_smoke.trk"
-        for s in rt_alloc rt_alloc_nz rt_memlimit rt_memlimit_realloc rt_lcache rt_memlimit_lcache sb_spare; do
-            echo "$ROOT/tests/native/$s.trk"
-        done) | LC_ALL=C sort); do
-        [ -f "$p" ] || fail "missing $p"
-        s=$(stem "$p")
-        run_both_runtimes "$s" "$p"
-        same_run crt trt "$s: behaviour differs between runtimes"
-        rm -f "$T/${s}_crt" "$T/${s}_trt"
-    done
-}
-
-t_program_without_main_runs_on_both_runtimes() {
+t_program_without_main_runs() {
     write "$T/nomain.trk" 'let x = 41;
 print(x + 1);
 '
-    run_both_runtimes nomain "$T/nomain.trk"
-    printf '42\n' >"$T/.want42"
-    same_file "$T/.run_crt.out" "$T/.want42" "C runtime stdout"
-    eq "$(cat "$T/.run_crt.rc")" 0 "C runtime exit"
-    same_run crt trt "behaviour differs between runtimes"
-}
-
-# trackc linked against the Track runtime (no libc) compiles the compiler to
-# the same C as trackc on the C runtime.
-t_trackc_on_the_track_runtime_self_compiles() {
-    mkdir -p "$T/rt" "$T/a" "$T/b"
-    in_repo "$TRACKC" build --rt=track compiler/src/main.trk -o "$T/rt/trackc"
-    rc_ok "--rt=track build of trackc"
-    if grep_bytes "$T/rt/trackc" libc.so; then
-        fail "trackc on the Track runtime must not link libc"
-    fi
-    in_repo "$TRACKC" build compiler/src/main.trk -o "$T/a/trackc"
-    rc_ok "C-runtime build of trackc"
-    in_repo "$T/rt/trackc" build compiler/src/main.trk -o "$T/b/trackc"
-    rc_ok "trackc on the Track runtime"
-    same_file "$T/a/trackc.c" "$T/b/trackc.c" "trackc on the Track runtime emitted C"
+    build "$T/nomain.trk" "$T/nomain"
+    observe "$T/nomain"
+    stdout_is '42\n' "stdout"
+    rc_ok "exit"
 }
 
 # Warnings channel: two unused bindings, sorted by position; only
@@ -373,33 +315,23 @@ t_lifecycle_lookalikes_check_clean() {
     eq "$n" 10 "case count"
 }
 
-# body FILE START: the text from the first line containing START up to the
-# next line that is exactly "}".
-c_body() {
-    awk -v s="$2" 'f && $0 == "}" { exit } !f && index($0, s) { f = 1; print substr($0, index($0, s)); next } f { print }' "$1"
-}
-
 # A tuple literal that never escapes lives in a stack slot: 20M of them in a
 # loop allocate nothing, while one that is returned stays a heap cell.
 t_non_escaping_tuples_use_stack_slots() {
     write "$T/t3.trk" 'fn pair(n: i64) -> (i64, i64) { let r = (n, n + 1); return r; } fn main() -> void { let mut i = 0; let mut acc = 0; while i < 20000000 { let p = (i, 1); acc = acc + p.1; i = i + 1; } print(acc); print(pair(4).1); }'
     trackc_in "$T" build "$T/t3.trk" -o "$T/t3"
     rc_ok "build"
-    local main_body pair_body
-    grep -qF 'tk_w tk_main(void) {' "$T/t3.c" || fail "no tk_main in t3.c"
-    grep -qF 'tk_w tk_pair(tk_w a0) {' "$T/t3.c" || fail "no tk_pair in t3.c"
-    main_body=$(c_body "$T/t3.c" 'tk_w tk_main(void) {')
-    pair_body=$(c_body "$T/t3.c" 'tk_w tk_pair(tk_w a0) {')
-    lacks "$main_body" "alloc(" "loop tuple must not allocate"
-    lacks "$main_body" "alloc_nz(" "loop tuple must not allocate"
-    case "$pair_body" in
-        *"alloc("* | *"alloc_nz("*) ;;
-        *) fail "returned tuple must be a heap cell:
-$pair_body" ;;
-    esac
-    # 64 MB of address space is far below what 20M heap cells need.
-    cap sh -c "ulimit -v 65536; exec \"$T/t3\""
-    rc_ok "t3 under a 64 MB limit"
+    trackc_in "$T" life --place "$T/t3.trk"
+    rc_ok "life --place"
+    eq "$OUT" "fn pair
+  L1 tuple heap ends -
+fn main
+  L1 tuple stack ends L1
+  L1 call heap ends -" "placement: loop tuple on the stack, returned tuple on the heap"
+    # The native runtime reserves its heap up front, so an address-space
+    # limit cannot tell the two apart; the placement plan above is the check.
+    observe "$T/t3"
+    rc_ok "t3"
     stdout_is '20000000\n5\n' "t3"
 }
 

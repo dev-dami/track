@@ -1,0 +1,10 @@
+churn ok = 1
+churn used = 0
+smaller zeroed = 1
+smaller kept = 1
+smaller used = 200000
+grow to cache = 1
+grow within = 1
+grow past = 1
+grow used = 3000000
+end used = 0

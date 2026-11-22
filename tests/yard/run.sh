@@ -19,7 +19,7 @@ fi
 export TRACKC
 if [ -z "${YARD_BIN:-}" ]; then
     YARD_BIN="$WORK/yard"
-    "$TRACKC" build --native "$ROOT/tools/yard/main.trk" -o "$YARD_BIN" >/dev/null || {
+    "$TRACKC" build "$ROOT/tools/yard/main.trk" -o "$YARD_BIN" >/dev/null || {
         echo "FAIL: cannot build tools/yard/main.trk with $TRACKC"; exit 1; }
 fi
 Y="$YARD_BIN"

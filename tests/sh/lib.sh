@@ -173,7 +173,6 @@ build() {
 # without writing its output is a failure).
 is_exe() { [ -f "$1" ] && [ -x "$1" ] || fail "$2: no executable at $1"; }
 
-build_native() { build "$1" "$2" --native; }
 
 # write FILE TEXT: write TEXT verbatim (printf %s, no added newline).
 write() { printf '%s' "$2" >"$1"; }
@@ -189,24 +188,6 @@ trk_files() {
 stem() { local b=${1##*/}; echo "${b%.*}"; }
 
 # Toolchain probes ----------------------------------------------------------
-
-# have_asan: gcc can build and run an AddressSanitizer program (cached).
-have_asan() {
-    if [ -z "${TRACK_HAVE_ASAN:-}" ]; then
-        TRACK_HAVE_ASAN=no
-        if command -v gcc >/dev/null 2>&1; then
-            local d
-            d=$(mktemp -d "$T/.asan.XXXX")
-            printf 'int main(void){return 0;}\n' >"$d/a.c"
-            if gcc -fsanitize=address "$d/a.c" -o "$d/a" >/dev/null 2>&1 && "$d/a" >/dev/null 2>&1; then
-                TRACK_HAVE_ASAN=yes
-            fi
-            rm -rf "$d"
-        fi
-        export TRACK_HAVE_ASAN
-    fi
-    [ "$TRACK_HAVE_ASAN" = yes ]
-}
 
 have() { command -v "$1" >/dev/null 2>&1; }
 

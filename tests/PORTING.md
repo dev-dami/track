@@ -21,6 +21,12 @@ Totals: 165 tests (162 `#[test]`, 3 `#[tokio::test]` in lsp_tests.rs).
 A 80 ported; B 63 (60 trackc halves ported, 3 dropped); C 12 mapped
 (9 yard, 3 LSP); D 10 ported. No class-A test is dropped.
 
+Card NOC removed the C backend and the C runtime: every test runs the
+native backend only. Tests that compared C with native or needed cc/gcc/ASan
+were converted or dropped as each row says; the C backend's outputs for
+tests/native, bench/progs and rt_smoke are frozen in
+`tests/cases/native_runs/`. tests/run.sh runs 94 tests.
+
 Known differences from the Rust checks:
 
 - A signal death is checked as exit status 128+N (SIGFPE = 136); a program
@@ -63,7 +69,7 @@ Run: `tests/run.sh [-j N]` (see its header). Locations are
 | codegen_semantics_tests.rs::block_bindings_do_not_leak_into_the_enclosing_scope | A | lang.sh::block_bindings_do_not_leak_into_the_enclosing_scope | |
 | codegen_semantics_tests.rs::constants_fold_comparisons_and_variants | A | lang.sh::constants_fold_comparisons_and_variants | |
 | codegen_semantics_tests.rs::division_by_zero_flushes_and_raises_sigfpe | A | lang.sh::division_by_zero_flushes_and_raises_sigfpe | status 136 (SIGFPE) |
-| codegen_semantics_tests.rs::executables_are_position_independent | A | lang.sh::executables_are_position_independent | ET_DYN via od |
+| codegen_semantics_tests.rs::executables_are_position_independent | A | lang.sh::executables_are_static_elf | ET_EXEC, no PT_INTERP (card NOC; was ET_DYN) |
 | codegen_semantics_tests.rs::for_in_binds_array_elements | A | lang.sh::for_in_binds_array_elements | |
 | codegen_semantics_tests.rs::if_and_match_produce_values | A | lang.sh::if_and_match_produce_values | |
 | codegen_semantics_tests.rs::int64_min_div_minus_one_flushes_and_raises_sigfpe | A | lang.sh::int64_min_div_minus_one_flushes_and_raises_sigfpe | |
@@ -112,15 +118,15 @@ Run: `tests/run.sh [-j N]` (see its header). Locations are
 | lsp_tests.rs::test_lsp_completion (#[tokio::test]) | C | PR #37 tests/lsp/cases/basic.in (id 2: same text, position 1:6, label "let") | same source and position |
 | lsp_tests.rs::test_lsp_hover (#[tokio::test]) | C | PR #37 tests/lsp/cases/basic.in (id 3: "Print a value to stdout") | same source and position |
 | lsp_tests.rs::test_lsp_initialization (#[tokio::test]) | C | PR #37 tests/lsp/cases/basic.in (id 1: completionProvider + hoverProvider in capabilities) | not counted by `grep '#[test]'` |
-| native_tests.rs::native_and_c_print_the_expected_output | A | tests/sh/native.sh::t_native_and_c_print_the_expected_output | a signal N is exit 128+N (SIGFPE = 136) |
-| native_tests.rs::native_and_track_rt_reject_what_check_rejects | A | tests/sh/native.sh::t_native_and_track_rt_reject_what_check_rejects | |
+| native_tests.rs::native_and_c_print_the_expected_output | A | tests/sh/native.sh::t_native_traps_print_the_expected_output | native only (card NOC); a signal N is exit 128+N (SIGFPE = 136) |
+| native_tests.rs::native_and_track_rt_reject_what_check_rejects | A | tests/sh/native.sh::t_native_build_rejects_what_check_rejects | native only (card NOC) |
 | native_tests.rs::native_build_needs_no_c_toolchain | A | tests/sh/native.sh::t_native_build_needs_no_c_toolchain | |
 | native_tests.rs::native_compiler_reaches_a_fixed_point | A | tests/sh/native.sh::t_native_compiler_reaches_a_fixed_point | stage1 is $TRACKC (seed bootstrap) instead of the yard-built trackc |
 | native_tests.rs::native_executables_have_a_non_executable_stack | A | tests/sh/native.sh::t_native_executables_have_a_non_executable_stack | ELF header read with od |
 | native_tests.rs::native_flag_is_honoured_in_any_position | A | tests/sh/native.sh::t_native_flag_is_honoured_in_any_position | |
 | native_tests.rs::native_identical_string_literals_compare_equal | A | tests/sh/native.sh::t_native_identical_string_literals_compare_equal | |
 | native_tests.rs::native_program_without_main_builds | A | tests/sh/native.sh::t_native_program_without_main_builds | |
-| native_tests.rs::native_programs_match_the_c_backend | A | tests/sh/native.sh::t_native_programs_match_the_c_backend | |
+| native_tests.rs::native_programs_match_the_c_backend | A | tests/sh/native.sh::t_native_programs_print_their_goldens | goldens recorded from the C backend in tests/cases/native_runs/ (card NOC) |
 | native_tests.rs::native_tuples_outlive_their_frame | A | tests/sh/native.sh::t_native_tuples_outlive_their_frame | |
 | parser_tests.rs::test_parse_array_type_and_literal | B | parser_sources_parse row parse_array_type_and_literal | |
 | parser_tests.rs::test_parse_enum_and_union | B | parser_sources_parse row parse_enum_and_union | |
@@ -147,7 +153,7 @@ Run: `tests/run.sh [-j N]` (see its header). Locations are
 | regression_tests.rs::test_regression_nested_lens_blocks | B | checker_verdicts row regression_nested_lens_blocks | |
 | regression_tests.rs::test_regression_shadowed_variables | B | checker_verdicts row regression_shadowed_variables | |
 | regression_tests.rs::test_regression_top_level_variables_and_deref | B | checker_verdicts row regression_top_level_variables_and_deref | |
-| selfhost_tests.rs::autofree_frees_heap_cells | A | tests/sh/lifecycle.sh::t_autofree_frees_heap_cells | `dealloc(l` in C, ASan detect_leaks=0 |
+| selfhost_tests.rs::autofree_frees_heap_cells | A | tests/sh/lifecycle.sh::t_autofree_frees_heap_cells | .out/.place (card NOC dropped the C-text and ASan checks) |
 | selfhost_tests.rs::bootstrap_reaches_a_fixed_point | A | tests/sh/selfhost.sh::t_bootstrap_reaches_a_fixed_point | stage1 is $TRACKC (seed bootstrap) instead of yard-built |
 | selfhost_tests.rs::build_creates_missing_output_directories | A | tests/sh/selfhost.sh::t_build_creates_missing_output_directories | |
 | selfhost_tests.rs::checkers_agree_on_accepted_and_rejected_programs | B | tests/sh/selfhost.sh::t_checkers_agree_on_accepted_and_rejected_programs | Rust checker half dropped; 34 trackc verdicts in tests/cases/verdicts/{accept,reject} |
@@ -157,9 +163,9 @@ Run: `tests/run.sh [-j N]` (see its header). Locations are
 | selfhost_tests.rs::duplicate_functions_are_rejected | A | tests/sh/lifecycle.sh::t_duplicate_functions_are_rejected | check+build, one file and import |
 | selfhost_tests.rs::examples_behave_the_same_under_both_compilers | B | tests/sh/selfhost.sh::t_examples_behave_the_same_under_both_compilers | stage0 build dropped; stage0 behaviour frozen in tests/cases/examples/*.out/.code (captured from the Rust compiler), trackc compared to it; _err examples must be rejected |
 | selfhost_tests.rs::examples_warn_only_where_intended | A | tests/sh/selfhost.sh::t_examples_warn_only_where_intended | |
-| selfhost_tests.rs::for_in_exit_and_div_trap_on_both_runtimes | A | tests/sh/lifecycle.sh::t_for_in_exit_and_div_trap_on_both_runtimes | signal checked as status 136 |
-| selfhost_tests.rs::handles_free_fresh_values | A | tests/sh/lifecycle.sh::t_handles_free_fresh_values | C+native .out, free fns in C, coll_move exact block, kept-not-freed, ASan |
-| selfhost_tests.rs::int64_min_div_minus_one_flushes_on_every_backend | A | tests/sh/lifecycle.sh::t_int64_min_div_minus_one_flushes_on_every_backend | C, --rt=track, --native; status 136 |
+| selfhost_tests.rs::for_in_exit_and_div_trap_on_both_runtimes | A | tests/sh/lifecycle.sh::t_for_in_exit_and_div_trap_keep_output | native only (card NOC); signal checked as status 136 |
+| selfhost_tests.rs::handles_free_fresh_values | A | tests/sh/lifecycle.sh::t_handles_free_fresh_values | .out, coll_move exact block, kept-not-freed (card NOC dropped the C-text and ASan checks) |
+| selfhost_tests.rs::int64_min_div_minus_one_flushes_on_every_backend | A | tests/sh/native.sh::t_native_traps_print_the_expected_output | divmin cases; status 136 (card NOC merged it) |
 | selfhost_tests.rs::life_dumps_match_goldens | A | tests/sh/lifecycle.sh::t_life_dumps_match_goldens | tests/life/*.life goldens, UPDATE_LIFE kept |
 | selfhost_tests.rs::life_place_dumps_match_goldens | A | tests/sh/lifecycle.sh::t_life_place_dumps_match_goldens | .place goldens + 5 rule lines |
 | selfhost_tests.rs::lifecycle_hard_errors_print_the_catalogue_texts | A | tests/sh/selfhost.sh::t_lifecycle_hard_errors_print_the_catalogue_texts | 19 cases in tests/cases/life_errors |
@@ -167,22 +173,22 @@ Run: `tests/run.sh [-j N]` (see its header). Locations are
 | selfhost_tests.rs::lifecycle_warnings_match_the_catalogue | A | tests/sh/selfhost.sh::t_lifecycle_warnings_match_the_catalogue | near misses in tests/cases/life_warn_clean |
 | selfhost_tests.rs::native_binaries_carry_a_symbol_table | A | tests/sh/selfhost.sh::t_native_binaries_carry_a_symbol_table | skips without nm, as before |
 | selfhost_tests.rs::native_test_suite_passes_under_trackc | A | tests/sh/selfhost.sh::t_native_test_suite_passes_under_trackc | |
-| selfhost_tests.rs::non_escaping_tuples_use_stack_slots | A | tests/sh/selfhost.sh::t_non_escaping_tuples_use_stack_slots | |
-| selfhost_tests.rs::program_without_main_runs_on_both_runtimes | A | tests/sh/selfhost.sh::t_program_without_main_runs_on_both_runtimes | |
-| selfhost_tests.rs::ret_slots_write_caller_cells | A | tests/sh/lifecycle.sh::t_ret_slots_write_caller_cells | `__rs(` in C, 11 rule lines, ASan |
-| selfhost_tests.rs::returns_hidden_in_expressions_are_seen | A | tests/sh/lifecycle.sh::t_returns_hidden_in_expressions_are_seen | banned-plan checks, ASan |
+| selfhost_tests.rs::non_escaping_tuples_use_stack_slots | A | tests/sh/selfhost.sh::t_non_escaping_tuples_use_stack_slots | placement plan instead of emitted C (card NOC) |
+| selfhost_tests.rs::program_without_main_runs_on_both_runtimes | A | tests/sh/selfhost.sh::t_program_without_main_runs | one runtime since card NOC |
+| selfhost_tests.rs::ret_slots_write_caller_cells | A | tests/sh/lifecycle.sh::t_ret_slots_write_caller_cells | 11 rule lines (card NOC dropped the C-text and ASan checks) |
+| selfhost_tests.rs::returns_hidden_in_expressions_are_seen | A | tests/sh/lifecycle.sh::t_returns_hidden_in_expressions_are_seen | banned-plan checks (card NOC dropped ASan) |
 | selfhost_tests.rs::runtime_layout_consts_stay_reserved | A | tests/sh/lifecycle.sh::t_runtime_layout_consts_stay_reserved | E0201 under --native |
-| selfhost_tests.rs::runtime_object_is_cached_and_builds_stay_identical | A | tests/sh/selfhost.sh::t_runtime_object_is_cached_and_builds_stay_identical | |
-| selfhost_tests.rs::stack_cells_run_and_plan | A | tests/sh/lifecycle.sh::t_stack_cells_run_and_plan | .out/.place, `tk_w s0[` in C |
-| selfhost_tests.rs::strfield_frees_owned_str_fields | A | tests/sh/lifecycle.sh::t_strfield_frees_owned_str_fields | ` strs ` ownership checks, LSan for 5 |
+| selfhost_tests.rs::runtime_object_is_cached_and_builds_stay_identical | A | tests/sh/selfhost.sh::t_builds_stay_identical_in_any_directory | no runtime object cache since card NOC |
+| selfhost_tests.rs::stack_cells_run_and_plan | A | tests/sh/lifecycle.sh::t_stack_cells_run_and_plan | .out/.place (card NOC dropped the C-text check) |
+| selfhost_tests.rs::strfield_frees_owned_str_fields | A | tests/sh/lifecycle.sh::t_strfield_frees_owned_str_fields | ` strs ` ownership checks (card NOC dropped LSan) |
 | selfhost_tests.rs::string_plus_string_is_a_type_error | A | tests/sh/lifecycle.sh::t_string_plus_string_is_a_type_error | 3 rejects + ptr arith accepted |
-| selfhost_tests.rs::temps_free_fresh_cell_temporaries | A | tests/sh/lifecycle.sh::t_temps_free_fresh_cell_temporaries | accdeep native, LSan for the 8 all-die programs |
-| selfhost_tests.rs::temps_free_fresh_temporaries | A | tests/sh/lifecycle.sh::t_temps_free_fresh_temporaries | counts per block, ASan+LSan for discard/nested/print_loop |
-| selfhost_tests.rs::track_runtime_matches_the_c_runtime | A | tests/sh/selfhost.sh::t_track_runtime_matches_the_c_runtime | |
+| selfhost_tests.rs::temps_free_fresh_cell_temporaries | A | tests/sh/lifecycle.sh::t_temps_free_fresh_cell_temporaries | accdeep (card NOC dropped LSan) |
+| selfhost_tests.rs::temps_free_fresh_temporaries | A | tests/sh/lifecycle.sh::t_temps_free_fresh_temporaries | counts per block (card NOC dropped ASan/LSan) |
+| selfhost_tests.rs::track_runtime_matches_the_c_runtime | A | dropped (card NOC: no C runtime); its programs run against tests/cases/native_runs/ goldens | |
 | selfhost_tests.rs::trackc_closes_checker_holes | A | tests/sh/selfhost.sh::t_trackc_closes_checker_holes | 46 cases in tests/cases/trackc_verdicts |
-| selfhost_tests.rs::trackc_on_the_track_runtime_self_compiles | A | tests/sh/selfhost.sh::t_trackc_on_the_track_runtime_self_compiles | |
+| selfhost_tests.rs::trackc_on_the_track_runtime_self_compiles | A | dropped (card NOC: covered by native_compiler_reaches_a_fixed_point and scripts/bootstrap.sh) | |
 | selfhost_tests.rs::trackc_programs_print_the_expected_output | A | tests/sh/selfhost.sh::t_trackc_programs_print_the_expected_output | 10 cases in tests/cases/run_outputs |
-| selfhost_tests.rs::user_names_never_clash_with_runtime_names | A | tests/sh/lifecycle.sh::t_user_names_never_clash_with_runtime_names | C, --rt=track, --native |
+| selfhost_tests.rs::user_names_never_clash_with_runtime_names | A | tests/sh/lifecycle.sh::t_user_names_never_clash_with_runtime_names | native only (card NOC) |
 | selfhost_tests.rs::warnings_print_sorted_and_only_deny_warnings_fails | A | tests/sh/selfhost.sh::t_warnings_print_sorted_and_only_deny_warnings_fails | |
 | soundness_tests.rs::test_soundness_double_move_rejected | B | checker_verdicts row soundness_double_move_rejected | |
 | soundness_tests.rs::test_soundness_inconsistent_branch_move_rejected | B | checker_verdicts row soundness_inconsistent_branch_move_rejected | "inconsistent state" |

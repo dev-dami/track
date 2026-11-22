@@ -1,0 +1,33 @@
+small cells zero and intact = 1
+live cells sum = 199990000
+used back to start = 262168
+growth steps = 30
+growth intact = 1
+growth used = 4549430
+shrunk intact = 1
+shrunk used = 1000
+regrown intact = 1
+growth freed = 0
+boundary sizes = 1
+large reuse zero = 1
+all freed = 0
+vec len = 300000
+vec last = 899997
+vec mid = 370368
+collection len = 250000
+collection get = 1249995
+sb len = 968890
+sb char = 59
+concat len = 1937780
+0 1 2 -1
+9 10 11 -10
+99 100 101 -100
+999 1000 1001 -1000
+9999 10000 10001 -10000
+99999 100000 100001 -100000
+999999 1000000 1000001 -1000000
+9999999 10000000 10000001 -10000000
+99999999 100000000 100000001 -100000000
+999999999 1000000000 1000000001 -1000000000
+99999999 12345678 10203 9223372036854775807
+push_int mismatches = 0
