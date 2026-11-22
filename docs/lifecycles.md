@@ -17,14 +17,15 @@ L11 landed: ngen puts the same `stack` literals in contiguous frame slots
 L12a landed: ngen frees the same `heap-autofree` cells as cgen, drop glue
 included, with an inlined free and a free-list pop in the inlined alloc
 (native structs 0.66 of C user cycles, total cycles 322M vs C 477M).
-
 L10 landed: functions whose result is exactly `fresh`, of a flat struct
 or tuple type, and whose every `return` is a literal or another such
 call get a `tk_<f>__rs` entry with a hidden last cell parameter; callers
 pass a stack slot or the local's own cell (no temp slot: the callee
 stores only after every word is in a temp, so `acc = f(&acc)` is safe),
 and others call the allocating `tk_<f>` (C structs: 74 faults, ~70 ms).
-Native ret-slot calls wait for L12.
+L12b landed: ngen emits the same `<f>__rs` entries (the cell as one
+more argument, returned in rax) and passes the same cells, so native
+frees match C (native structs 0.83 of C user cycles, 178M vs 222M).
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors

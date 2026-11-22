@@ -219,6 +219,18 @@ bytes in use down, block onto its class's free list; large blocks call
 `dealloc`), and the inlined allocator pops a freed block of 32 or 64
 bytes and zeroes its payload before it bumps the arena.
 
+Functions with a caller return slot (`life_ret_slot_fn`, card L10) are
+emitted twice (card L12b): `<f>__rs` takes the address of the result cell
+as one more argument after its own (the next argument register, or
+pushed last when that makes more than six words, popped by the callee's
+`ret imm16`), writes it at each `return` once every word is in a temp,
+and returns it in rax; `return g(..)` passes it on as a tail call; `<f>`
+allocates the cell and calls `<f>__rs`. `let x = f(..)` with `x` stack
+passes a run of frame slots, `x = f(..)` with `x` stack or heap-autofree
+passes `x`'s own cell (nothing is freed), and every other call uses
+`<f>`. An inlined ret-slot body writes the caller's cell, or a heap cell
+where the call would use `<f>`.
+
 The runtime is Track code loaded with the program: the compiler/rt
 modules embedded in `runtime_trk.trk`. It is loaded only after the user
 program has been checked (also for `--rt=track`), so its plain-`i64`
