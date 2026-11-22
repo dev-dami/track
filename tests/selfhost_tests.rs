@@ -2221,6 +2221,10 @@ fn temps_free_fresh_temporaries() {
 /// call's copy, a branch condition) that must still free the temporary.
 /// accret: a native accumulator return (`x + f(&fresh)`) keeps its call so
 /// the temporary is freed.
+/// accpass (card F3b): an accumulator loop whose returns pass a parameter
+/// on (unchanged, swapped, a field of it, a local or a literal) never frees
+/// a cell a parameter still points at. Its leaks are not checked: `mkn`'s
+/// Str field is never freed by the plan, on either backend.
 #[test]
 fn temps_free_fresh_cell_temporaries() {
     let root = repo();
@@ -2228,6 +2232,7 @@ fn temps_free_fresh_cell_temporaries() {
     let dir = scratch("temps_cell");
     let stems = [
         "accloop",
+        "accpass",
         "accret",
         "alias",
         "branch",
