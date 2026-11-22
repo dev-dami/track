@@ -2124,6 +2124,7 @@ fn temps_free_fresh_cell_temporaries() {
         );
     }
     let nested = plans.split("nested:\n").nth(1).unwrap_or("");
+    let nested = nested.split(":\n").next().unwrap_or("");
     assert_eq!(
         nested.matches("call temp-autofree deep").count(),
         3,
