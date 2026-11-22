@@ -74,13 +74,10 @@ Track is self-hosting: \`trackc\` is written in Track and compiles itself to a v
 # Clone the repository
 git clone https://github.com/dev-dami/track.git
 cd track
-
 # cc -> stage1..3 -> native; trackc is build/bootstrap/stage3/trackc
 scripts/bootstrap.sh
-
 # yard, written in Track
 build/bootstrap/stage3/trackc build --native tools/yard/main.trk -o yard
-
 # Or bootstrap and install trackc + yard in one step
 ./scripts/install.sh
 \`\`\`
