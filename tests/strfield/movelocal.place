@@ -1,0 +1,10 @@
+fn make
+  L10 call heap ends -
+  L11 struct ret-slot ends L11
+fn main
+  L18 call heap ends -
+  L18 str temp-autofree ends L18
+  L19 struct heap-autofree deep strs ends L20
+  L21 call heap ends -
+  L22 struct temp-autofree deep strs ends L22
+  L23 call temp-autofree deep strs ends L23

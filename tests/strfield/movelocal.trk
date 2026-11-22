@@ -1,0 +1,27 @@
+// L15: a fresh Str local moved into a struct literal field, with no later
+// mention, is owned by the cell: it is freed with it.
+struct Named { name: Str, n: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn make(n: i64) -> Named {
+    let s = int_to_str(n);
+    return Named { name: s, n: n };
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3000 {
+        let s = str_concat("k", int_to_str(i));
+        let x = Named { name: s, n: 1 };
+        total = total + weight(&x);
+        let t = int_to_str(i * 2);
+        total = total + weight(&Named { n: 2, name: t });
+        total = total + weight(&make(i));
+        i = i + 1;
+    }
+    print(total);
+}

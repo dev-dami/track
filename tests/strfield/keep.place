@@ -1,0 +1,19 @@
+fn make
+  L13 struct ret-slot ends L13
+  L13 call heap ends -
+fn hold
+  L17 struct heap ends -
+  L17 call heap ends -
+fn name_of
+  L21 call stack ends L22
+fn wrap
+  L26 struct heap ends -
+fn maybe
+  L31 call heap ends -
+  L34 struct heap ends -
+fn main
+  L41 call heap-autofree ends L42
+  L43 call heap ends -
+  L44 call heap-autofree deep ends L45
+  L46 call temp-autofree deep ends L46
+  L50 call heap ends -

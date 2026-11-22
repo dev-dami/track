@@ -1216,7 +1216,10 @@ fn levenshtein(a: i64, b: i64) -> i64 {
         prev = cur;
         i = i + 1;
     }
-    return vget(prev, m);
+    // Read before returning, so `prev` is freed here (L15: `prev = cur`
+    // moves each row's ownership; `return vget(prev, ..)` would keep it).
+    let d = vget(prev, m);
+    return d;
 }
 
 fn check_call_target(c: i64, n: i64, name: i64) -> i64 {

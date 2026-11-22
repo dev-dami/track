@@ -1,0 +1,53 @@
+// L15: `prev = cur`, where the move is the last mention of a fresh
+// collection `cur` (every other use lent), moves ownership: `prev` frees
+// its old row there and its last row at its end; `cur` is never freed
+// itself. A move under a loop, or one with a later mention, keeps both.
+fn rows(m: i64, n: i64) -> i64 {
+    let mut prev = track_i64_collection_new(m + 1);
+    track_i64_collection_push(prev, 0);
+    let mut i: i64 = 1;
+    while i <= n {
+        let cur = track_i64_collection_new(m + 1);
+        track_i64_collection_push(cur, i + track_i64_collection_get(prev, 0));
+        prev = cur;
+        i = i + 1;
+    }
+    let d = track_i64_collection_get(prev, 0);
+    return d;
+}
+
+fn looped(n: i64) -> i64 {
+    let mut prev = track_i64_collection_new(2);
+    track_i64_collection_push(prev, 1);
+    let cur = track_i64_collection_new(2);
+    track_i64_collection_push(cur, 2);
+    let mut i: i64 = 0;
+    while i < n {
+        prev = cur;
+        i = i + 1;
+    }
+    let d = track_i64_collection_get(prev, 0);
+    return d;
+}
+
+fn after(n: i64) -> i64 {
+    let mut prev = track_i64_collection_new(2);
+    track_i64_collection_push(prev, n);
+    let cur = track_i64_collection_new(2);
+    track_i64_collection_push(cur, n + 1);
+    prev = cur;
+    track_i64_collection_push(cur, 5);
+    let d = track_i64_collection_get(prev, 1);
+    return d;
+}
+
+fn main() -> void {
+    let mut t: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 200 {
+        t = t + rows(4, k) + looped(2) + after(k);
+        k = k + 1;
+    }
+    print(t);
+    print(sys_get_memory_used());
+}
