@@ -3,7 +3,10 @@
 // The image is one PT_LOAD segment (read/write/execute) mapped at
 // ELF_BASE: the 64-byte ELF header, two 56-byte program headers (the
 // PT_LOAD and a PT_GNU_STACK asking for a non-executable stack), then the
-// code and data bytes. No sections, no dynamic linker, no libc. Files are
+// code and data bytes. With symbols (`-g`), the unloaded .symtab, .strtab
+// and .shstrtab and the section headers (.text, .data and those three)
+// follow, so nm, objdump, perf and gdb name every generated function;
+// without, there are no sections. No dynamic linker, no libc. Files are
 // written with `open64`/`write`/`fchmod`/`close` and `memset` so the bytes
 // may hold NULs. These libc names link from libc on the C path and under
 // the Rust bootstrap compiler (which knows no machine builtins); the
@@ -24,7 +27,9 @@ fn elf_u16(b: i64, v: i64) -> i64 {
 // The ELF and program headers (ELF_HEADERS bytes) of the executable whose
 // code+data `body` (byte vector) has the entry point at body offset
 // `entry`. The body follows the headers in the file (elf_write_file).
-fn elf_headers(body: i64, entry: i64) -> i64 {
+// `shoff`/`shnum`: file offset and count of the section headers (0, 0 for
+// none); the last section is the section-name table.
+fn elf_headers(body: i64, entry: i64, shoff: i64, shnum: i64) -> i64 {
     let b = vnew_cap(ELF_HEADERS);
     // e_ident
     x_byte(b, 127);
@@ -41,14 +46,20 @@ fn elf_headers(body: i64, entry: i64) -> i64 {
     x_u32(b, 1);
     x_u64(b, ELF_BASE + ELF_HEADERS + entry);
     x_u64(b, 64);   // e_phoff
-    x_u64(b, 0);    // e_shoff
+    x_u64(b, shoff); // e_shoff
     x_u32(b, 0);    // e_flags
     elf_u16(b, 64); // e_ehsize
     elf_u16(b, 56); // e_phentsize
     elf_u16(b, 2);  // e_phnum
-    elf_u16(b, 0);
-    elf_u16(b, 0);
-    elf_u16(b, 0);
+    if shnum > 0 {
+        elf_u16(b, 64);        // e_shentsize
+        elf_u16(b, shnum);
+        elf_u16(b, shnum - 1); // e_shstrndx
+    } else {
+        elf_u16(b, 0);
+        elf_u16(b, 0);
+        elf_u16(b, 0);
+    }
     // program header: PT_LOAD, RWX, whole file
     let size = ELF_HEADERS + vlen(body);
     x_u32(b, 1);
@@ -71,20 +82,125 @@ fn elf_headers(body: i64, entry: i64) -> i64 {
     return b;
 }
 
+// Append text `t` and a NUL to byte vector `b`; returns its offset.
+fn elf_str(b: i64, t: i64) -> i64 {
+    let at = vlen(b);
+    let bytes = text_bytes(t);
+    let mut i: i64 = 0;
+    while i < vlen(bytes) {
+        vpush(b, vget(bytes, i));
+        i = i + 1;
+    }
+    vpush(b, 0);
+    return at;
+}
+
+// One 64-byte section header.
+fn elf_section(b: i64, name: i64, kind: i64, flags: i64, addr: i64, off: i64, size: i64, link: i64, info: i64, align: i64, entsize: i64) -> i64 {
+    x_u32(b, name);
+    x_u32(b, kind);
+    x_u64(b, flags);
+    x_u64(b, addr);
+    x_u64(b, off);
+    x_u64(b, size);
+    x_u32(b, link);
+    x_u32(b, info);
+    x_u64(b, align);
+    return x_u64(b, entsize);
+}
+
+// The unloaded tail after the loaded bytes (headers + `body`, `code` bytes
+// of code then data): .symtab with one global STT_FUNC per (name text,
+// start, end) triple of `syms` (body offsets), .strtab, .shstrtab, then
+// the six section headers. Returns the tail; its section headers start at
+// tail offset vget(tail-info...) — see elf_write_file.
+fn elf_tail(body: i64, code: i64, syms: i64, shoff_out: i64) -> i64 {
+    let load = ELF_HEADERS + vlen(body);
+    let t = vnew_cap(65536);
+    while (load + vlen(t)) % 8 != 0 {
+        vpush(t, 0);
+    }
+    let strtab = vnew_cap(16384);
+    vpush(strtab, 0);
+    let symoff = load + vlen(t);
+    let mut z: i64 = 0;
+    while z < 24 {
+        vpush(t, 0); // the null symbol
+        z = z + 1;
+    }
+    let mut i: i64 = 0;
+    while i < vlen(syms) {
+        let start = vget(syms, i + 1);
+        x_u32(t, elf_str(strtab, vget(syms, i)));
+        x_byte(t, 18); // STB_GLOBAL, STT_FUNC
+        x_byte(t, 0);
+        elf_u16(t, 1); // .text
+        x_u64(t, ELF_BASE + ELF_HEADERS + start);
+        x_u64(t, vget(syms, i + 2) - start);
+        i = i + 3;
+    }
+    let symsize = load + vlen(t) - symoff;
+    let stroff = load + vlen(t);
+    let mut k: i64 = 0;
+    while k < vlen(strtab) {
+        vpush(t, vget(strtab, k));
+        k = k + 1;
+    }
+    let shstr = vnew();
+    vpush(shstr, 0);
+    let n_text = elf_str(shstr, ".text");
+    let n_data = elf_str(shstr, ".data");
+    let n_sym = elf_str(shstr, ".symtab");
+    let n_str = elf_str(shstr, ".strtab");
+    let n_shstr = elf_str(shstr, ".shstrtab");
+    let shstroff = load + vlen(t);
+    let mut q: i64 = 0;
+    while q < vlen(shstr) {
+        vpush(t, vget(shstr, q));
+        q = q + 1;
+    }
+    while (load + vlen(t)) % 8 != 0 {
+        vpush(t, 0);
+    }
+    vset(shoff_out, 0, load + vlen(t));
+    elf_section(t, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    let text = ELF_HEADERS;
+    elf_section(t, n_text, 1, 6, ELF_BASE + text, text, code, 0, 0, 16, 0);
+    elf_section(t, n_data, 1, 3, ELF_BASE + text + code, text + code, vlen(body) - code, 0, 0, 8, 0);
+    elf_section(t, n_sym, 2, 0, 0, symoff, symsize, 4, 1, 8, 24);
+    elf_section(t, n_str, 3, 0, 0, stroff, vlen(strtab), 0, 0, 1, 0);
+    elf_section(t, n_shstr, 3, 0, 0, shstroff, vlen(shstr), 0, 0, 1, 0);
+    return t;
+}
+
 // Write the executable with code+data `body` (byte vector, entry at
-// offset 0) to `path` with mode 0755. Returns 0 on success.
-fn elf_write_file(path: i64, body: i64) -> i64 {
-    let head = elf_headers(body, 0);
+// offset 0, the first `code` bytes code) to `path` with mode 0755, naming
+// the functions of `syms` (elf_tail), or with no sections when `syms` is
+// 0. Returns 0 on success.
+fn elf_write_file(path: i64, body: i64, code: i64, syms: i64) -> i64 {
+    let shoff = vfill(vnew(), 1, 0);
+    let mut tail = vnew();
+    let mut shnum: i64 = 0;
+    if syms != 0 {
+        tail = elf_tail(body, code, syms, shoff);
+        shnum = 6;
+    }
+    let head = elf_headers(body, 0, vget(shoff, 0), shnum);
     let h = vlen(head);
-    let n = h + vlen(body);
+    let m = h + vlen(body);
+    let n = m + vlen(tail);
     let buf: i64 = alloc(n + 8);
     let mut i: i64 = 0;
     while i < h {
         memset(buf + i, vget(head, i), 1);
         i = i + 1;
     }
-    while i < n {
+    while i < m {
         memset(buf + i, vget(body, i - h), 1);
+        i = i + 1;
+    }
+    while i < n {
+        memset(buf + i, vget(tail, i - m), 1);
         i = i + 1;
     }
     // open(path, O_WRONLY|O_CREAT|O_TRUNC, 0755)

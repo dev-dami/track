@@ -1,6 +1,7 @@
 // main.trk — trackc, the self-hosted Track compiler.
 //
 //   trackc build <file.trk> [-o <exe>]    compile to a native executable
+//   trackc build --native [-g] <file.trk> [-o <exe>]  static ELF; -g/--symbols adds .symtab
 //   trackc run <file.trk> [args...]       build to a temporary file and run
 //   trackc check <file.trk>               parse and ownership-check only
 //   --deny-warnings (any command, any position) makes warnings exit 1
@@ -34,6 +35,7 @@ fn usage() -> i64 {
     err("USAGE:\n");
     err("    trackc build <file.trk> [-o <exe>]     Compile to a native executable\n");
     err("    trackc build --native <file.trk> [-o <exe>]  Static x86-64 ELF, no C compiler\n");
+    err("        -g, --symbols                      ...with a symbol table (nm, perf, gdb)\n");
     err("    trackc run <file.trk> [args...]        Compile and run\n");
     err("    trackc check <file.trk>                Parse and ownership-check only\n");
     err("    trackc emit-c <file.trk> [-o <out.c>]  Write the generated C\n");
@@ -349,7 +351,7 @@ fn file_arg_index() -> i64 {
         let a = arg_text(i);
         if text_eq(a, "-o") {
             i = i + 2;
-        } else if text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") || text_eq(a, "--place") {
+        } else if text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") || text_eq(a, "--place") || text_eq(a, "-g") || text_eq(a, "--symbols") {
             i = i + 1;
         } else {
             return i;
@@ -375,8 +377,9 @@ fn link_command(dir: i64, cc: i64, opt: i64, base: i64, runtime: i64) -> i64 {
     return sb_text(cmd);
 }
 
-// `trackc build --native <file.trk> [-o <exe>]`: the program plus the Track
-// runtime, lowered straight to a static x86-64 ELF executable.
+// `trackc build --native [-g] <file.trk> [-o <exe>]`: the program plus the
+// Track runtime, lowered straight to a static x86-64 ELF executable; `-g`
+// (or `--symbols`) adds a symbol table naming every function.
 fn cmd_build_native(path: i64) -> i64 {
     let c = load_checked(path, true);
     let mut exe = output_flag();
@@ -388,7 +391,11 @@ fn cmd_build_native(path: i64) -> i64 {
     if body == 0 {
         quit(1);
     }
-    if elf_write_file(exe, body) != 0 {
+    let mut syms: i64 = 0;
+    if has_flag("-g") || has_flag("--symbols") {
+        syms = native_symbols(c); // .symtab (docs/native.md)
+    }
+    if elf_write_file(exe, body, native_code_len(c), syms) != 0 {
         err(text_cat3("trackc: cannot write '", exe, "'\n"));
         quit(1);
     }

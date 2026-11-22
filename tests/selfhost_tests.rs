@@ -117,6 +117,78 @@ fn runtime_object_is_cached_and_builds_stay_identical() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn native_binaries_carry_a_symbol_table() {
+    if Command::new("nm").arg("--version").output().is_err() {
+        eprintln!("skipping: nm not found");
+        return;
+    }
+    let dir = scratch("symbols");
+    let src = dir.join("s.trk");
+    // recursive, so the inliner keeps it out of line
+    fs::write(
+        &src,
+        "fn sum_down(n: i64) -> i64 {\n    if n <= 0 {\n        return 0;\n    }\n    return n + sum_down(n - 1);\n}\nfn main() -> void { print(sum_down(100)); }\n",
+    )
+    .unwrap();
+    let exe = dir.join("s");
+    let out = run_trackc(
+        &[
+            "build",
+            "--native",
+            "-g",
+            src.to_str().unwrap(),
+            "-o",
+            exe.to_str().unwrap(),
+        ],
+        &dir,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(run_exe(&exe).0.trim(), "5050");
+    // without -g: the same loaded image, no sections
+    let plain = dir.join("plain");
+    let out = run_trackc(
+        &[
+            "build",
+            "--native",
+            src.to_str().unwrap(),
+            "-o",
+            plain.to_str().unwrap(),
+        ],
+        &dir,
+    );
+    assert!(out.status.success());
+    let (with, without) = (fs::read(&exe).unwrap(), fs::read(&plain).unwrap());
+    assert!(with.len() > without.len());
+    assert_eq!(with[64..176], without[64..176], "program headers differ");
+    assert_eq!(
+        with[176..without.len()],
+        without[176..],
+        "loaded bytes differ"
+    );
+    let nm = Command::new("nm").arg(&exe).output().unwrap();
+    let text = String::from_utf8_lossy(&nm.stdout);
+    assert!(
+        nm.status.success(),
+        "nm failed: {}",
+        String::from_utf8_lossy(&nm.stderr)
+    );
+    let has = |name: &str| {
+        text.lines().any(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            f.len() == 3 && f[1] == "T" && f[2] == name
+        })
+    };
+    for name in ["main", "sum_down", "_start"] {
+        assert!(has(name), "nm lacks T {}:\n{}", name, text);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 fn run_exe(exe: &Path) -> (String, Option<i32>) {
     let out = Command::new(exe).output().unwrap();
     (
