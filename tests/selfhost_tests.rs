@@ -1822,7 +1822,11 @@ fn user_names_never_clash_with_runtime_names() {
 #[test]
 fn duplicate_functions_are_rejected() {
     let dir = scratch("dupfn");
-    fs::write(dir.join("other.trk"), "fn place_root() -> i64 { return 7; }\n").unwrap();
+    fs::write(
+        dir.join("other.trk"),
+        "fn place_root() -> i64 { return 7; }\n",
+    )
+    .unwrap();
     fs::write(
         dir.join("one.trk"),
         "fn place_root() -> i64 { return 1; }\nfn place_root() -> i64 { return 2; }\nfn main() -> i64 { print(place_root()); return 0; }\n",
@@ -1838,7 +1842,8 @@ fn duplicate_functions_are_rejected() {
             let out = run_trackc(&[mode, file], &dir);
             let err = String::from_utf8_lossy(&out.stderr);
             assert!(
-                !out.status.success() && err.contains("error[E0201]: duplicate definition of function 'place_root'"),
+                !out.status.success()
+                    && err.contains("error[E0201]: duplicate definition of function 'place_root'"),
                 "{} {}: duplicate accepted: {}",
                 mode,
                 file,
