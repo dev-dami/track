@@ -513,13 +513,21 @@ tk_w file_close(tk_w f) {
 }
 
 tk_w file_read_all(tk_w handle) {
+    /* Read to end of file, like rt/sys.trk's rt_read_fd: files whose size
+     * is not known up front (/proc, pipes) read whole too. */
     FILE *f = (FILE *)TK_PTR(handle);
-    if (!f || fseek(f, 0, SEEK_END) != 0) return TK_WORD(tk_dup(""));
-    long end = ftell(f);
-    if (end < 0 || fseek(f, 0, SEEK_SET) != 0) return TK_WORD(tk_dup(""));
-    char *buf = (char *)malloc((size_t)end + 1);
+    if (!f) return TK_WORD(tk_dup(""));
+    size_t cap = 4096, got = 0, n;
+    char *buf = (char *)malloc(cap + 1);
     if (!buf) exit(137);
-    size_t got = fread(buf, 1, (size_t)end, f);
+    while ((n = fread(buf + got, 1, cap - got, f)) > 0) {
+        got += n;
+        if (got == cap) {
+            cap *= 2;
+            buf = (char *)realloc(buf, cap + 1);
+            if (!buf) exit(137);
+        }
+    }
     buf[got] = '\0';
     return TK_WORD(buf);
 }

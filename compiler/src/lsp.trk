@@ -304,7 +304,10 @@ fn lsp_error(id: i64, code: i64, message: i64) -> i64 {
 
 
 // The next message body, or 0 at end of input. Headers are read a byte
-// at a time; track_stdin_read flushes pending replies first.
+// at a time; track_stdin_read flushes pending replies first. Text is
+// NUL-terminated, so a raw NUL byte (invalid JSON) cuts the body short:
+// the whole body is still consumed and the cut text gets a parse error.
+// An escaped \u0000 in a string is dropped (lj_utf8).
 fn lsp_read() -> i64 {
     let head = sb_new();
     while !text_ends(sb_text(head), "\n\n") && !text_ends(sb_text(head), "\n\r\n") {
@@ -321,7 +324,7 @@ fn lsp_read() -> i64 {
     }
     let length = math_max(str_to_int(str_substr(h, at + 14, text_len(h))), 0);
     let body: i64 = track_stdin_read(length);
-    if text_len(body) < length {
+    if length > 0 && text_len(body) == 0 {
         return 0;
     }
     return body;
@@ -396,7 +399,7 @@ fn lsp_lines(text: i64) -> i64 {
 // The scratch directory for the buffer and the child's output is
 // $TMPDIR/trackc-lsp-<tag> (/tmp without $TMPDIR). Commands name it
 // through the shell's own ${TMPDIR:-/tmp}, so nothing needs quoting:
-// the tag is digits and the document path travels in a file.
+// the tag is a UUID (hex and '-') and the document path travels in a file.
 fn lsp_dir(tag: i64, file: i64) -> i64 {
     let mut base: i64 = "/tmp";
     if env_exists("TMPDIR") != 0 && text_len(env_get("TMPDIR")) > 0 {
@@ -409,13 +412,52 @@ fn lsp_sh(tag: i64, file: i64) -> i64 {
     return text_cat3("\"${TMPDIR:-/tmp}/trackc-lsp-", tag, text_cat(file, "\""));
 }
 
-// This server's tag, making the directory on first use.
+// A tag is exactly a kernel UUID: 36 bytes of hex digits and '-'.
+fn lsp_tag_ok(tag: i64) -> bool {
+    let bytes = text_bytes(tag);
+    let mut ok = vlen(bytes) == 36;
+    let mut i: i64 = 0;
+    while ok && i < vlen(bytes) {
+        let x = vget(bytes, i);
+        ok = (x >= 48 && x <= 57) || (x >= 97 && x <= 102) || x == 45;
+        i = i + 1;
+    }
+    return ok;
+}
+
+// This server's tag, making the directory on first use, or 0 when no
+// private directory could be made (the server then publishes no
+// diagnostics). The name is a fresh random UUID from the kernel, so it
+// cannot be guessed ahead, and `mkdir -m 700` refuses any existing path,
+// a planted symlink included, so the files written inside are ours. A
+// reaper removes the directory once the server is gone, also when it
+// dies without reaching lsp_quit (SIGTERM, SIGKILL).
 fn lsp_tag(s: i64) -> i64 {
     if vget(s, LS_DIR) == 0 {
-        vset(s, LS_DIR, text_cat3(text_of_int(clock_ms()), "-", text_of_int(math_random() & 16777215)));
-        shell(text_cat("mkdir -m 700 ", lsp_sh(vget(s, LS_DIR), "")));
+        vset(s, LS_DIR, "");
+        let tag: i64 = str_trim(read_text("/proc/sys/kernel/random/uuid"));
+        let dir = lsp_sh(tag, "");
+        if lsp_tag_ok(tag) && shell(text_cat3("mkdir -m 700 ", dir, " 2>/dev/null")) == 0 {
+            vset(s, LS_DIR, tag);
+            let wait: i64 = "tail --pid=$p -f /dev/null 2>/dev/null || while kill -0 $p 2>/dev/null; do sleep 1; done";
+            shell(text_cat3(text_cat3("p=$PPID; (trap '' HUP INT TERM; ", wait, "; rm -rf "), dir, ") </dev/null >/dev/null 2>&1 &"));
+        } else {
+            lsp_notify("window/logMessage", "{\"type\":1,\"message\":\"trackc: cannot create a private scratch directory; diagnostics are off\"}");
+        }
+    }
+    if text_len(vget(s, LS_DIR)) == 0 {
+        return 0;
     }
     return vget(s, LS_DIR);
+}
+
+// Seconds the checker child may run: $TRACKC_LSP_TIMEOUT, default 10.
+fn lsp_timeout() -> i64 {
+    let secs = str_to_int(env_get("TRACKC_LSP_TIMEOUT"));
+    if secs > 0 {
+        return secs;
+    }
+    return 10;
 }
 
 // ----------------------------------------------------------- diagnostics
@@ -437,12 +479,28 @@ fn lsp_diag(diags: i64, line: i64, col: i64, severity: i64, code: i64, msg: i64)
 // diagnostics to `diags` (a builder holding a JSON array body), lines
 // shifted by `line0`. With `doc` >= 0 the doc's completion symbols are
 // replaced when the child got past parsing.
+//
+// The child runs under `timeout -k 1 <secs>` (the checker has inputs
+// that take minutes), exec'd so no shell sits between: the server waits
+// on timeout, timeout on the child, and a server killed mid-check leaves
+// a child that dies within the limit. Without coreutils timeout a
+// background watchdog kills the child instead. A check that runs out of
+// time yields one diagnostic.
 fn lsp_check(s: i64, diags: i64, path: i64, text: i64, line0: i64, doc: i64) -> i64 {
     let tag = lsp_tag(s);
     write_text(lsp_dir(tag, "/buffer.trk"), text);
     write_text(lsp_dir(tag, "/path"), path);
-    let cmd: i64 = text_cat3("\"/proc/$PPID/exe\" lsp --check ", tag, " </dev/null >");
-    let status = shell(text_cat3(cmd, lsp_sh(tag, "/out"), text_cat(" 2>", lsp_sh(tag, "/err"))));
+    let secs: i64 = text_of_int(lsp_timeout());
+    let io: i64 = text_cat3(" </dev/null >", lsp_sh(tag, "/out"), text_cat(" 2>", lsp_sh(tag, "/err")));
+    let child: i64 = text_cat3("\"/proc/$PPID/exe\" lsp --check ", tag, io);
+    let cmd = sb_new();
+    sb_add(cmd, text_cat3("if command -v timeout >/dev/null 2>&1; then exec timeout -k 1 ", secs, " "));
+    sb_add(cmd, text_cat3(child, "; fi; ", child));
+    sb_add(cmd, text_cat3(" & c=$!; (sleep ", secs, "; kill -9 $c) >/dev/null 2>&1 & w=$!; wait $c; r=$?; kill $w 2>/dev/null; exit $r"));
+    let status = shell(sb_text(cmd));
+    if status == 124 || status == 137 {
+        return lsp_diag(diags, line0, 0, 1, "E0000", text_cat3("trackc: check timed out after ", secs, "s"));
+    }
     let syms = lsp_lines(read_text(lsp_dir(tag, "/out")));
     if doc >= 0 && vlen(syms) > 0 && text_eq(vget(syms, 0), "#syms") {
         vset(vget(s, LS_DOCS), doc + 2, syms);
@@ -485,6 +543,10 @@ fn lsp_update(s: i64, uri: i64, text: i64) -> i64 {
     let doc = lsp_doc(s, uri);
     vset(vget(s, LS_DOCS), doc + 1, text);
     let path = lsp_uri_path(uri);
+    let checked = text_ends(path, ".trk") || text_ends(path, ".md") || text_ends(path, ".markdown");
+    if checked && lsp_tag(s) == 0 {
+        return 0;
+    }
     let diags = sb_new();
     sb_add(diags, "{\"uri\":");
     lj_quote(diags, uri);
@@ -696,7 +758,7 @@ fn lsp_hover(s: i64, msg: i64) -> i64 {
 // --------------------------------------------------------------- server
 
 fn lsp_quit(s: i64, code: i64) -> i64 {
-    if vget(s, LS_DIR) != 0 {
+    if vget(s, LS_DIR) != 0 && text_len(vget(s, LS_DIR)) > 0 {
         shell(text_cat("rm -rf ", lsp_sh(vget(s, LS_DIR), "")));
     }
     return quit(code);
