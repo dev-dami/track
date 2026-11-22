@@ -467,10 +467,16 @@ impl LinearChecker {
             }
         } // end if !barebones — std package (import "std") still works via Use handling
 
+        // Constant values as the self-hosted checker folds them (comparisons
+        // too), for the E0200 division check only; codegen keeps const_values.
+        let mut folded = self.const_values.clone();
         for stmt in program {
             match stmt {
                 Expr::ConstDef { name, value } => {
-                    const_divrem_ok(&self.const_values, value)?;
+                    const_divrem_ok(&folded, value)?;
+                    if let Some(v) = const_value(&folded, value) {
+                        folded.insert(name.clone(), v);
+                    }
                     if let Some(v) = crate::codegen::eval_const(&self.const_values, value) {
                         self.const_values.insert(name.clone(), v);
                         self.type_info.consts.insert(name.clone(), v);
@@ -495,7 +501,7 @@ impl LinearChecker {
                 }
                 Expr::EnumDef { name, variants, .. } => {
                     for value in variants.iter().filter_map(|(_, v)| v.as_ref()) {
-                        const_divrem_ok(&self.const_values, value)?;
+                        const_divrem_ok(&folded, value)?;
                     }
                     for (vname, disc) in
                         crate::codegen::enum_discriminants(&self.const_values, variants)
