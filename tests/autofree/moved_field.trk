@@ -1,0 +1,32 @@
+// L9: a field moved out of a heap-autofree cell before its end. The cell
+// itself is freed, but never its moved child: drop glue is off for it.
+struct Inner { v: i64 }
+struct Outer { inner: Inner, n: i64 }
+
+fn make(i: i64) -> Outer {
+    return Outer { inner: Inner { v: i * 3 }, n: i };
+}
+
+fn keep(x: Inner) -> Inner {
+    return x;
+}
+
+// The moved child outlives the cell it came from.
+fn take(i: i64) -> Inner {
+    let o = make(i);
+    return keep(o.inner);
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 50 {
+        let o = make(i);
+        let n = o.n;
+        let moved = keep(o.inner);
+        let t = take(i);
+        total = total + n + moved.v + t.v;
+        i = i + 1;
+    }
+    print(total);
+}

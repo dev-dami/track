@@ -1,0 +1,16 @@
+fn make
+  L10 struct ret-slot ends L10
+  L10 struct heap ends -
+  L10 struct heap ends -
+fn main
+  L19 call heap-autofree deep ends L31
+  L22 struct heap-autofree deep ends L27
+  L22 struct heap ends -
+  L22 struct heap ends -
+  L23 tuple stack ends L25
+  L23 struct heap ends -
+  L24 call heap-autofree deep ends L25
+  L26 struct heap ends -
+  L26 struct heap ends -
+  L26 struct heap ends -
+  L28 call heap ends -

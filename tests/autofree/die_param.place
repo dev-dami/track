@@ -1,0 +1,5 @@
+fn mk
+  L12 struct ret-slot ends L12
+fn main
+  L19 struct stack ends L20
+  L21 call heap-autofree deep ends L22
