@@ -8,7 +8,7 @@ L8 landed: cgen puts struct, array and payload-union literals planned
 `stack` in `tk_w sN[k]` slots (C structs: 78k faults, was 109k); other
 places are not acted on yet (L9+). L11 landed: ngen puts the same
 `stack` literals in contiguous frame slots (`ng_site_cell`; native structs
-0.83 of C).
+0.88 of C in `bench/native.sh`).
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors
