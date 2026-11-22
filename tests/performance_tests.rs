@@ -48,8 +48,15 @@ fn test_performance_parser_throughput() {
 
 #[test]
 fn test_performance_full_pipeline_throughput() {
-    let fn_def = "fn compute(x: i32) -> i32 { let y = x + 1; return y * 2; }\n";
-    let source = fn_def.repeat(500);
+    // Distinct names: a repeated fn is error E0201 (duplicate definition).
+    let source: String = (0..500)
+        .map(|i| {
+            format!(
+                "fn compute{}(x: i32) -> i32 {{ let y = x + 1; return y * 2; }}\n",
+                i
+            )
+        })
+        .collect();
 
     let start = Instant::now();
     let ast = compile_source(&source).unwrap();
