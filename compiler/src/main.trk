@@ -388,7 +388,7 @@ fn cmd_build_native(path: i64) -> i64 {
     if body == 0 {
         quit(1);
     }
-    if elf_write_file(exe, body) != 0 {
+    if elf_write_file(exe, body, native_code_len(c), native_symbols(c)) != 0 {
         err(text_cat3("trackc: cannot write '", exe, "'\n"));
         quit(1);
     }

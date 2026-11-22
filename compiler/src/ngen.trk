@@ -79,7 +79,9 @@ const NG_RS = 52;      // ret-slot target of the PL_RET sites being generated (`
 const NG_RSARG = 53;   // ret-slot target the next `ng_call` passes to `<f>__rs`, -1 none
 const NG_RSMODE = 54;  // function being generated: 0 as written, 1 its `<f>__rs` entry, 2 its allocating wrapper
 const NG_TEMPS = 55;   // (consumer node, slot, HK_*) of live temporaries (L13b)
-const NG_SLOTS = 56;
+const NG_SYMS = 56;    // (name text, start, end) code range of each generated function, for the ELF .symtab
+const NG_CODELEN = 57; // bytes of code before the data (the ELF .text size)
+const NG_SLOTS = 58;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -5196,10 +5198,31 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
         }
     }
     ng_set(c, NG_PASS, 2);
-    if env_exists("TRACKC_NATIVE_MAP") == 1 {
-        err(text_cat3(int_to_str(vlen(b) + 176), " ", text_cat(name_text(c, na(c, f)), "\n")));
+    let mut name = na(c, f);
+    if ng(c, NG_RSMODE) == 1 {
+        name = ng_rs_name(c, name);
     }
-    return ng_function_pass(c, f, prelude);
+    ng_function_pass(c, f, prelude);
+    return ng_symbol(c, name_text(c, name), start);
+}
+
+// Record the code range [start, here) of a generated function under
+// `name` (text) for the ELF symbol table.
+fn ng_symbol(c: i64, name: i64, start: i64) -> i64 {
+    let syms = ng(c, NG_SYMS);
+    vpush(syms, name);
+    vpush(syms, start);
+    return vpush(syms, vlen(ncode(c)));
+}
+
+// The (name text, start, end) triples recorded by generate_native.
+fn native_symbols(c: i64) -> i64 {
+    return ng(c, NG_SYMS);
+}
+
+// Bytes of code at the start of generate_native's body (data follows).
+fn native_code_len(c: i64) -> i64 {
+    return ng(c, NG_CODELEN);
 }
 
 fn ng_is_declaration(c: i64, n: i64) -> bool {
@@ -5265,7 +5288,10 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_ASSIGNED, -1);
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_PASS, 2);
+    ng_set(c, NG_SYMS, vnew());
+    ng_set(c, NG_CODELEN, 0);
     ng_entry(c);
+    ng_symbol(c, "_start", 0);
     let items = cx(c, CX_ITEMS);
     let files = cx(c, CX_ITEMFILE);
     let root = cx(c, CX_MAINFILE);
@@ -5342,6 +5368,7 @@ fn generate_native(c: i64) -> i64 {
         x_byte(b, 204);
     }
     let base = vlen(b);
+    ng_set(c, NG_CODELEN, base);
     let strs = ng(c, NG_STRS);
     let mut s: i64 = 0;
     while s < vlen(strs) {
