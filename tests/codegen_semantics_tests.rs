@@ -323,3 +323,71 @@ fn array_index_out_of_bounds_aborts() {
     assert_eq!(output.status.code(), Some(134));
     assert!(String::from_utf8_lossy(&output.stderr).contains("array index out of bounds"));
 }
+
+/// Build and run `source`; return (stdout, terminating signal).
+fn run_signal(name: &str, source: &str) -> (String, Option<i32>) {
+    use std::os::unix::process::ExitStatusExt;
+    let temp_dir = env::temp_dir().join(format!("track_sem_{}_{}", name, std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+    let src_file = temp_dir.join(format!("{}.trk", name));
+    fs::write(&src_file, source).unwrap();
+    let exe = build_file_in_dir(src_file.to_str().unwrap(), &temp_dir).unwrap();
+    let output = Command::new(&exe).output().unwrap();
+    let _ = fs::remove_dir_all(&temp_dir);
+    (
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        output.status.signal(),
+    )
+}
+
+/// K3c: a zero divisor (`/` or `%`, variable or constant) flushes stdout
+/// and raises SIGFPE through `track_trap_div`, like trackc's C and native
+/// builds, instead of losing the output to Cranelift's SIGILL trap.
+#[test]
+fn division_by_zero_flushes_and_raises_sigfpe() {
+    let cases = [
+        (
+            "divz",
+            "fn main()->i64{ print(1); let mut i=3; while i>=0 { print(100/i); i=i-1; } return 0; }",
+            "1\n33\n50\n100\n",
+        ),
+        (
+            "modz",
+            "fn main()->i64{ print(7); let z = 0; print(5 % z); return 0; }",
+            "7\n",
+        ),
+        (
+            "constz",
+            "fn main()->i64{ print(2); print(9 / 0); return 0; }",
+            "2\n",
+        ),
+    ];
+    for (name, src, want) in cases {
+        let (out, sig) = run_signal(name, src);
+        assert_eq!(out, want, "{}", name);
+        assert_eq!(sig, Some(8), "{}: expected SIGFPE", name);
+    }
+}
+
+/// K3c: `INT64_MIN / -1` and `INT64_MIN % -1` trap like a zero divisor
+/// (flush, SIGFPE), matching trackc's `tk_div`/`tk_mod`; other -1 divisions
+/// still compute.
+#[test]
+fn int64_min_div_minus_one_flushes_and_raises_sigfpe() {
+    let ok = run(
+        "negone",
+        "fn main()->i64{ let m = -1; print(7 / m); print(7 % m); print(-9223372036854775807 / m); return 0; }",
+        &[],
+    );
+    assert_eq!(ok, "-7\n0\n9223372036854775807");
+    for (name, op) in [("mindiv", "/"), ("minmod", "%")] {
+        let src = format!(
+            "fn main()->i64{{ print(3); let m = -1; let a = -9223372036854775807 - 1; print(a {} m); return 0; }}",
+            op
+        );
+        let (out, sig) = run_signal(name, &src);
+        assert_eq!(out, "3\n", "{}", name);
+        assert_eq!(sig, Some(8), "{}: expected SIGFPE", name);
+    }
+}

@@ -191,3 +191,22 @@ fn test_linear_checker_typo_suggestion() {
         err
     );
 }
+
+/// K3c: `for x in n` over a scalar is E0200 as in trackc, not a segfault.
+#[test]
+fn test_for_over_scalar_is_rejected() {
+    let err = compile_source("fn main()->i64{ let n=5; for x in n { print(x); } return 0; }")
+        .unwrap_err();
+    assert!(
+        err.contains("error[E0200]") && err.contains("`for` iterates over a range or an array"),
+        "{}",
+        err
+    );
+    // Ranges and arrays still iterate.
+    assert!(
+        compile_source(
+            "fn main()->i64{ let a=[1,2]; for x in a { print(x); } for i in 0..3 { print(i); } return 0; }"
+        )
+        .is_ok()
+    );
+}
