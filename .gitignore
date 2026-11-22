@@ -2,6 +2,7 @@
 /tmp_benchmark
 *.o
 *.out
+!tests/cases/**/*.out
 *.exe
 
 # IDE
