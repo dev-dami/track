@@ -1212,6 +1212,7 @@ fn generate_c(c: i64) -> i64 {
     let state = vfill(vnew_cap(G_SLOTS), G_SLOTS, 0);
     vset(c, CX_GEN, state);
     g_set(c, G_BOUND, vnew());
+    g_set(c, G_AUTO, vnew());
     g_set(c, G_EXTERNS, vnew());
     g_set(c, G_FUNCS, sb_new());
     g_set(c, G_PROTOS, sb_new());
