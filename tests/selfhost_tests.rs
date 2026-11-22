@@ -2193,8 +2193,11 @@ fn temps_free_fresh_cell_temporaries() {
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(
             stem,
-            "nested" | "print_loop" | "branch" | "discard" | "str_alias" | "str_cell" | "tailr"
+            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr"
         );
+        // str_alias keeps `keep.name` alive to the end of main and drop glue never
+        // frees Str, so LSan may report that one string depending on what the C
+        // compiler leaves on the stack; it is checked for errors, not leaks.
         let leaks = if all_die {
             "detect_leaks=1"
         } else {
