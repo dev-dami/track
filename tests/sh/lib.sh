@@ -148,6 +148,11 @@ save_run() {
     echo "$RC" >"$T/.run_$1.rc"
 }
 same_run() {
+    # 126/127 mean the program never ran (missing or not executable): two
+    # missing binaries must not count as agreeing.
+    case "$(cat "$T/.run_$1.rc") $(cat "$T/.run_$2.rc")" in
+        126\ *|127\ *|*\ 126|*\ 127) fail "$3: a program did not run (exit 126/127)" ;;
+    esac
     cmp -s "$T/.run_$1.out" "$T/.run_$2.out" \
         || fail "$3: stdout differs
 $(diff "$T/.run_$1.out" "$T/.run_$2.out" | head -n 40)"
@@ -161,7 +166,12 @@ build() {
     shift 2
     trackc build "$@" "$src" -o "$exe"
     rc_ok "build $* $src"
+    is_exe "$exe" "build $* $src"
 }
+
+# is_exe PATH MSG: PATH must be an executable file (a build that exits 0
+# without writing its output is a failure).
+is_exe() { [ -f "$1" ] && [ -x "$1" ] || fail "$2: no executable at $1"; }
 
 build_native() { build "$1" "$2" --native; }
 

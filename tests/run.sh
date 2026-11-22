@@ -13,9 +13,10 @@
 #   PATTERN   run only tests whose id (suite/name) contains a PATTERN
 #
 # Tests are bash functions `t_<name>` in tests/sh/<suite>.sh (helpers in
-# tests/sh/lib.sh). Each runs in its own process under `timeout`, in an
-# empty scratch directory. The runner prints one PASS/FAIL/TIMEOUT line per
-# test, then a summary, and exits non-zero if any test failed.
+# tests/sh/lib.sh), all listed in tests/sh/ids.txt. Each runs in its own
+# process under `timeout`, in an empty scratch directory. The runner prints
+# one PASS/FAIL/TIMEOUT line per test, then a summary, and exits non-zero
+# if any test failed.
 #
 # trackc under test: $TRACKC, else build/bootstrap/stage3/trackc (what
 # scripts/bootstrap.sh leaves; BOOTSTRAP_DIR is honoured). Scratch goes
@@ -96,6 +97,20 @@ ids=$(
         sed -n 's/^t_\([A-Za-z0-9_]*\)() *{.*/\1/p' "$f" | sed "s|^|$suite/|"
     done
 )
+# tests/sh/ids.txt lists every test. A full run checks the suites against
+# it, so a deleted or renamed test is reported instead of silently not run.
+manifest="$here/sh/ids.txt"
+manifest_diff=""
+if [ $# -eq 0 ] && [ "$list" = 0 ]; then
+    found=$(printf '%s\n' "$ids" | LC_ALL=C sort)
+    want=$(LC_ALL=C sort "$manifest" 2>/dev/null)
+    gone=$(LC_ALL=C comm -13 <(printf '%s\n' "$found") <(printf '%s\n' "$want") | grep . || true)
+    extra=$(LC_ALL=C comm -23 <(printf '%s\n' "$found") <(printf '%s\n' "$want") | grep . || true)
+    [ -n "$gone" ] && manifest_diff="$manifest_diff$(printf '%s\n' "$gone" | sed 's/^/  in ids.txt, not in any suite: /')
+"
+    [ -n "$extra" ] && manifest_diff="$manifest_diff$(printf '%s\n' "$extra" | sed 's/^/  in a suite, not in ids.txt: /')
+"
+fi
 if [ $# -gt 0 ]; then
     ids=$(printf '%s\n' "$ids" | while read -r id; do
         for p in "$@"; do
@@ -135,8 +150,12 @@ nfail=$(printf '%s' "$failed" | grep -c . || true)
 missing=$((n - pass - nfail))
 echo "---"
 echo "$pass passed, $nfail failed, $missing missing, ${secs}s"
-if [ "$nfail" -gt 0 ] || [ "$missing" -gt 0 ]; then
-    printf '%s\n' "$failed" | sed 's/^/  failed: /'
+if [ -n "$manifest_diff" ]; then
+    echo "test list does not match tests/sh/ids.txt (regenerate: tests/run.sh -l > tests/sh/ids.txt):"
+    printf '%s' "$manifest_diff"
+fi
+if [ "$nfail" -gt 0 ] || [ "$missing" -gt 0 ] || [ -n "$manifest_diff" ]; then
+    printf '%s\n' "$failed" | grep . | sed 's/^/  failed: /'
     [ "$TEST_KEEP" = none ] || echo "logs and failed scratch in $TEST_BASE"
     exit 1
 fi

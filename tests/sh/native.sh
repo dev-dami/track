@@ -22,6 +22,8 @@ t_native_programs_match_the_c_backend() {
         rc_ok "$s: C build"
         in_repo "$TRACKC" build --native "$p" -o "$T/${s}_n"
         rc_ok "$s: native build"
+        is_exe "$T/${s}_c" "$s: C build"
+        is_exe "$T/${s}_n" "$s: native build"
         in_repo "$T/${s}_c"; save_run c
         in_repo "$T/${s}_n"; save_run n
         same_run c n "$s: behaviour differs"

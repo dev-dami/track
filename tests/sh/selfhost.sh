@@ -176,6 +176,8 @@ run_both_runtimes() {
     rc_ok "$1: build"
     trackc build --rt=track "$2" -o "$T/$1_trt"
     rc_ok "$1: --rt=track build"
+    is_exe "$T/$1_crt" "$1: build"
+    is_exe "$T/$1_trt" "$1: --rt=track build"
     observe "$T/$1_crt"
     save_run crt
     observe "$T/$1_trt"
