@@ -242,6 +242,45 @@ fn intern(c: i64, s: i64) -> i64 {
     return id;
 }
 
+// The id of the name spelled by `bytes[start..end)` (a byte vector), or
+// -1 when it is not interned yet. Same hash and probe order as `intern`,
+// without building the string.
+fn intern_find_span(c: i64, bytes: i64, start: i64, end: i64) -> i64 {
+    let mut h: i64 = 2166136261;
+    let mut i = start;
+    while i < end {
+        let b = vget(bytes, i);
+        h = (h | b) - (h & b); // xor
+        h = h * 16777619;
+        i = i + 1;
+    }
+    let names = cx(c, CX_NAMES);
+    let table = cx(c, CX_HASH);
+    let mask = vlen(table) - 1;
+    let mut slot = h & mask;
+    while vget(table, slot) != 0 {
+        let id = vget(table, slot) - 1;
+        if span_is(vget(names, id), bytes, start, end) {
+            return id;
+        }
+        slot = (slot + 1) & mask;
+    }
+    return -1;
+}
+
+// Whether string `s` is exactly the bytes `bytes[start..end)`.
+fn span_is(s: i64, bytes: i64, start: i64, end: i64) -> bool {
+    let n = end - start;
+    let mut k: i64 = 0;
+    while k < n {
+        if str_char_at(s, k) != vget(bytes, start + k) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return str_char_at(s, n) == 0;
+}
+
 // ---------------------------------------------------------------- lists
 
 // Lists are built on the scratch stack: remember `list_begin`, push items,
