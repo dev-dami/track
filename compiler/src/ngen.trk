@@ -4660,7 +4660,7 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         if k == K_CALL && ng_into_rs(c, n) {
             // `return g(..)` in a ret-slot body: g writes our caller's cell
             ng_set(c, NG_RSARG, ng(c, NG_RS));
-        } else if k == K_CALL && ng_rs_call(c, n) && ng_stack_site(c, n) {
+        } else if k == K_CALL && ng_stack_site(c, n) && ng_rs_call(c, n) {
             // a stack temporary (card L13c): g writes a frame cell
             ng_set(c, NG_RSARG, -2 - ng_cell_slots(c, pl_flat_words(c, pl_site_type(c, n))));
         }

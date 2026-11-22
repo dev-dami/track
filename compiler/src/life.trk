@@ -3848,14 +3848,22 @@ fn pl_call_args(c: i64, p: i64, n: i64) -> i64 {
             inner = na(c, a);
         }
         let hk = hd_call_kind(c, inner);
-        if hk > 0 && pl_temp_arg_ok(c, n, i, is_addr) {
-            pl_temp(c, p, inner, n, hk);
-            pl_parts(c, p, inner);
-        } else if hk == 0 && pl_fresh_site(c, inner) && pl_temp_arg_ok(c, n, i, is_addr) {
-            pl_temp_cell(c, p, inner, n, i, is_addr);
-            pl_parts(c, p, inner);
+        if hk > 0 {
+            if pl_temp_arg_ok(c, n, i, is_addr) {
+                pl_temp(c, p, inner, n, hk);
+                pl_parts(c, p, inner);
+            } else {
+                pl_walk(c, p, a);
+            }
         } else {
-            pl_walk(c, p, a);
+            // `pl_walk(c, p, a)` unrolled, so the site kind is found once.
+            let kind = pl_site_kind(c, inner);
+            if kind != 0 && kind != 4 && pl_drop_kind(c, pl_site_type(c, inner)) != 0 && pl_temp_arg_ok(c, n, i, is_addr) {
+                pl_temp_cell(c, p, inner, n, i, is_addr);
+            } else if kind != 0 {
+                pl_record(c, p, inner, PL_HEAP, -1);
+            }
+            pl_parts(c, p, inner);
         }
         i = i + 1;
     }
