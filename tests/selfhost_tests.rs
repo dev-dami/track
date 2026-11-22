@@ -2082,8 +2082,7 @@ fn temps_free_fresh_cell_temporaries() {
     let mut plans = String::new();
     for stem in stems {
         let rel = format!("tests/temps_cell/{}.trk", stem);
-        let want =
-            fs::read_to_string(root.join(format!("tests/temps_cell/{}.out", stem))).unwrap();
+        let want = fs::read_to_string(root.join(format!("tests/temps_cell/{}.out", stem))).unwrap();
         let exe = dir.join(stem);
         let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
         assert!(out.status.success(), "{}: build failed", rel);
@@ -2115,7 +2114,13 @@ fn temps_free_fresh_cell_temporaries() {
         ("nested", "L26 call stack ends L26"),
         ("str_cell", "L18 struct stack ends L18"),
     ] {
-        assert!(plans.contains(line), "{}: missing `{}` in\n{}", stem, line, plans);
+        assert!(
+            plans.contains(line),
+            "{}: missing `{}` in\n{}",
+            stem,
+            line,
+            plans
+        );
     }
     let nested = plans.split("nested:\n").nth(1).unwrap_or("");
     assert_eq!(
