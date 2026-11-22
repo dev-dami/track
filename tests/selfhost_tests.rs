@@ -1934,7 +1934,11 @@ fn temps_free_fresh_temporaries() {
             .unwrap();
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(stem, "discard" | "nested" | "print_loop");
-        let leaks = if all_die { "detect_leaks=1" } else { "detect_leaks=0" };
+        let leaks = if all_die {
+            "detect_leaks=1"
+        } else {
+            "detect_leaks=0"
+        };
         let run = Command::new(&exe)
             .env("ASAN_OPTIONS", leaks)
             .output()
