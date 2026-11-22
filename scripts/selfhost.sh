@@ -20,7 +20,7 @@ out=${SELFHOST_DIR:-"$root/build/selfhost"}
 
 if [ ! -x "$seed" ]; then
     echo "==> no seed trackc at $seed; running scripts/bootstrap.sh once"
-    scripts/bootstrap.sh >/dev/null
+    scripts/bootstrap.sh --no-native >/dev/null
     seed=$bs/stage3/trackc
 fi
 
