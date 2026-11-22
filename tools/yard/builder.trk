@@ -151,7 +151,7 @@ fn root_source(root: i64, files: i64) -> i64 {
         if text_ends(rel, ".trk") {
             rel = text_sub(rel, 0, text_len(rel) - 4);
         }
-        sb_add(sb, text_cat3("import \"", rel, "\";\n"));
+        sb_add(sb, text_cat3("import \"", tq(rel), "\";\n"));
         i = i + 1;
     }
     return sb_text(sb);

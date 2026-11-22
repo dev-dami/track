@@ -251,9 +251,18 @@ check "run prints 42" test "$(in_dir "$P" "$Y" run 2>/dev/null | tail -n 1)" = 4
 mkdir -p "$P/tests"
 echo 'fn main() -> i64 { return 0; }' >"$P/tests/pass.trk"
 check "test passes" in_dir "$P" "$Y" test
-echo 'fn main() -> void { abort(); }' >"$P/tests/zfail.trk"
+echo 'fn main() -> void { abort("zfail"); }' >"$P/tests/zfail.trk"
 check "failing test fails" bash -c "cd '$P' && ! '$Y' test"
+in_dir "$P" "$Y" test >"$WORK/zfail.out" 2>&1
+check "failing test fails at run time, not compile time" contains "$WORK/zfail.out" "Track abort: zfail"
 rm "$P/tests/zfail.trk"
+# A module path with `"` and `\` is escaped in the generated root file.
+printf 'fn qq() -> i64 { return 6; }\n' >"$P/src/q\"u\\o.trk"
+cp "$P/src/main.trk" "$WORK/main.keep"
+printf 'fn main() -> void { print(qq()); }\n' >"$P/src/main.trk"
+check "quote in a module filename links" test "$(in_dir "$P" "$Y" run 2>/dev/null | tail -n 1)" = 6
+rm "$P/src/q\"u\\o.trk"
+cp "$WORK/main.keep" "$P/src/main.trk"
 mkdir -p "$WORK/cli/lib"
 check "add --path" in_dir "$P" "$Y" add lib --path ../lib
 check "path dependency table" contains "$P/Track.toml" "[dependencies.lib]"

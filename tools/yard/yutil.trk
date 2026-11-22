@@ -124,6 +124,27 @@ fn sq(s: i64) -> i64 {
     return sb_text(b);
 }
 
+// `s` as the inside of a Track string literal: `\`, `"` and newline
+// escaped, so a module path cannot end the literal in a generated file.
+fn tq(s: i64) -> i64 {
+    let b = sb_new();
+    let n = text_len(s);
+    let mut i: i64 = 0;
+    while i < n {
+        let ch = text_at(s, i);
+        if ch == 92 || ch == 34 {
+            sb_byte(b, 92);
+            sb_byte(b, ch);
+        } else if ch == 10 {
+            sb_add(b, "\\n");
+        } else {
+            sb_byte(b, ch);
+        }
+        i = i + 1;
+    }
+    return sb_text(b);
+}
+
 fn last_slash(s: i64) -> i64 {
     let mut i = text_len(s) - 1;
     while i >= 0 {
