@@ -624,6 +624,9 @@ fn parse_statement_inner(c: i64) -> i64 {
     if k == TK_ATMACRO { return parse_macro_def(c); }
     if k == TK_ENUM { return parse_enum(c); }
     if k == TK_UNION { return parse_union(c); }
+    if k == TK_IDENT && p_kind_at(c, 1) == TK_STR && text_eq(name_text(c, p_value(c)), "extern") {
+        return parse_extern(c);
+    }
     let expr = parse_expr(c);
     if p_accept(c, TK_EQ) {
         return node2(c, K_ASSIGN, expr, parse_expr(c), npos(c, expr));
@@ -701,6 +704,24 @@ fn parse_fn(c: i64) -> i64 {
     }
     let body = parse_block(c);
     return node_new(c, K_FN, name, generics, params, ret, body, pos);
+}
+
+// `extern "lib" fn name(params) -> T;`: a function in a system library
+// (docs/native.md, "Imported functions"). `extern` is a contextual word,
+// not a keyword: only `extern` followed by a string starts one.
+fn parse_extern(c: i64) -> i64 {
+    let pos = p_pos(c);
+    p_advance(c);
+    let lib = p_value(c);
+    p_advance(c);
+    p_expect(c, TK_FN);
+    let name = p_ident(c);
+    let params = parse_params(c);
+    let mut ret: i64 = -1;
+    if p_accept(c, TK_ARROW) {
+        ret = parse_type(c);
+    }
+    return node_new(c, K_EXTERN, name, lib, params, ret, -1, pos);
 }
 
 fn parse_macro_def(c: i64) -> i64 {

@@ -1,0 +1,689 @@
+// rt/os/windows.trk — Track runtime OS layer for Windows (kernel32).
+//
+// Implements the OS interface (docs/native.md, "The OS layer") with
+// kernel32 functions called through the import table (`extern`):
+//
+//   os_start         process entry: argc/argv from GetCommandLineW, then rt_start
+//   os_syscall       the kernel calls the portable modules (mem, io, libc)
+//                    make through `syscall6`, by Linux number: read, write,
+//                    open, close, stat, lseek, mmap, munmap, mremap,
+//                    madvise, pipe, access, getpid, kill, unlink,
+//                    clock_gettime, exit_group, fchmod. trackc lowers
+//                    `syscall6(nr, a..f)` to `os_syscall(nr, a..e)` on
+//                    every target but Linux.
+//   os_args_count, os_arg, env_get, env_exists, sys_exec, process_spawn,
+//   clock_ms, file_open, file_close, file_read_all, file_write,
+//   file_exists, file_remove, file_size, dir_exists, file_copy,
+//   track_file_read, track_file_write_all, net_socket_* (not yet: -1)
+//
+// A file descriptor is a HANDLE; 0, 1 and 2 stand for the standard
+// handles. Paths and arguments are UTF-8 in Track and UTF-16 for Windows.
+
+extern "kernel32.dll" fn GetStdHandle(which: i64) -> i64;
+extern "kernel32.dll" fn WriteFile(h: i64, buf: i64, n: i64, done: i64, ov: i64) -> i32;
+extern "kernel32.dll" fn ReadFile(h: i64, buf: i64, n: i64, done: i64, ov: i64) -> i32;
+extern "kernel32.dll" fn CreateFileW(path: i64, access: i64, share: i64, sec: i64, disp: i64, flags: i64, tmpl: i64) -> i64;
+extern "kernel32.dll" fn CloseHandle(h: i64) -> i32;
+extern "kernel32.dll" fn ExitProcess(code: i64) -> i64;
+extern "kernel32.dll" fn VirtualAlloc(addr: i64, size: i64, kind: i64, prot: i64) -> i64;
+extern "kernel32.dll" fn VirtualFree(addr: i64, size: i64, kind: i64) -> i32;
+extern "kernel32.dll" fn GetCommandLineW() -> i64;
+extern "kernel32.dll" fn GetEnvironmentVariableW(name: i64, buf: i64, n: i64) -> u32;
+extern "kernel32.dll" fn GetFileAttributesW(path: i64) -> u32;
+extern "kernel32.dll" fn GetFileAttributesExW(path: i64, level: i64, info: i64) -> i32;
+extern "kernel32.dll" fn DeleteFileW(path: i64) -> i32;
+extern "kernel32.dll" fn SetFilePointerEx(h: i64, dist: i64, newpos: i64, how: i64) -> i32;
+extern "kernel32.dll" fn QueryPerformanceCounter(out: i64) -> i32;
+extern "kernel32.dll" fn QueryPerformanceFrequency(out: i64) -> i32;
+extern "kernel32.dll" fn GetSystemTimePreciseAsFileTime(out: i64) -> i64;
+extern "kernel32.dll" fn CreatePipe(rd: i64, wr: i64, sec: i64, size: i64) -> i32;
+extern "kernel32.dll" fn GetCurrentProcessId() -> u32;
+extern "kernel32.dll" fn GetLastError() -> u32;
+extern "kernel32.dll" fn CreateProcessW(app: i64, cmd: i64, psec: i64, tsec: i64, inherit: i64, flags: i64, env: i64, dir: i64, si: i64, pi: i64) -> i32;
+extern "kernel32.dll" fn WaitForSingleObject(h: i64, ms: i64) -> u32;
+extern "kernel32.dll" fn GetExitCodeProcess(h: i64, code: i64) -> i32;
+
+const WS_SCRATCH = 6144;     // 64 bytes of out-parameters in the state page
+const WS_STAT = 6208;        // WIN32_FILE_ATTRIBUTE_DATA (36 bytes)
+
+fn ws(off: i64) -> i64 { return RT_BASE + WS_SCRATCH + off; }
+
+// ------------------------------------------------------------- UTF-16
+
+// A UTF-16 copy (NUL-terminated, heap) of the UTF-8 text `s`.
+fn win_wide(s: i64) -> i64 {
+    let n = rt_strlen(s);
+    let w = rt_malloc(4 * n + 4);
+    let mut i: i64 = 0;
+    let mut o: i64 = 0;
+    while i < n {
+        let b0 = load8(s + i);
+        let mut cp = b0;
+        let mut k: i64 = 1;
+        if b0 >= 240 && i + 3 < n + 1 {
+            cp = ((b0 & 7) << 18) | ((load8(s + i + 1) & 63) << 12) | ((load8(s + i + 2) & 63) << 6) | (load8(s + i + 3) & 63);
+            k = 4;
+        } else if b0 >= 224 {
+            cp = ((b0 & 15) << 12) | ((load8(s + i + 1) & 63) << 6) | (load8(s + i + 2) & 63);
+            k = 3;
+        } else if b0 >= 192 {
+            cp = ((b0 & 31) << 6) | (load8(s + i + 1) & 63);
+            k = 2;
+        }
+        if cp >= 65536 {
+            let v = cp - 65536;
+            win_put16(w + o, 55296 + (v >> 10));
+            win_put16(w + o + 2, 56320 + (v & 1023));
+            o = o + 4;
+        } else {
+            win_put16(w + o, cp);
+            o = o + 2;
+        }
+        i = i + k;
+    }
+    win_put16(w + o, 0);
+    return w;
+}
+
+fn win_put16(p: i64, v: i64) -> i64 {
+    store8(p, v & 255);
+    return store8(p + 1, (v >> 8) & 255);
+}
+
+fn win_get16(p: i64) -> i64 { return load8(p) | (load8(p + 1) << 8); }
+
+// Append the UTF-8 encoding of `cp` at `out`; returns the bytes written.
+fn win_utf8(out: i64, cp: i64) -> i64 {
+    if cp < 128 {
+        store8(out, cp);
+        return 1;
+    }
+    if cp < 2048 {
+        store8(out, 192 | (cp >> 6));
+        store8(out + 1, 128 | (cp & 63));
+        return 2;
+    }
+    if cp < 65536 {
+        store8(out, 224 | (cp >> 12));
+        store8(out + 1, 128 | ((cp >> 6) & 63));
+        store8(out + 2, 128 | (cp & 63));
+        return 3;
+    }
+    store8(out, 240 | (cp >> 18));
+    store8(out + 1, 128 | ((cp >> 12) & 63));
+    store8(out + 2, 128 | ((cp >> 6) & 63));
+    store8(out + 3, 128 | (cp & 63));
+    return 4;
+}
+
+// Code point of the UTF-16 text at `w` (a surrogate pair or one unit).
+fn win_cp(w: i64) -> i64 {
+    let u = win_get16(w);
+    if u >= 55296 && u < 56320 {
+        let v = win_get16(w + 2);
+        if v >= 56320 && v < 57344 {
+            return 65536 + ((u - 55296) << 10) + (v - 56320);
+        }
+    }
+    return u;
+}
+
+// Bytes of UTF-16 that code point `cp` took.
+fn win_cplen(cp: i64) -> i64 {
+    if cp >= 65536 {
+        return 4;
+    }
+    return 2;
+}
+
+// A UTF-8 copy (heap) of `n` UTF-16 units at `w`.
+fn win_narrow(w: i64, n: i64) -> i64 {
+    let out = rt_malloc(3 * n + 1);
+    let mut i: i64 = 0;
+    let mut o: i64 = 0;
+    while i < 2 * n {
+        let cp = win_cp(w + i);
+        i = i + win_cplen(cp);
+        o = o + win_utf8(out + o, cp);
+    }
+    store8(out + o, 0);
+    return out;
+}
+
+// ------------------------------------------------------------- process
+
+fn win_space(u: i64) -> bool { return u == 32 || u == 9; }
+
+// The process entry (trackc's Windows `_start` calls it): split
+// GetCommandLineW the way CommandLineToArgvW does, as UTF-8, into an
+// argv array followed by an empty envp, then rt_start.
+fn os_start() -> i64 {
+    let cl = GetCommandLineW();
+    let mut wl: i64 = 0;
+    while win_get16(cl + 2 * wl) != 0 {
+        wl = wl + 1;
+    }
+    let size = 8 * (wl + 4) + 4 * wl + 64;
+    let argv = VirtualAlloc(0, size, 12288, 4);
+    let mut out = argv + 8 * (wl + 4);
+    let mut argc: i64 = 0;
+    let mut i: i64 = 0;
+    while true {
+        while win_space(win_get16(cl + 2 * i)) {
+            i = i + 1;
+        }
+        if win_get16(cl + 2 * i) == 0 {
+            store64(argv + 8 * argc, 0);
+            store64(argv + 8 * argc + 8, 0);
+            return rt_start(argc, argv);
+        }
+        store64(argv + 8 * argc, out);
+        argc = argc + 1;
+        let mut quoted = false;
+        let mut going = true;
+        while going {
+            let u = win_get16(cl + 2 * i);
+            if u == 0 || (!quoted && win_space(u)) {
+                going = false;
+            } else if u == 92 {
+                let mut nb: i64 = 0;
+                while win_get16(cl + 2 * i) == 92 {
+                    nb = nb + 1;
+                    i = i + 1;
+                }
+                if win_get16(cl + 2 * i) == 34 {
+                    let mut h: i64 = 0;
+                    while h < nb / 2 {
+                        store8(out, 92);
+                        out = out + 1;
+                        h = h + 1;
+                    }
+                    if nb % 2 == 1 {
+                        store8(out, 34);
+                        out = out + 1;
+                        i = i + 1;
+                    }
+                } else {
+                    let mut h: i64 = 0;
+                    while h < nb {
+                        store8(out, 92);
+                        out = out + 1;
+                        h = h + 1;
+                    }
+                }
+            } else if u == 34 {
+                if quoted && win_get16(cl + 2 * i + 2) == 34 {
+                    store8(out, 34);
+                    out = out + 1;
+                    i = i + 1;
+                } else {
+                    quoted = !quoted;
+                }
+                i = i + 1;
+            } else {
+                let cp = win_cp(cl + 2 * i);
+                i = i + win_cplen(cp) / 2;
+                out = out + win_utf8(out, cp);
+            }
+        }
+        store8(out, 0);
+        out = out + 1;
+    }
+    return 0;
+}
+
+fn os_args_count() -> i64 { return rs(RS_ARGC); }
+
+fn os_arg(idx: i64) -> i64 {
+    if idx >= 0 && idx < rs(RS_ARGC) {
+        return rt_dup(load64(rs(RS_ARGV) + 8 * idx));
+    }
+    return rt_dup_n("", 0);
+}
+
+// Value of environment variable `key` (heap UTF-8), or 0 when unset.
+fn rt_getenv(key: i64) -> i64 {
+    let wk = win_wide(key);
+    let mut cap: i64 = 256;
+    let mut buf = rt_malloc(2 * cap);
+    let mut n = GetEnvironmentVariableW(wk, buf, cap);
+    if n > cap {
+        cap = n;
+        rt_free(buf);
+        buf = rt_malloc(2 * cap);
+        n = GetEnvironmentVariableW(wk, buf, cap);
+    }
+    rt_free(wk);
+    if n == 0 && GetLastError() == 203 {
+        rt_free(buf);
+        return 0;
+    }
+    let v = win_narrow(buf, n);
+    rt_free(buf);
+    return v;
+}
+
+fn env_get(key: i64) -> i64 {
+    if key == 0 {
+        return rt_dup_n("", 0);
+    }
+    let v = rt_getenv(key);
+    if v == 0 {
+        return rt_dup_n("", 0);
+    }
+    return v;
+}
+
+fn env_exists(key: i64) -> i64 {
+    if key != 0 {
+        let v = rt_getenv(key);
+        if v != 0 {
+            rt_free(v);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// system(3) with cmd.exe: `cmd.exe /c cmd`; the exit code, -1 when the
+// process could not start.
+fn sys_exec(cmd: i64) -> i64 {
+    if cmd == 0 {
+        return -1;
+    }
+    rt_flush();
+    let line = str_concat("cmd.exe /c ", cmd);
+    let wl = win_wide(line);
+    let si = rt_malloc(104);
+    rt_zero(si, 104);
+    store64(si, 104);
+    let pi = rt_malloc(24);
+    rt_zero(pi, 24);
+    let ok = CreateProcessW(0, wl, 0, 0, 1, 0, 0, 0, si, pi);
+    rt_free(wl);
+    if ok == 0 {
+        return -1;
+    }
+    let hp = load64(pi);
+    WaitForSingleObject(hp, 4294967295);
+    store64(ws(0), 0);
+    GetExitCodeProcess(hp, ws(0));
+    CloseHandle(hp);
+    CloseHandle(load64(pi + 8));
+    return load64(ws(0)) & 4294967295;
+}
+
+fn process_spawn(cmd: i64) -> i64 { return sys_exec(cmd); }
+
+fn clock_ms() -> i64 {
+    QueryPerformanceFrequency(ws(0));
+    QueryPerformanceCounter(ws(8));
+    let f = load64(ws(0));
+    let t = load64(ws(8));
+    return t / f * 1000 + (t % f) * 1000 / f;
+}
+
+// ---------------------------------------------------------- kernel calls
+
+fn win_handle(fd: i64) -> i64 {
+    if fd >= 0 && fd <= 2 {
+        return GetStdHandle(-10 - fd);
+    }
+    return fd;
+}
+
+// open(2) flags -> CreateFileW; a HANDLE or -2 (ENOENT).
+fn win_open(path: i64, flags: i64) -> i64 {
+    let mode = flags & 3;
+    let mut access: i64 = 2147483648;         // GENERIC_READ
+    if mode == 1 {
+        access = 1073741824;                  // GENERIC_WRITE
+    } else if mode == 2 {
+        access = 3221225472;
+    }
+    let mut disp: i64 = 3;                    // OPEN_EXISTING
+    if (flags & 64) != 0 {
+        disp = 4;                             // OPEN_ALWAYS
+        if (flags & 512) != 0 {
+            disp = 2;                         // CREATE_ALWAYS
+        }
+    } else if (flags & 512) != 0 {
+        disp = 5;                             // TRUNCATE_EXISTING
+    }
+    let wp = win_wide(path);
+    let h = CreateFileW(wp, access, 7, 0, disp, 128, 0);
+    rt_free(wp);
+    if h == -1 || h == 0 {
+        return -2;
+    }
+    if (flags & 1024) != 0 {
+        SetFilePointerEx(h, 0, 0, 2);
+    }
+    return h;
+}
+
+fn win_stat(path: i64, st: i64) -> i64 {
+    let wp = win_wide(path);
+    let ok = GetFileAttributesExW(wp, 0, RT_BASE + WS_STAT);
+    rt_free(wp);
+    if ok == 0 {
+        return -2;
+    }
+    let attrs = load64(RT_BASE + WS_STAT) & 4294967295;
+    let hi = load64(RT_BASE + WS_STAT + 28) & 4294967295;
+    let lo = load64(RT_BASE + WS_STAT + 32) & 4294967295;
+    rt_zero(st, 144);
+    if (attrs & 16) != 0 {
+        store64(st + 24, 16877);              // S_IFDIR | 0755
+    } else {
+        store64(st + 24, 33188);              // S_IFREG | 0644
+    }
+    store64(st + 48, (hi << 32) | lo);
+    return 0;
+}
+
+// The `syscall6` calls of the portable runtime modules, by Linux number;
+// -38 (ENOSYS) for the ones Windows has no counterpart for here.
+fn os_syscall(nr: i64, a: i64, b: i64, d: i64, e: i64, f: i64) -> i64 {
+    if nr == 0 || nr == 1 {
+        store64(ws(0), 0);
+        let mut ok: i64 = 0;
+        if nr == 0 {
+            ok = ReadFile(win_handle(a), b, d, ws(0), 0);
+        } else {
+            ok = WriteFile(win_handle(a), b, d, ws(0), 0);
+        }
+        if ok == 0 {
+            let why = GetLastError();
+            if nr == 0 && (why == 109 || why == 38) {
+                return 0;                     // broken pipe / end of file
+            }
+            if why == 998 {
+                return -14;                   // EFAULT
+            }
+            return -5;
+        }
+        return load64(ws(0)) & 4294967295;
+    }
+    if nr == 2 {
+        return win_open(a, b);
+    }
+    if nr == 3 {
+        if a > 2 && CloseHandle(a) == 0 {
+            return -9;
+        }
+        return 0;
+    }
+    if nr == 4 {
+        return win_stat(a, b);
+    }
+    if nr == 8 {
+        if SetFilePointerEx(win_handle(a), b, ws(0), d) == 0 {
+            return -29;                       // ESPIPE
+        }
+        return load64(ws(0));
+    }
+    if nr == 9 {
+        let p = VirtualAlloc(a, b, 12288, 4);  // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+        if p == 0 {
+            return -12;
+        }
+        return p;
+    }
+    if nr == 11 {
+        VirtualFree(a, 0, 32768);             // MEM_RELEASE
+        return 0;
+    }
+    if nr == 25 {
+        let q = VirtualAlloc(0, d, 12288, 4);
+        if q == 0 {
+            return -12;
+        }
+        let mut n = b;
+        if d < n {
+            n = d;
+        }
+        rt_copy(q, a, n);
+        VirtualFree(a, 0, 32768);
+        return q;
+    }
+    if nr == 28 || nr == 91 {
+        return 0;                             // madvise, fchmod
+    }
+    if nr == 22 {
+        if CreatePipe(ws(0), ws(8), 0, 0) == 0 {
+            return -24;
+        }
+        store64(a, (load64(ws(0)) & 4294967295) | (load64(ws(8)) << 32));
+        return 0;
+    }
+    if nr == 21 {
+        let wp = win_wide(a);
+        let attrs = GetFileAttributesW(wp);
+        rt_free(wp);
+        if attrs == 4294967295 {
+            return -2;
+        }
+        return 0;
+    }
+    if nr == 87 {
+        let wp = win_wide(a);
+        let ok = DeleteFileW(wp);
+        rt_free(wp);
+        if ok == 0 {
+            return -2;
+        }
+        return 0;
+    }
+    if nr == 39 {
+        return GetCurrentProcessId();
+    }
+    if nr == 62 {
+        ExitProcess(128 + b);                 // a signal: die with 128 + signo
+        return 0;
+    }
+    if nr == 228 {
+        QueryPerformanceFrequency(ws(0));
+        QueryPerformanceCounter(ws(8));
+        let fr = load64(ws(0));
+        let t = load64(ws(8));
+        store64(b, t / fr);
+        store64(b + 8, (t % fr) * 1000000000 / fr);
+        return 0;
+    }
+    if nr == 231 || nr == 60 {
+        ExitProcess(a);
+        return 0;
+    }
+    return -38;
+}
+
+// ------------------------------------------------------------------ files
+//
+// A file handle is a runtime record [HANDLE]; 0 when the open failed.
+
+const O_RDONLY = 0;
+const O_WRONLY_CREAT_TRUNC = 577;
+const O_WRONLY_CREAT_APPEND = 1089;
+const O_RDWR = 2;
+
+fn rt_open_flags(mode: i64) -> i64 {
+    let m = load8(mode);
+    let plus = rt_find(mode, "+") >= 0;
+    if m == 114 {
+        if plus {
+            return O_RDWR;
+        }
+        return O_RDONLY;
+    }
+    if m == 119 {
+        if plus {
+            return 578;
+        }
+        return O_WRONLY_CREAT_TRUNC;
+    }
+    if m == 97 {
+        if plus {
+            return 1090;
+        }
+        return O_WRONLY_CREAT_APPEND;
+    }
+    return -1;
+}
+
+fn file_open(path: i64, mode: i64) -> i64 {
+    if path == 0 || mode == 0 {
+        return 0;
+    }
+    let flags = rt_open_flags(mode);
+    if flags < 0 {
+        return 0;
+    }
+    let fd = win_open(path, flags);
+    if fd < 0 {
+        return 0;
+    }
+    let h = rt_malloc(8);
+    store64(h, fd);
+    return h;
+}
+
+fn file_close(h: i64) -> i64 {
+    if h != 0 {
+        CloseHandle(load64(h));
+        rt_free(h);
+    }
+    return 0;
+}
+
+// Everything from `fd` to end of file; "" on error.
+fn rt_read_fd(fd: i64) -> i64 {
+    let mut cap: i64 = 4096;
+    let end = os_syscall(8, fd, 0, 2, 0, 0);
+    if end >= 0 {
+        if os_syscall(8, fd, 0, 0, 0, 0) < 0 {
+            return rt_dup_n("", 0);
+        }
+        cap = end + 1;
+    }
+    let mut buf = rt_malloc(cap + 1);
+    let mut got: i64 = 0;
+    let mut going = true;
+    while going {
+        if got == cap {
+            cap = cap * 2;
+            buf = rt_realloc(buf, cap + 1);
+        }
+        let r = os_syscall(0, fd, buf + got, cap - got, 0, 0);
+        if r <= 0 {
+            going = false;
+        } else {
+            got = got + r;
+        }
+    }
+    store8(buf + got, 0);
+    return buf;
+}
+
+fn file_read_all(h: i64) -> i64 {
+    if h == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_read_fd(load64(h));
+}
+
+fn file_write(h: i64, content: i64) -> i64 {
+    if h == 0 || content == 0 {
+        return -1;
+    }
+    return rt_write_all(load64(h), content, rt_strlen(content));
+}
+
+fn file_exists(path: i64) -> i64 {
+    if path != 0 && os_syscall(21, path, 0, 0, 0, 0) == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn file_remove(path: i64) -> i64 {
+    if path != 0 && os_syscall(87, path, 0, 0, 0, 0) == 0 {
+        return 0;
+    }
+    return -1;
+}
+
+fn file_size(path: i64) -> i64 {
+    let st = RT_BASE + RS_STAT;
+    if path == 0 || win_stat(path, st) != 0 {
+        return -1;
+    }
+    return load64(st + 48);
+}
+
+fn dir_exists(path: i64) -> bool {
+    let st = RT_BASE + RS_STAT;
+    if path == 0 || win_stat(path, st) != 0 {
+        return false;
+    }
+    return (load64(st + 24) & 61440) == 16384;
+}
+
+fn file_copy(src: i64, dst: i64) -> i64 {
+    if src == 0 || dst == 0 {
+        return -1;
+    }
+    let content = track_file_read(src);
+    if file_exists(src) == 0 {
+        return -1;
+    }
+    let fd = win_open(dst, O_WRONLY_CREAT_TRUNC);
+    if fd < 0 {
+        return -1;
+    }
+    rt_write_all(fd, content, rt_strlen(content));
+    CloseHandle(fd);
+    return 0;
+}
+
+fn track_file_read(path: i64) -> i64 {
+    if path == 0 {
+        return rt_dup_n("", 0);
+    }
+    let fd = win_open(path, O_RDONLY);
+    if fd < 0 {
+        return rt_dup_n("", 0);
+    }
+    let out = rt_read_fd(fd);
+    CloseHandle(fd);
+    return out;
+}
+
+fn track_file_write_all(path: i64, content: i64) -> i64 {
+    if path == 0 {
+        return -1;
+    }
+    let fd = win_open(path, O_WRONLY_CREAT_TRUNC);
+    if fd < 0 {
+        return -1;
+    }
+    let mut status: i64 = -1;
+    if content != 0 {
+        status = rt_write_all(fd, content, rt_strlen(content));
+    }
+    if CloseHandle(fd) == 0 {
+        status = -1;
+    }
+    return status;
+}
+
+// ---------------------------------------------------------------- network
+//
+// Not yet on Windows (Winsock): every call fails.
+
+fn net_socket_tcp_listen(port: i64) -> i64 { return -1; }
+fn net_socket_accept(server_fd: i64) -> i64 { return -1; }
+fn net_socket_connect(host: i64, port: i64) -> i64 { return -1; }
+fn net_socket_send(fd: i64, data: i64, len: i64) -> i64 { return -1; }
+fn net_socket_recv(fd: i64, buf: i64, max_len: i64) -> i64 { return -1; }
+fn net_socket_close(fd: i64) -> i64 { return 0; }

@@ -19,6 +19,7 @@ import "base";
 import "ast";
 import "symbols";
 import "x64";
+import "ffi";
 import "elf";
 import "life";
 import "checker";
@@ -88,7 +89,11 @@ const NG_BARS = 61;    // ng_stack_bars of the function ng_function is generatin
 const NG_BINDSTK = 62; // (kind, value) pairs of the arguments ng_bind_args is binding, nested calls above
 const NG_ACCCARRY = 63; // accumulator loop: (call, slot, HK_*, position) per argument temporary its back edges carry (F3, F3b)
 const NG_FWD = 64;     // name id -> 0 unknown, -1 none, else the collection primitive the function forwards to (ng_forward)
-const NG_SLOTS = 65;
+const NG_TARGET = 65;  // target OS: 0 linux, 1 windows, 2 macos (TG_* in main.trk)
+const NG_IMPORTS = 66; // (library, symbol) text pairs of the imported functions called (ffi.trk)
+const NG_IMPFIX = 67;  // (code position, import id) fixups of their call sites
+const NG_EXTERNS = 68; // name id -> 1 + K_EXTERN node, 0 when the name is not imported
+const NG_SLOTS = 69;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -3972,6 +3977,8 @@ fn ng_call_body(c: i64, n: i64, args: i64) -> i64 {
             }
         } else if builtin >= 0 {
             arity = builtin;
+        } else if ng_extern_of(c, target) >= 0 {
+            return ng_extern_call(c, ng_extern_of(c, target), args, count);
         } else {
             vpush(ng(c, NG_MISSING), target);
         }
@@ -4063,6 +4070,12 @@ fn ng_call_body(c: i64, n: i64, args: i64) -> i64 {
     if text_eq(text, "syscall6") {
         ng_set(c, NG_CLOB, 1);
         ng_set(c, NG_VOLX, 1);
+        if ng(c, NG_TARGET) != 0 {
+            // no Linux kernel: the OS layer's os_syscall(nr, a..e) (the
+            // runtime never passes a sixth argument)
+            x_pop_rax(b);
+            return ng_call_rt(c, "os_syscall", 6);
+        }
         return x_sys_insn(b);
     }
     let nr = ng_libc_syscall(text);
@@ -5710,6 +5723,7 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     let start = vlen(b);
     let calls = vlen(ng(c, NG_CALLS));
     let strs = vlen(ng(c, NG_STRS));
+    let impfix = vlen(ng(c, NG_IMPFIX));
     ng_set(c, NG_PASS, 1);
     ng_set(c, NG_CLOB, 0);
     ng_set(c, NG_VOLX, 0);
@@ -5728,6 +5742,7 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     vtrunc(b, start);
     vtrunc(ng(c, NG_CALLS), calls);
     vtrunc(ng(c, NG_STRS), strs);
+    vtrunc(ng(c, NG_IMPFIX), impfix);
     let regs = ng(c, NG_REG);
     vfill(regs, nslot, -1);
     let pins = ng(c, NG_PIN);
@@ -5871,6 +5886,79 @@ fn native_code_len(c: i64) -> i64 {
     return ng(c, NG_CODELEN);
 }
 
+// ------------------------------------------------- imported functions
+//
+// `extern "lib" fn` items (K_EXTERN): calls go through the platform's
+// import mechanism (ffi.trk), never through Track's convention.
+
+fn ng_extern_table(c: i64) -> i64 {
+    let t = vnew();
+    let items = cx(c, CX_ITEMS);
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        if nk(c, n) == K_EXTERN {
+            while vlen(t) <= na(c, n) {
+                vpush(t, 0);
+            }
+            vset(t, na(c, n), n + 1);
+        }
+        i = i + 1;
+    }
+    return t;
+}
+
+// The K_EXTERN node declaring `name`, or -1.
+fn ng_extern_of(c: i64, name: i64) -> i64 {
+    let t = ng(c, NG_EXTERNS);
+    if name < vlen(t) {
+        return vget(t, name) - 1;
+    }
+    return -1;
+}
+
+fn ng_extern_call(c: i64, e: i64, args: i64, count: i64) -> i64 {
+    let b = ncode(c);
+    if ng(c, NG_TARGET) != 1 {
+        err(text_cat3("trackc: native: imported function '", name_text(c, na(c, e)), "' needs --target x86_64-windows (this target has no import support yet)\n"));
+        quit(1);
+    }
+    let mut i: i64 = 0;
+    while i < count {
+        ng_gen(c, list_at(c, args, i));
+        x_push_rax(b);
+        i = i + 1;
+    }
+    let id = ffi_import_id(ng(c, NG_IMPORTS), nb(c, e), name_text(c, na(c, e)));
+    let ret = nd(c, e);
+    let mut kind: i64 = 0;
+    if ret >= 0 && is_prim(c, ret, PRIM_I32) {
+        kind = 1;
+    } else if ret >= 0 && (is_prim(c, ret, PRIM_U32) || is_prim(c, ret, PRIM_BOOL)) {
+        kind = 2;
+    }
+    ng_set(c, NG_CLOB, 1);
+    ng_set(c, NG_VOLX, 1);
+    return ffi_win64_call(b, ng(c, NG_IMPFIX), id, count, kind);
+}
+
+// Imports and fixups of the generated body, for the image writer.
+fn native_imports(c: i64) -> i64 { return ng(c, NG_IMPORTS); }
+fn native_import_fixups(c: i64) -> i64 { return ng(c, NG_IMPFIX); }
+
+// Windows entry: rsp is 8 mod 16. os_start (the OS layer) builds argc/argv
+// and calls rt_start; then sys_exit(main()), which ends in ExitProcess.
+fn ng_entry_win(c: i64) -> i64 {
+    let b = ncode(c);
+    x_bytes3(b, 72, 131, 236);
+    x_byte(b, 8);              // sub rsp, 8
+    ng_call_rt(c, "os_start", 0);
+    ng_call_rt(c, "main", 0);
+    x_push_rax(b);
+    ng_call_rt(c, "sys_exit", 1);
+    return x_byte(b, 204);     // int3: sys_exit does not return
+}
+
 fn ng_is_declaration(c: i64, n: i64) -> bool {
     let k = nk(c, n);
     return k == K_FN || k == K_MACRODEF;
@@ -5900,6 +5988,11 @@ fn ng_entry(c: i64) -> i64 {
 // image for the loaded, checked program, or report undefined functions
 // and return 0. elf_write_file adds the headers.
 fn generate_native(c: i64) -> i64 {
+    return generate_native_for(c, 0);
+}
+
+// generate_native for target OS `target` (NG_TARGET).
+fn generate_native_for(c: i64, target: i64) -> i64 {
     let state = vfill(vnew_cap(NG_SLOTS), NG_SLOTS, 0);
     vset(c, CX_GEN, state);
     ng_set(c, NG_CODE, vnew_cap(1048576));
@@ -5940,7 +6033,15 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_PASS, 2);
     ng_set(c, NG_SYMS, vnew());
     ng_set(c, NG_CODELEN, 0);
-    ng_entry(c);
+    ng_set(c, NG_TARGET, target);
+    ng_set(c, NG_IMPORTS, vnew());
+    ng_set(c, NG_IMPFIX, vnew());
+    ng_set(c, NG_EXTERNS, ng_extern_table(c));
+    if target == 1 {
+        ng_entry_win(c);
+    } else {
+        ng_entry(c);
+    }
     ng_symbol(c, "_start", 0);
     let items = cx(c, CX_ITEMS);
     let files = cx(c, CX_ITEMFILE);
@@ -6013,8 +6114,12 @@ fn generate_native(c: i64) -> i64 {
         }
         return 0;
     }
-    // data after the code, 8-aligned
-    while vlen(b) % 8 != 0 {
+    // data after the code, 8-aligned (page-aligned for a PE .data section)
+    let mut align: i64 = 8;
+    if target == 1 {
+        align = 4096;
+    }
+    while vlen(b) % align != 0 {
         x_byte(b, 204);
     }
     let base = vlen(b);
