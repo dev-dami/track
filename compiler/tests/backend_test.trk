@@ -1,5 +1,5 @@
 // Checker and C emitter on in-memory programs. Rejections exit the
-// process, so they are covered by the Rust suite (tests/selfhost_tests.rs);
+// process, so they are covered by tests/run.sh (tests/sh/selfhost.sh);
 // here every program must be accepted.
 
 import "base";

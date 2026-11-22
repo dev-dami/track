@@ -1,6 +1,6 @@
 // lexer.trk — tokenizer for Track source files.
 //
-// Mirrors the bootstrap lexer (`src/lexer/mod.rs`): whitespace is
+// Mirrors the former Rust bootstrap lexer (`src/lexer/mod.rs`, deleted): whitespace is
 // [ \t\r\n], `//` comments run to the end of the line, identifiers are
 // ASCII [A-Za-z_][A-Za-z0-9_]*, integers are decimal i64, and strings are
 // unescaped at lex time. Each token is a TK_WIDTH-word record
