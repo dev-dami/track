@@ -3842,13 +3842,36 @@ fn hd_program(c: i64) -> i64 {
         }
         i = i + 1;
     }
+    // A function's checks read only the LT_HFN / LT_HLENT entries of the
+    // functions it calls (hd_call_kind, hd_arg_ok), so a sweep skips a
+    // function none of whose callees changed since its last check: the
+    // check would repeat its last answer. `stamp` is when the entries of a
+    // function of each name last changed (functions sharing a name only
+    // cost extra checks), `seen` when each item was last checked.
+    let deps = vnew_cap(vlen(items) + 1);
+    let seen = vfill(vnew_cap(vlen(items) + 1), vlen(items), -1);
+    let stamp = vfill(vnew_cap(name_count(c) + 1), name_count(c), 0);
+    let mut tick: i64 = 0;
+    let mut d: i64 = 0;
+    while d < vlen(items) {
+        let f = vget(items, d);
+        let fs = vnew();
+        if nk(c, f) == K_FN {
+            hd_scan_list(c, ne(c, f), 0, 1, fs);
+        }
+        vpush(deps, fs);
+        d = d + 1;
+    }
     let mut changed = true;
     while changed {
         changed = false;
         let mut j: i64 = 0;
         while j < vlen(items) {
             let f = vget(items, j);
-            if nk(c, f) == K_FN {
+            if nk(c, f) == K_FN && hd_stale(vget(deps, j), stamp, vget(seen, j)) {
+                vset(seen, j, tick);
+                let was_h = vget(hfn, f);
+                let was_l = vget(lent, f);
                 if vget(hfn, f) == 0 && pl_ends_in_return(c, ne(c, f)) {
                     let kind = hd_rets_list(c, ne(c, f), 0, 1, 0);
                     if kind > 0 {
@@ -3867,9 +3890,135 @@ fn hd_program(c: i64) -> i64 {
                     q = q + 1;
                 }
                 vset(lent, f, bits);
+                if vget(hfn, f) != was_h || bits != was_l {
+                    tick = tick + 1;
+                    vset(stamp, na(c, f), tick);
+                }
             }
             j = j + 1;
         }
+    }
+    return 0;
+}
+
+// True when item deps `fs` hold a function changed after `seen` (-1: the
+// item was never checked).
+fn hd_stale(fs: i64, stamp: i64, seen: i64) -> bool {
+    if seen < 0 {
+        return true;
+    }
+    let mut i: i64 = 0;
+    while i < vlen(fs) {
+        if vget(stamp, vget(fs, i)) > seen {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Push the name of every program function a call in `n` names (callee_fn), walking
+// the nodes scan_calls walks.
+fn hd_scan_fns(c: i64, n: i64, out: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_BOOL || k == K_STR || k == K_VAR {
+        return 0;
+    }
+    if k == K_CALL {
+        let f = hd_callee_peek(c, na(c, n));
+        if f >= 0 {
+            vpush(out, na(c, f));
+        }
+        return hd_scan_list(c, nb(c, n), 0, 1, out);
+    }
+    if k == K_BIN || k == K_FOR {
+        hd_scan_fns(c, nb(c, n), out);
+        if k == K_FOR {
+            return hd_scan_list(c, nc(c, n), 0, 1, out);
+        }
+        return hd_scan_fns(c, nc(c, n), out);
+    }
+    if k == K_UN {
+        return hd_scan_fns(c, nb(c, n), out);
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return hd_scan_list(c, na(c, n), 0, 1, out);
+    }
+    if k == K_SINIT {
+        return hd_scan_list(c, nb(c, n), 1, 2, out);
+    }
+    if k == K_FIELD || k == K_TINDEX || k == K_ADDR || k == K_RETURN {
+        return hd_scan_fns(c, na(c, n), out);
+    }
+    if k == K_INDEX || k == K_RANGE || k == K_ASSIGN || k == K_SLICE {
+        hd_scan_fns(c, na(c, n), out);
+        hd_scan_fns(c, nb(c, n), out);
+        if k == K_SLICE {
+            return hd_scan_fns(c, nc(c, n), out);
+        }
+        return 0;
+    }
+    if k == K_LENS {
+        return hd_scan_list(c, nc(c, n), 0, 1, out);
+    }
+    if k == K_IF || k == K_WHILE {
+        hd_scan_fns(c, na(c, n), out);
+        hd_scan_list(c, nb(c, n), 0, 1, out);
+        if k == K_IF {
+            return hd_scan_list(c, nc(c, n), 0, 1, out);
+        }
+        return 0;
+    }
+    if k == K_MACROCALL {
+        hd_scan_list(c, nb(c, n), 0, 1, out);
+        return hd_scan_list(c, nc(c, n), 0, 1, out);
+    }
+    if k == K_MATCH {
+        hd_scan_fns(c, na(c, n), out);
+        hd_scan_list(c, nb(c, n), 1, 3, out);
+        return hd_scan_list(c, nb(c, n), 2, 3, out);
+    }
+    if k == K_LET {
+        return hd_scan_fns(c, nd(c, n), out);
+    }
+    if k == K_LETD {
+        return hd_scan_fns(c, nc(c, n), out);
+    }
+    return 0;
+}
+
+// callee_fn without interning: a last segment no name has yet names no
+// function, and interning it here would renumber later names.
+fn hd_callee_peek(c: i64, name: i64) -> i64 {
+    let mut f = ni(c, name, NI_FN);
+    if f < 0 && is_qualified(c, name) {
+        let bytes = text_bytes(name_text(c, name));
+        let mut i: i64 = vlen(bytes) - 1;
+        while i > 0 {
+            if vget(bytes, i) == 58 && vget(bytes, i - 1) == 58 {
+                let id = intern_find_span(c, bytes, i + 1, vlen(bytes));
+                if id >= 0 {
+                    f = ni(c, id, NI_FN);
+                }
+                i = 0;
+            }
+            i = i - 1;
+        }
+    }
+    if f >= 0 && nk(c, f) == K_FN {
+        return f;
+    }
+    return -1;
+}
+
+fn hd_scan_list(c: i64, l: i64, from: i64, step: i64, out: i64) -> i64 {
+    let mut i = from;
+    while i < list_len(c, l) {
+        hd_scan_fns(c, list_at(c, l, i), out);
+        i = i + step;
     }
     return 0;
 }

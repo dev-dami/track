@@ -344,6 +344,9 @@ fn tuple_arity(c: i64, ty: i64) -> i64 {
 
 // Last `::` segment of a qualified name (the name itself if unqualified).
 fn last_segment(c: i64, name: i64) -> i64 {
+    if name >= 0 && name < name_count(c) && !is_qualified(c, name) {
+        return name; // no `::` (CX_QUAL): skip the byte scan
+    }
     let text = name_text(c, name);
     let bytes = text_bytes(text);
     let mut i: i64 = vlen(bytes) - 1;

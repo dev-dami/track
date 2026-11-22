@@ -165,19 +165,51 @@ fn binary(c: i64, op: i64, left: i64, right: i64) -> i64 {
 }
 
 fn parse_or(c: i64) -> i64 {
-    let mut left = parse_and(c);
-    while p_accept(c, TK_PIPEPIPE) {
-        left = binary(c, OP_OR, left, parse_and(c));
+    return parse_bin(c, 1);
+}
+
+// Binary operators by precedence climbing: levels 1 `||`, 2 `&&`, 3
+// comparisons, 4 `&` `|`, 5 shifts, 6 `+` `-`, 7 `*` `/` `%`, all left
+// associative. Builds the nodes, in the same order, that one function
+// per level would.
+fn parse_bin(c: i64, min: i64) -> i64 {
+    let mut left = parse_unary(c);
+    let mut op = bin_op(c);
+    while op != 0 && op_level(op) >= min {
+        p_advance(c);
+        left = binary(c, op, left, parse_bin(c, op_level(op) + 1));
+        op = bin_op(c);
     }
     return left;
 }
 
-fn parse_and(c: i64) -> i64 {
-    let mut left = parse_comparison(c);
-    while p_accept(c, TK_AMPAMP) {
-        left = binary(c, OP_AND, left, parse_comparison(c));
+// The binary operator at the current token, or 0.
+fn bin_op(c: i64) -> i64 {
+    let k = p_kind(c);
+    if k == TK_PLUS { return OP_ADD; }
+    if k == TK_MINUS { return OP_SUB; }
+    if k == TK_STAR { return OP_MUL; }
+    if k == TK_SLASH { return OP_DIV; }
+    if k == TK_PERCENT { return OP_MOD; }
+    if k == TK_PIPEPIPE { return OP_OR; }
+    if k == TK_AMPAMP { return OP_AND; }
+    if k == TK_SHL { return OP_SHL; }
+    if k == TK_SHR { return OP_SHR; }
+    let cmp = comparison_op(k);
+    if cmp != 0 {
+        return cmp;
     }
-    return left;
+    return bitwise_op(c);
+}
+
+fn op_level(op: i64) -> i64 {
+    if op == OP_OR { return 1; }
+    if op == OP_AND { return 2; }
+    if op == OP_BAND || op == OP_BOR { return 4; }
+    if op == OP_SHL || op == OP_SHR { return 5; }
+    if op == OP_ADD || op == OP_SUB { return 6; }
+    if op == OP_MUL || op == OP_DIV || op == OP_MOD { return 7; }
+    return 3;
 }
 
 fn comparison_op(kind: i64) -> i64 {
@@ -190,17 +222,6 @@ fn comparison_op(kind: i64) -> i64 {
     return 0;
 }
 
-fn parse_comparison(c: i64) -> i64 {
-    let mut left = parse_bitwise(c);
-    let mut op = comparison_op(p_kind(c));
-    while op != 0 {
-        p_advance(c);
-        left = binary(c, op, left, parse_bitwise(c));
-        op = comparison_op(p_kind(c));
-    }
-    return left;
-}
-
 // `&` / `|` are bitwise only when not doubled (`& &x` stays a reference).
 fn bitwise_op(c: i64) -> i64 {
     let k = p_kind(c);
@@ -208,64 +229,6 @@ fn bitwise_op(c: i64) -> i64 {
     if k == TK_AMP && next != TK_AMP && next != TK_EOF { return OP_BAND; }
     if k == TK_PIPE && next != TK_PIPE && next != TK_EOF { return OP_BOR; }
     return 0;
-}
-
-fn parse_bitwise(c: i64) -> i64 {
-    let mut left = parse_shift(c);
-    let mut op = bitwise_op(c);
-    while op != 0 {
-        p_advance(c);
-        left = binary(c, op, left, parse_shift(c));
-        op = bitwise_op(c);
-    }
-    return left;
-}
-
-fn parse_shift(c: i64) -> i64 {
-    let mut left = parse_additive(c);
-    let mut going = true;
-    while going {
-        if p_accept(c, TK_SHL) {
-            left = binary(c, OP_SHL, left, parse_additive(c));
-        } else if p_accept(c, TK_SHR) {
-            left = binary(c, OP_SHR, left, parse_additive(c));
-        } else {
-            going = false;
-        }
-    }
-    return left;
-}
-
-fn parse_additive(c: i64) -> i64 {
-    let mut left = parse_term(c);
-    let mut going = true;
-    while going {
-        if p_accept(c, TK_PLUS) {
-            left = binary(c, OP_ADD, left, parse_term(c));
-        } else if p_accept(c, TK_MINUS) {
-            left = binary(c, OP_SUB, left, parse_term(c));
-        } else {
-            going = false;
-        }
-    }
-    return left;
-}
-
-fn parse_term(c: i64) -> i64 {
-    let mut left = parse_unary(c);
-    let mut going = true;
-    while going {
-        if p_accept(c, TK_STAR) {
-            left = binary(c, OP_MUL, left, parse_unary(c));
-        } else if p_accept(c, TK_SLASH) {
-            left = binary(c, OP_DIV, left, parse_unary(c));
-        } else if p_accept(c, TK_PERCENT) {
-            left = binary(c, OP_MOD, left, parse_unary(c));
-        } else {
-            going = false;
-        }
-    }
-    return left;
 }
 
 fn parse_unary(c: i64) -> i64 {
