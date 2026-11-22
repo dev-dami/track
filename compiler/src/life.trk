@@ -1286,27 +1286,41 @@ fn is_generic_param(c: i64, f: i64, t: i64) -> bool {
     return false;
 }
 
-// E0211: argument `a` (index i) of a call to `f` is a `&` variable, but f
-// ends its by-value parameter (die or esc): the frame that only borrowed
-// the value would end it.
+// E0211: argument `a` (index i) of a call to `f` is borrowed, but f ends
+// its by-value parameter (die or esc): the frame that only borrowed the
+// value would end it. Borrowed means a `&` variable, or an owned place
+// read through one (`r.p`, `*r`, `r.0`, `r[i]`): that moves the value out
+// of a borrow. A generic parameter binds to the argument's own type, so a
+// `&` variable passed there is lent, not consumed.
 fn check_lent_consumed(c: i64, s: i64, name: i64, f: i64, i: i64, a: i64) -> i64 {
-    if nk(c, a) != K_VAR {
+    let root = place_var(c, a);
+    if root < 0 {
         return 0;
     }
-    let slot = lookup(c, na(c, a));
+    let slot = lookup(c, root);
     if slot < lsg(s, LS_BASE) || !ty_is_ref(c, vf(c, slot, V_TYPE)) {
         return 0;
     }
     let params = nc(c, f);
     let pty = list_at(c, params, i * 2 + 1);
-    if ty_is_ref(c, pty) || is_generic_param(c, f, pty) {
+    if ty_is_ref(c, pty) {
         return 0;
+    }
+    if nk(c, a) == K_VAR {
+        if is_generic_param(c, f, pty) {
+            return 0;
+        }
+    } else {
+        let at = infer_type(c, a);
+        if at < 0 || at == ck(c, CK_TY_UNK) || ty_is_ref(c, at) || ty_is_copy(c, at) {
+            return 0;
+        }
     }
     let callee = quoted(c, na(c, f));
     let p = quoted(c, list_at(c, params, i * 2));
     let me = quoted(c, cur_fn_name(c));
     // Name the `&` parameter the value was lent through, not a local alias.
-    let mut lent = na(c, a);
+    let mut lent = root;
     let refs = slot_origin(c, slot) & lsg(s, LS_REFS);
     if refs != 0 {
         let mut k: i64 = 0;
@@ -1320,8 +1334,9 @@ fn check_lent_consumed(c: i64, s: i64, name: i64, f: i64, i: i64, a: i64) -> i64
     sb_add(b, " consumes its parameter ");
     sb_add(b, p);
     sb_add(b, ", but ");
-    sb_add(b, quoted(c, lent));
-    sb_add(b, " is only lent to ");
+    sb_add(b, "'");
+    sb_add(b, lent_text(c, a, name_text(c, lent)));
+    sb_add(b, "' is only lent to ");
     sb_add(b, me);
     sb_add(b, ". Pass '&' and make '");
     sb_add(b, name_text(c, list_at(c, params, i * 2)));
@@ -1331,6 +1346,24 @@ fn check_lent_consumed(c: i64, s: i64, name: i64, f: i64, i: i64, a: i64) -> i64
     sb_add(b, me);
     sb_add(b, ".");
     return life_error(c, npos(c, a), "E0211", sb_text(b));
+}
+
+// Source text of place `n` with its base variable spelled `root`.
+fn lent_text(c: i64, n: i64, root: i64) -> i64 {
+    let k = nk(c, n);
+    if k == K_FIELD {
+        return text_cat3(lent_text(c, na(c, n), root), ".", name_text(c, nb(c, n)));
+    }
+    if k == K_TINDEX {
+        return text_cat3(lent_text(c, na(c, n), root), ".", text_of_int(nb(c, n)));
+    }
+    if k == K_INDEX {
+        return text_cat(lent_text(c, na(c, n), root), "[..]");
+    }
+    if k == K_UN {
+        return text_cat("*", lent_text(c, nb(c, n), root));
+    }
+    return root;
 }
 
 // E0212: a returned literal holds `&x` for a local `x` of this frame.
