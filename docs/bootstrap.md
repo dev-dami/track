@@ -187,9 +187,19 @@ literals follow the code. `_start` calls `rt_start(argc, argv)`, then
 `main()`, then `sys_exit(result)` (the compiler/rt `rt_start` runs main
 and exits itself, so the rest is a fallback; see docs/native.md).
 
-Tuple literals are heap cells (only `let (a, b) = (x, y)` binds the
-elements without one), so a tuple stored in a struct, array, union or
-tuple, returned, or built in a loop outlives its frame. Identical string
+Tuple, struct, array and payload-union literals are heap cells unless
+the placement plan (`life.trk`, `trackc life --place`) puts them on the
+stack; then the cell is a run of contiguous frame slots with the heap
+layout (word `i` at `[rbp + d + 8i]`, every word written), one run per
+literal site reused on each execution, and its address is the value. A
+function with such a cell keeps its `rbp` frame even as a leaf. A local
+handed to any call inside a `return` value (`return f(&p)`, or the
+accumulator form) is never a frame cell, since a tail call drops the frame
+before the callee runs and an accumulator loop reruns the body over the
+same slots. Only `let (a, b) = (x, y)` binds tuple elements without any
+cell. `local.field = v` for a field only one struct has is one store
+through the local's register, and an inlined call's `&local` argument
+shares the local's slot. Identical string
 literals share one copy, so `"abc" == "abc"` is `1` as with the C
 compiler's literal merging. A program without `main` gets an empty one
 that runs its top-level statements, as on the C path.
