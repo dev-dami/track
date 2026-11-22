@@ -9,7 +9,9 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
 T=${1:-${BOOTSTRAP_DIR:-build/bootstrap}/stage3/trackc}
 case "$T" in /*) ;; *) T="$root/$T" ;; esac
-R=${RUST_TRACK:-$root/target/release/track}
+R=${RUST_TRACK:-${CARGO_TARGET_DIR:-$root/target}/release/track}
+# A fresh worktree has no target/: build the Rust compiler like bootstrap.sh does.
+[ -x "$R" ] || [ -n "${RUST_TRACK:-}" ] || (cd "$root" && cargo build --release --quiet)
 runs=${RACE_RUNS:-3}
 o=$(mktemp -d); trap 'rm -rf "$o"' EXIT
 fail=0
