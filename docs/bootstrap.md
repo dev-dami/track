@@ -217,7 +217,9 @@ is renamed to a fresh `__rt_<name>` together with the runtime's own uses
 of it (`isolate_runtime` in symbols.trk), so the program's calls reach its
 definition and the runtime's calls reach the runtime's. The few names the
 code generators call by name (`alloc`, `dealloc`, `str_eq`, `str_len`,
-`str_char_at`, `array_len`, `sys_exit`, `memset`, `rt_start`, `track_*`)
+`str_char_at`, `array_len`, `sys_exit`, `memset`, `rt_start`, `track_*`,
+and the runtime-state layout constants `RT_BASE`, `RS_USED`, `RS_HEAP`,
+`RS_LIMIT`, `RS_HEAP_END`, `RS_FREE` that ngen's inline allocator reads)
 stay reserved: defining one under `--native`/`--rt=track` is E0201. On the
 C path a function `f` is the C symbol `tk_f`, or `tku_f` when `tk_f` is a
 C prelude symbol (`tk_w`, `tk_shl`, `tk_div`...).

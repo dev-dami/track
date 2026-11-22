@@ -1819,6 +1819,44 @@ fn user_names_never_clash_with_runtime_names() {
 
 /// K3a: two definitions of one function are E0201 (trackc), whether in one
 /// file or across imports.
+/// ngen's inline allocator reads the runtime-state layout constants by
+/// name, so a program may not redefine them under `--native`: a user
+/// `RT_BASE` (and friends) is E0201, not a binary that segfaults.
+#[test]
+fn runtime_layout_consts_stay_reserved() {
+    let dir = scratch("layoutconst");
+    for name in [
+        "RT_BASE",
+        "RS_USED",
+        "RS_HEAP",
+        "RS_LIMIT",
+        "RS_HEAP_END",
+        "RS_FREE",
+    ] {
+        let file = format!("{}.trk", name);
+        fs::write(
+            dir.join(&file),
+            format!(
+                "const {} = 5;\nstruct P {{ x: i64 }}\nfn mk(i: i64) -> P {{ return P {{ x: i }}; }}\nfn main() -> i64 {{ let p = mk(3); print(p.x); return 0; }}\n",
+                name
+            ),
+        )
+        .unwrap();
+        let exe = dir.join(name);
+        let out = run_trackc(
+            &["build", "--native", &file, "-o", exe.to_str().unwrap()],
+            &dir,
+        );
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && err.contains("E0201"),
+            "{}: user const accepted under --native: {}",
+            name,
+            err
+        );
+    }
+}
+
 #[test]
 fn duplicate_functions_are_rejected() {
     let dir = scratch("dupfn");

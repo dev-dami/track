@@ -221,6 +221,12 @@ fn isolate_runtime(c: i64, from: i64, node_from: i64) -> i64 {
         } else if k == K_CONST {
             taken = ni(c, name, NI_CONST) >= 0;
         }
+        if taken && k == K_CONST && emitter_entry(name_text(c, name)) {
+            // A reserved runtime constant (ngen reads it by name) cannot be
+            // split; constants are not otherwise checked for duplicates.
+            let user = ni(c, name, NI_CONST);
+            fail_at(c, npos(c, user), "E0201", text_cat3("duplicate definition of constant '", name_text(c, name), "' (reserved by the runtime)"));
+        }
         if taken && !emitter_entry(name_text(c, name)) {
             let fresh = fresh_runtime_name(c, name);
             vpush(olds, name);
@@ -281,7 +287,14 @@ fn emitter_entry(n: i64) -> bool {
     return text_eq(n, "alloc") || text_eq(n, "dealloc") || text_eq(n, "str_eq")
         || text_eq(n, "str_len") || text_eq(n, "str_char_at") || text_eq(n, "array_len")
         || text_eq(n, "sys_exit") || text_eq(n, "rt_start") || text_eq(n, "memset")
-        || text_eq(n, "main") || text_starts(n, "track_");
+        || text_eq(n, "main") || text_starts(n, "track_") || ng_layout_const(n);
+}
+
+// Runtime-state layout constants that ngen's inline alloc/free read by name
+// (`ng_rt_const`); a user const of the same name must stay an E0201 clash.
+fn ng_layout_const(n: i64) -> bool {
+    return text_eq(n, "RT_BASE") || text_eq(n, "RS_USED") || text_eq(n, "RS_HEAP")
+        || text_eq(n, "RS_LIMIT") || text_eq(n, "RS_HEAP_END") || text_eq(n, "RS_FREE");
 }
 
 // Discriminant of `Type::Variant`, or -1 when it is not a known variant.
