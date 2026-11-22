@@ -1,0 +1,5 @@
+fn rot
+  L7 struct ret-slot ends L7
+fn main
+  L11 struct stack ends L20
+  L14 call stack ends L20

@@ -1,0 +1,10 @@
+fn mk
+  L8 struct ret-slot ends L8
+fn fresh_heap
+  L12 call heap ends -
+fn main
+  L20 call stack ends L22
+  L21 call heap-autofree deep ends L26
+  L23 call heap ends -
+  L25 call heap-autofree ends L26
+  L27 call heap-autofree deep ends L28

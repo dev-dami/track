@@ -1,5 +1,5 @@
 fn make
-  L10 struct ret-slot ends L10
+  L10 struct heap ends -
   L10 struct heap ends -
   L10 struct heap ends -
 fn main

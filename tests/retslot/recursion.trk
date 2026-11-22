@@ -1,0 +1,38 @@
+// L10: ret-slot functions that call themselves (each frame passes its own
+// slot down) and each other (a `return f(..)` passes the caller's slot
+// through unchanged).
+struct V { x: i64, y: i64 }
+
+fn down(n: i64) -> V {
+    if n == 0 {
+        return V { x: 0, y: 1 };
+    }
+    let r = down(n - 1);
+    return V { x: r.x + n, y: (r.y * 3) % 10007 };
+}
+
+fn even(n: i64, acc: i64) -> V {
+    if n == 0 {
+        return V { x: acc, y: 0 };
+    }
+    return odd(n - 1, acc + 2);
+}
+
+fn odd(n: i64, acc: i64) -> V {
+    if n == 0 {
+        return V { x: acc, y: 1 };
+    }
+    return even(n - 1, acc * 3 % 1009);
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 40 {
+        let d = down(i);
+        let e = even(i, 1);
+        total = total + d.x + d.y + e.x + e.y;
+        i = i + 1;
+    }
+    print(total);
+}

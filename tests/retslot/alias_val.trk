@@ -1,0 +1,21 @@
+// L10: `acc = f(acc)` passes acc by value to a `die` parameter and stores
+// the result over it. The callee only reads its parameter, and reads it
+// all before it writes the caller's cell.
+struct V { x: i64, y: i64 }
+
+fn rot(a: V, k: i64) -> V {
+    return V { x: a.y * 3 + k, y: a.x - k };
+}
+
+fn main() -> void {
+    let mut acc = V { x: 2, y: 5 };
+    let mut i: i64 = 0;
+    while i < 500 {
+        acc = rot(acc, i);
+        acc.x = acc.x % 100003;
+        acc.y = acc.y % 100019;
+        i = i + 1;
+    }
+    print(acc.x);
+    print(acc.y);
+}

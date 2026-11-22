@@ -30,6 +30,9 @@ const G_RETVAL = 8;   // current function returns a value
 const G_EXTERNS = 9;  // extern (non-runtime) functions in first-use order
 const G_FUNCS = 10;   // emitted function definitions
 const G_PROTOS = 11;  // user function prototypes
+const G_RS = 12;      // current function: C name of its ret-slot cell parameter, or 0
+const G_INTONODE = 13; // literal site `gen_site_cell` writes into G_INTOCELL, or -1
+const G_INTOCELL = 14;
 const G_SLOTS = 15;
 
 fn g(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
@@ -416,6 +419,12 @@ fn gen_raw_builtin(c: i64, name: i64, args: i64, t: i64) -> bool {
 }
 
 fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
+    return gen_call_rs(c, n, args_list, 0);
+}
+
+// A call; when `rs` is not 0 the callee has a ret-slot entry (card L10)
+// and `rs` is the C text of the cell it writes its result into.
+fn gen_call_rs(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
     let name = na(c, n);
     let args = gen_list_values(c, args_list);
     if is_qualified(c, name) {
@@ -442,6 +451,17 @@ fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
     let f = ni(c, target, NI_FN);
     if f >= 0 {
         let arity = list_len(c, nc(c, f)) / 2;
+        if rs != 0 {
+            let full = vnew();
+            let mut i: i64 = 0;
+            while i < arity {
+                vpush(full, arg_at(args, i));
+                i = i + 1;
+            }
+            vpush(full, rs);
+            emit(c, text_cat3(t, " = ", text_cat(call_text(rs_symbol(c, target), full, arity + 1), ";")));
+            return t;
+        }
         emit(c, text_cat3(t, " = ", text_cat(call_text(text_cat("tk_", name_text(c, target)), args, arity), ";")));
         return t;
     }
@@ -636,7 +656,11 @@ fn gen_return(c: i64, n: i64) -> i64 {
 // then it lives in a stack slot of the current frame, one slot per literal
 // site, reused on every execution. Same layout, so readers never know.
 fn gen_tuple(c: i64, n: i64) -> i64 {
-    return gen_cell(c, gen_list_values(c, na(c, n)));
+    let values = gen_list_values(c, na(c, n));
+    if life_place_of(c, n) == PL_RET && g(c, G_RS) != 0 {
+        return gen_into_cell(c, g(c, G_RS), values);
+    }
+    return gen_cell(c, values);
 }
 
 fn gen_stack_tuple(c: i64, n: i64) -> i64 {
@@ -646,6 +670,12 @@ fn gen_stack_tuple(c: i64, n: i64) -> i64 {
 // The cell of literal `n` holding `words`: a stack slot when the plan
 // says stack, else a heap cell.
 fn gen_site_cell(c: i64, n: i64, words: i64) -> i64 {
+    if n == g(c, G_INTONODE) {
+        return gen_into_cell(c, g(c, G_INTOCELL), words);
+    }
+    if life_place_of(c, n) == PL_RET && g(c, G_RS) != 0 {
+        return gen_into_cell(c, g(c, G_RS), words);
+    }
     if life_place_of(c, n) == PL_STACK {
         return gen_slot(c, words);
     }
@@ -677,6 +707,52 @@ fn gen_slot(c: i64, values: i64) -> i64 {
         j = j + 1;
     }
     return text_cat3("TK_W(", slot, ")");
+}
+
+// Write `values` into the existing cell `cell` (C text) and return it.
+// Every value is read into a temp before the first store, so a value that
+// reads the cell itself (`p = P { x: p.y, y: p.x }`, or a ret-slot callee
+// whose argument is the caller's cell) sees the old words.
+fn gen_into_cell(c: i64, cell: i64, values: i64) -> i64 {
+    let tmps = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(values) {
+        vpush(tmps, gen_into_temp(c, vget(values, i)));
+        i = i + 1;
+    }
+    let mut j: i64 = 0;
+    while j < vlen(tmps) {
+        emit(c, text_cat3(load_text(cell, j), " = ", text_cat(vget(tmps, j), ";")));
+        j = j + 1;
+    }
+    return cell;
+}
+
+// A fresh stack slot `tk_w sN[words]`, unwritten; returns its cell text.
+fn gen_new_slot(c: i64, words: i64) -> i64 {
+    let slot = text_cat("s", text_of_int(g_counter(c, G_NSLOT)));
+    sb_line(g(c, G_DECLS), text_cat3("    tk_w ", slot, text_cat3("[", text_of_int(words), "];")));
+    return text_cat3("TK_W(", slot, ")");
+}
+
+// ------------------------------------------- caller return slots (L10)
+//
+// A function `life_ret_slot_fn` marks is emitted as `tk_<f>__rs`, with a
+// hidden last parameter `rs`: the cell its result goes in. Its ret-slot
+// literals are written into `rs` (`gen_into_cell`) and a `return g(..)`
+// of another such function passes `rs` on, so the result is always `rs`.
+// The callee writes `rs` only after every word is in a temp, at the
+// `return`, so `rs` may be a cell the callee reads through an argument
+// (`acc = f(&acc)`, `acc = f(acc)`). `tk_<f>` allocates the cell and
+// calls `tk_<f>__rs`; callers whose result must be heap use it.
+
+fn rs_symbol(c: i64, name: i64) -> i64 {
+    return text_cat3("tk_", name_text(c, name), "__rs");
+}
+
+// The call `v` of a ret-slot function writing its result into `cell`.
+fn gen_rs_call(c: i64, v: i64, cell: i64) -> i64 {
+    return gen_call_rs(c, v, nb(c, v), cell);
 }
 
 fn load_text(base: i64, i: i64) -> i64 {
@@ -886,7 +962,12 @@ fn gen(c: i64, n: i64) -> i64 {
         return v;
     }
     if k == K_ADDR { return gen(c, na(c, n)); }
-    if k == K_CALL { return gen_call(c, n, nb(c, n)); }
+    if k == K_CALL {
+        if life_place_of(c, n) == PL_RET && g(c, G_RS) != 0 {
+            return gen_rs_call(c, n, g(c, G_RS));
+        }
+        return gen_call(c, n, nb(c, n));
+    }
     if k == K_MACROCALL { return gen_call(c, n, nb(c, n)); }
     if k == K_LET {
         if nk(c, nd(c, n)) == K_TUPLE && life_place_of(c, nd(c, n)) == PL_STACK {
@@ -895,7 +976,14 @@ fn gen(c: i64, n: i64) -> i64 {
             emit(c, text_cat3(local_name(c, sid), " = ", text_cat(sv, ";")));
             return local_name(c, sid);
         }
-        let v = gen(c, nd(c, n));
+        let mut v: i64 = 0;
+        if pl_rs_call(c, nd(c, n)) && life_place_of(c, nd(c, n)) == PL_STACK {
+            // A ret-slot call: the result goes in a slot of this frame.
+            let words = pl_flat_words(c, pl_site_type(c, nd(c, n)));
+            v = gen_rs_call(c, nd(c, n), gen_new_slot(c, words));
+        } else {
+            v = gen(c, nd(c, n));
+        }
         let id = new_local(c, na(c, n));
         emit(c, text_cat3(local_name(c, id), " = ", text_cat(v, ";")));
         if life_place_of(c, nd(c, n)) == PL_AUTO {
@@ -906,6 +994,27 @@ fn gen(c: i64, n: i64) -> i64 {
     }
     if k == K_ASSIGN {
         let target = na(c, n);
+        let value = nb(c, n);
+        let place = life_place_of(c, value);
+        if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 && ((place == PL_STACK && pl_in_place(c, value)) || (place == PL_AUTO && pl_rs_call(c, value))) {
+            // L10: rewrite the cell the local already has. A heap-autofree
+            // local keeps its cell, so nothing is freed.
+            let id = ni(c, na(c, target), NI_CVAR);
+            let cell = local_name(c, id);
+            if pl_rs_call(c, value) {
+                let r = gen_rs_call(c, value, cell);
+                emit(c, text_cat3(cell, " = ", text_cat(r, ";")));
+                return cell;
+            }
+            let saved = g(c, G_INTONODE);
+            let saved_cell = g(c, G_INTOCELL);
+            g_set(c, G_INTONODE, value);
+            g_set(c, G_INTOCELL, cell);
+            gen(c, value);
+            g_set(c, G_INTONODE, saved);
+            g_set(c, G_INTOCELL, saved_cell);
+            return cell;
+        }
         let mut v: i64 = 0;
         if nk(c, nb(c, n)) == K_TUPLE && life_place_of(c, nb(c, n)) == PL_STACK {
             v = gen_stack_tuple(c, nb(c, n));
@@ -983,13 +1092,18 @@ fn fn_symbol(c: i64, name: i64) -> i64 {
 }
 
 fn fn_signature(c: i64, f: i64) -> i64 {
+    return fn_signature_as(c, f, fn_symbol(c, na(c, f)), false);
+}
+
+// The C signature of `f` named `sym`; `rs` adds the ret-slot parameter.
+fn fn_signature_as(c: i64, f: i64, sym: i64, rs: bool) -> i64 {
     let params = nc(c, f);
     let b = sb_new();
     sb_add(b, "tk_w ");
-    sb_add(b, fn_symbol(c, na(c, f)));
+    sb_add(b, sym);
     sb_add(b, "(");
     let count = list_len(c, params) / 2;
-    if count == 0 {
+    if count == 0 && !rs {
         sb_add(b, "void");
     }
     let mut i: i64 = 0;
@@ -1001,8 +1115,42 @@ fn fn_signature(c: i64, f: i64) -> i64 {
         sb_int(b, i);
         i = i + 1;
     }
+    if rs {
+        if count > 0 {
+            sb_add(b, ", ");
+        }
+        sb_add(b, "tk_w rs");
+    }
     sb_add(b, ")");
     return sb_text(b);
+}
+
+// `tk_<f>` of a ret-slot function: allocate the result cell, then let
+// `tk_<f>__rs` write it.
+fn gen_rs_wrapper(c: i64, f: i64) -> i64 {
+    let count = list_len(c, nc(c, f)) / 2;
+    let b = sb_new();
+    sb_add(b, "    return ");
+    sb_add(b, rs_symbol(c, na(c, f)));
+    sb_add(b, "(");
+    let mut i: i64 = 0;
+    while i < count {
+        sb_add(b, "a");
+        sb_int(b, i);
+        sb_add(b, ", ");
+        i = i + 1;
+    }
+    sb_add(b, "alloc(");
+    sb_int(b, pl_flat_words(c, nd(c, f)) * 8);
+    sb_add(b, "));");
+    let out = g(c, G_FUNCS);
+    sb_line(out, "");
+    sb_add(out, fn_signature(c, f));
+    sb_line(out, " {");
+    sb_line(out, sb_text(b));
+    sb_line(out, "}");
+    sb_line(g(c, G_PROTOS), text_cat(fn_signature(c, f), ";"));
+    return 0;
 }
 
 // Emit one function. `prelude` is a list of top-level statements run at
@@ -1022,6 +1170,12 @@ fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
     }
     g_set(c, G_RETVAL, returns);
     g_set(c, G_AUTO, vnew());
+    g_set(c, G_INTONODE, -1);
+    let rs = life_ret_slot_fn(c, f);
+    g_set(c, G_RS, 0);
+    if rs {
+        g_set(c, G_RS, "rs");
+    }
     let mark = scope_begin(c);
     let params = nc(c, f);
     let mut i: i64 = 0;
@@ -1046,14 +1200,22 @@ fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
         emit(c, "return 0;");
     }
     scope_end(c, mark);
+    let mut sig = fn_signature(c, f);
+    if rs {
+        sig = fn_signature_as(c, f, rs_symbol(c, na(c, f)), true);
+    }
+    g_set(c, G_RS, 0);
     let out = g(c, G_FUNCS);
     sb_line(out, "");
-    sb_add(out, fn_signature(c, f));
+    sb_add(out, sig);
     sb_line(out, " {");
     sb_add(out, sb_text(g(c, G_DECLS)));
     sb_add(out, sb_text(g(c, G_BODY)));
     sb_line(out, "}");
-    sb_line(g(c, G_PROTOS), text_cat(fn_signature(c, f), ";"));
+    sb_line(g(c, G_PROTOS), text_cat(sig, ";"));
+    if rs {
+        gen_rs_wrapper(c, f);
+    }
     return 0;
 }
 
