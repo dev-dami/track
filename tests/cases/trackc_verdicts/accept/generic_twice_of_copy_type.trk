@@ -1,0 +1,1 @@
+fn twice<T>(x: T) -> T { let a = x; let b = x; return b; } fn main() -> void { let n: i64 = 4; print(twice(n)); }

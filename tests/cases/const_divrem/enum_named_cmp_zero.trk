@@ -1,0 +1,1 @@
+const Z = 2 < 1; enum E { A = 7 / Z } const Q = 1; fn main() -> void { print(Q); }

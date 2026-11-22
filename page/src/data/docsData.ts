@@ -33,7 +33,7 @@ Track answers this with three foundational principles:
 - **No Garbage Collector, No Hidden Runtime**: Resource lifecycles are statically verified at compile time. Destruction code (\`vec_free\`, \`str_free\`) is automatically emitted at deterministically computed spend points.
 - **Linear Ownership State Machine**: Resources have exactly one active owner. Every variable transitions strictly between 4 states: \`Active\`, \`Borrowed\`, \`Locked\`, and \`Spent\`.
 - **Lexical Lenses (\`with\` blocks)**: Scoped, non-escaping mutable views that eliminate lifetime annotations altogether.
-- **Cranelift Standalone Backend**: Instant compilation with native machine code generation for x86_64 and aarch64, avoiding heavy LLVM dynamic dependencies.
+- **Native Backend**: \`trackc build --native\` writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker. The default path goes through generated C.
 - **Explicit Stack-Based Error Handling**: No monadic wrappers (\`Option\` / \`Result\`), no \`?\` hidden control flow, no stack unwinding. Errors are first-class stack values.
     `,
     codeSnippets: [
@@ -51,45 +51,44 @@ fn main() -> void {
   {
     id: 'installation',
     title: 'Installation & Toolchain Setup',
-    subtitle: 'Get up and running with track, yard, and track-lsp in seconds',
+    subtitle: 'Get up and running with trackc and yard',
     category: 'Getting Started',
     content: `
-Track provides a unified, single-binary toolchain consisting of the standalone compiler (\`track\`), the package manager & test runner (\`yard\`), and the Language Server Protocol daemon (\`track-lsp\`).
+Track ships as a self-hosted toolchain: the compiler (\`trackc\`, written in Track), the package manager & test runner (\`yard\`, also written in Track), and the Language Server (\`trackc lsp\`, built into the compiler).
 
 ### Quick Installation via Shell Script
 
-On Linux (x86_64, aarch64) or macOS, install the complete Track toolchain using the official installer:
+The installer bootstraps \`trackc\` from the committed C seed and builds \`yard\`. It needs a C compiler (\`cc\`), \`git\` and POSIX tools:
 
 \`\`\`bash
 curl -fsSL https://raw.githubusercontent.com/dev-dami/track/main/scripts/install.sh | bash
 \`\`\`
 
-This downloads and configures \`track\`, \`yard\`, and \`track-lsp\` into your \`/usr/local/bin\` or \`~/.local/bin\`.
+The binaries are installed into \`~/.track/bin\` by default (override with \`--dir\` or \`TRACK_INSTALL_DIR\`).
 
 ### Building from Source
 
-Track's host compiler is implemented in Rust (2024 edition) and builds cleanly using Cargo:
+Track is self-hosting: \`trackc\` is written in Track and compiles itself to a verified fixed point. A clean checkout needs only a C compiler (\`cc\`) and POSIX tools; there is no Rust toolchain involved.
 
 \`\`\`bash
 # Clone the repository
 git clone https://github.com/dev-dami/track.git
 cd track
-
-# Build release binaries (track, yard, track-lsp)
-cargo build --release
-
-# Run local installer
+# cc -> stage1..3 -> native; trackc is build/bootstrap/stage3/trackc
+scripts/bootstrap.sh
+# yard, written in Track
+build/bootstrap/stage3/trackc build --native tools/yard/main.trk -o yard
+# Or bootstrap and install trackc + yard in one step
 ./scripts/install.sh
 \`\`\`
+
+On hosts other than x86-64 Linux (macOS, ARM) use \`scripts/bootstrap.sh --no-native\` for the C-only bootstrap.
 
 ### Verifying Toolchain Installation
 
 \`\`\`bash
-track --version
-# track 0.7.0
-
-yard --version
-# yard 0.7.0
+trackc --version
+# trackc 1.0.0
 \`\`\`
     `,
     codeSnippets: [
@@ -431,7 +430,7 @@ fn pair<T, U>(a: T, b: U) -> (T, U) {
 
 1. **Call Site Type Inference**: Type parameters (\`T\`, \`U\`) are inferred automatically from actual argument types.
 2. **Specialization & Mangling**: Each distinct combination produces a mangled concrete function (e.g. \`identity__Ti32\`, \`pair__Ti32_Ubool\`).
-3. **Direct Emitted Cranelift Machine Code**: No dynamic boxing, no runtime vtable pointer indirection.
+3. **Direct Emitted Machine Code**: No dynamic boxing, no runtime vtable pointer indirection.
     `,
     codeSnippets: [
       {
@@ -509,13 +508,12 @@ src = "src"
     subtitle: 'Real-time diagnostics, auto-completion, and markdown track-block checking',
     category: 'Toolchain & Compiler',
     content: `
-Track ships with a dedicated LSP daemon (\`track-lsp\`) built on top of Tower-LSP and Tokio.
+Track's language server is part of the self-hosted compiler. Start it with \`trackc lsp\`; it is written in Track (\`compiler/src/lsp.trk\`) and speaks JSON-RPC 2.0 over stdin/stdout.
 
 ### Key Capabilities
-- **Live Diagnostics**: Real-time ownership checking, type errors, and span highlights in \`.trk\` files.
-- **Markdown Code Block Checking**: \`track-lsp\` parses and type-checks \`\`\`track code blocks inside \`.md\` documentation files!
-- **Fast Auto-Completion**: Keywords, stdlib modules, structs, and tagged union variants.
-- **AST Caching & Stale Result Discarding**: Prevents publishing outdated diagnostics on fast keystrokes.
+- **Live Diagnostics**: Exactly what \`trackc check\` reports (lexer, parser, ownership and lifecycle errors, plus warnings), published on open, change and save.
+- **Markdown Code Block Checking**: \`\`\`track blocks inside \`.md\` files are checked per block.
+- **Auto-Completion & Hover**: Keywords, types, built-ins, macros, and the file's own functions and enum/union variants.
 
 ### VS Code Configuration
 
@@ -524,7 +522,8 @@ Add this to your \`.vscode/settings.json\`:
 \`\`\`json
 {
   "language-server.track": {
-    "command": "track-lsp",
+    "command": "trackc",
+    "args": ["lsp"],
     "filePatterns": ["*.trk", "*.md"]
   }
 }
@@ -544,11 +543,11 @@ cp grammars/track.tmLanguage.json ~/.vscode/extensions/track-syntax/syntaxes/`,
   },
   {
     id: 'self-hosting',
-    title: 'Self-Hosted Compiler & Roadmap to v0.9.0',
-    subtitle: 'Track lexer in native Track and the 3-stage bootstrapping gate',
+    title: 'Self-Hosted Compiler & Bootstrap',
+    subtitle: 'trackc is written in Track and compiles itself to a verified fixed point',
     category: 'Toolchain & Compiler',
     content: `
-Track is actively executing its path to full compiler self-bootstrapping.
+Track 1.0 is self-hosting: \`trackc\`, the compiler in \`compiler/src/\`, is written entirely in Track. \`yard\` and \`trackc lsp\` are written in Track too. The earlier Rust stage 0 has been removed.
 
 ### Milestone Progress Overview
 
@@ -560,18 +559,21 @@ Track is actively executing its path to full compiler self-bootstrapping.
 [v0.5.0] Explicit Error Handling        ✅ DONE
 [v0.6.0] Monomorphized Generics         ✅ DONE
 [v0.7.0] Self-Hosted Lexer in Track     ✅ DONE (compiler/src/lexer.trk)
-[v0.8.0] Parser, Checker & C-Emitter    ⏳ IN PROGRESS
-[v0.9.0] 3-Stage Bootstrapping Verified 🎯 MILESTONE
+[v0.8.0] Parser, Checker & C-Emitter    ✅ DONE
+[v0.9.0] 3-Stage Bootstrapping Verified ✅ DONE
+[v1.0.0] Self-Hosting, Rust removed     ✅ DONE
 \`\`\`
 
-### v0.7.0 Milestone: Self-Hosted Lexer
-In v0.7.0, Track successfully ported the host lexer from Rust into 100% native Track (\`compiler/src/lexer.trk\`), recognizing 50+ token variants with native union matching and 10 unit test suites.
+### The Bootstrap
 
-### The 3-Stage Bootstrapping Gate (v0.9.0)
-1. **Stage 0**: Host Rust \`track\` compiler compiles \`compiler/*.trk\` → emits \`track_stage1\` executable.
-2. **Stage 1**: \`track_stage1\` compiles \`compiler/*.trk\` → emits \`track_stage2\` executable.
-3. **Stage 2**: \`track_stage2\` compiles \`compiler/*.trk\` → emits \`track_stage3\` executable.
-4. **Verification**: Assert byte-for-byte binary equality (\`cmp track_stage2 track_stage3\`).
+A clean checkout builds \`trackc\` with only a C compiler (\`cc\`) and POSIX tools. \`scripts/bootstrap.sh\` starts from a committed C seed (\`bootstrap/seed/\`, the C that \`trackc\` emits for its own sources):
+
+1. **Stage 0**: \`cc\` builds the C seed into \`stage1/trackc\`.
+2. **Stage 1**: \`stage1/trackc\` compiles \`compiler/src/main.trk\` → \`stage2/trackc\`.
+3. **Stage 2**: \`stage2/trackc\` compiles \`compiler/src/main.trk\` → \`stage3/trackc\`.
+4. **Native**: \`scripts/selfhost.sh\` rebuilds \`trackc\` natively (\`--native\`, no C toolchain) until the native stages \`n2\`, \`n3\` and \`n4\` are byte-identical.
+
+The gate checks that stage 1 and stage 2 emit identical C, that the stage 2 and stage 3 executables are byte-identical, and that the native stages reproduce themselves. After any change to \`compiler/src/\`, run \`scripts/update_seed.sh\` to regenerate the seed. See \`docs/bootstrap.md\` in the repository for the full pipeline.
     `,
     codeSnippets: [
       {

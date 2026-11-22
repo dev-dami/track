@@ -1,0 +1,2 @@
+struct P { x: i64 }
+fn main() -> void { let mut p = P { x: 0 }; let mut i = 0; while i < 3 { print(p.x); p.x = i; i = i + 1; } }

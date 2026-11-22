@@ -1,0 +1,4 @@
+struct Point { x: i64, y: i64 }
+union U { P(&Point), N }
+fn wrap(r: &Point) -> U { return U::P(r); }
+fn main() -> void { let p = Point { x: 1, y: 2 }; let u = wrap(&p); match u { U::P(r) => print(r.x), U::N => print(0) } }

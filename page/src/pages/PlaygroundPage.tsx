@@ -194,7 +194,7 @@ export const PlaygroundPage: React.FC<PlaygroundPageProps> = ({
               <span>src/main.trk</span>
             </div>
             <div className="text-[11px] text-zinc-500">
-              Track v0.7.0 • Tab indents with 4 spaces • ⌘+Enter to Run
+              Track v1.0.0 • Tab indents with 4 spaces • ⌘+Enter to Run
             </div>
           </div>
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **All Rust code.** The Rust stage 0 compiler, the Rust yard and the Rust
+  LSP (`src/`), `Cargo.toml`, `Cargo.lock` and the cargo test suites
+  (`tests/*.rs`) are deleted. Track builds from the C seed with
+  `scripts/bootstrap.sh` (cc -> stage1..3 -> native) and tests with
+  `tests/run.sh`, `tests/yard/run.sh` and `tests/lsp/run.sh`; yard is
+  `tools/yard/*.trk` and the language server is `trackc lsp`.
+  `scripts/bootstrap.sh --from-rust` is gone, and `bench/` compares
+  trackc's C and native backends.
+
 ### Added
 - **Runtime written in Track** (`compiler/rt/*.trk`): every function of
   `runtime/track_runtime.c` on raw syscalls, no libc. `trackc build

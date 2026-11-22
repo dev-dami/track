@@ -4,7 +4,7 @@ Track 1.0 is self-hosting: `trackc`, the compiler in `compiler/src/`, is
 written entirely in Track and compiles itself to a fixed point.
 
 A clean checkout builds `trackc` with only a C compiler (`cc`) and POSIX
-tools. Rust is not needed. The default run then also checks the native
+tools. The default run then also checks the native
 fixed point (`scripts/selfhost.sh`), which runs x86-64 Linux executables
 and uses `sha256sum` and GNU `date +%s%N` (nanosecond timing); on other hosts (macOS, ARM) use
 `scripts/bootstrap.sh --no-native` for the C-only bootstrap.
@@ -34,8 +34,9 @@ The gate has three parts. Stage 1 and stage 2 must emit byte-identical C
 for the compiler, which shows the two builds of `trackc` behave the same.
 The stage 2 and stage 3 executables must then be byte-identical. Last, the
 native stages `n2`, `n3` and `n4` must be byte-identical (`--no-native`
-skips this part). CI runs the seed path with no Rust toolchain on `PATH`.
-`tests/selfhost_tests.rs` repeats the C check under `cargo test`.
+skips this part). CI runs the seed path with only `/usr/bin:/bin` on `PATH`
+and checks that no Rust toolchain is reachable there.
+`tests/sh/selfhost.sh` (run by `tests/run.sh`) repeats the C check.
 
 ### The seed
 
@@ -56,8 +57,8 @@ scripts/update_seed.sh --check    # fail if bootstrap/seed/ is stale (CI)
 Rerun `scripts/update_seed.sh` in the same change as any edit to
 `compiler/src/`, `compiler/rt/` or `runtime/`. By default it bootstraps from
 the current seed. If the sources use something the old seed cannot compile,
-point `TRACKC` at any working `trackc`, for example the stage3 of
-`scripts/bootstrap.sh --from-rust`. It builds the compiler twice from that
+point `TRACKC` at any working `trackc`, for example one built from an
+intermediate commit the old seed can compile. It builds the compiler twice from that
 binary and writes the fixed-point C.
 
 A runtime change (`runtime/` or `compiler/rt/`, then `embed_runtime.sh` /
@@ -65,25 +66,20 @@ A runtime change (`runtime/` or `compiler/rt/`, then `embed_runtime.sh` /
 old runtime, so its stage2 and stage3 differ and the default run (and
 `--check`) stops with "stage2 and stage3 executables differ". Build a
 trackc from the new sources first, e.g. `TRACKC=build/bootstrap/stage3/trackc`
-after `scripts/bootstrap.sh --no-native` reports the mismatch, or
-`--from-rust` while stage 0 still exists.
+after `scripts/bootstrap.sh --no-native` reports the mismatch.
 
 The seed is C rather than a binary. C can be reviewed, it compresses well
 in git history, and it builds on any host with a C compiler. One step later
 the native stages give a static x86-64 ELF that needs no toolchain.
 
-### The Rust stage 0
+### History: the Rust stage 0
 
-The Rust compiler in `src/` still works as stage 0:
-
-```sh
-scripts/bootstrap.sh --from-rust    # or BOOTSTRAP_FROM=rust; YARD=... picks a yard binary
-```
-
-This path runs `cargo build --release` (or uses `$YARD`), and `yard build`
-compiles `compiler/` to `stage1/trackc`. From stage 1 on the stages are the
-same. With a fresh seed, both paths give byte-identical `stage2` and
-`stage3`.
+Earlier, a Rust compiler in `src/` (with a Rust yard and
+LSP) was an alternative stage 0 (`scripts/bootstrap.sh --from-rust`): yard
+built `compiler/` to `stage1/trackc`, and from stage 1 on both paths gave
+byte-identical `stage2` and `stage3`. The C seed was first generated that
+way. The Rust code, `Cargo.toml` and the cargo test suites have been
+deleted; yard and the LSP are now Track (`tools/yard/`, `trackc lsp`).
 
 ## Using trackc
 
@@ -101,7 +97,7 @@ trackc life --place hello.trk       # placement of every allocation site
 
 `trackc` loads the root file and every local module it imports. Imports
 resolve beside the importing file first (`<dir>/<path>.trk`,
-`<dir>/<path>/mod.trk`), then with the Rust compiler's project-relative
+`<dir>/<path>/mod.trk`), then with the (former) Rust compiler's project-relative
 candidates (`src/`, the current directory, `compiler/src/`, `compiler/`).
 `std`, `std/io`, `std/fs`, `std/sys`, `std/mem`, and `math/vec` are
 built-in namespaces.
@@ -114,7 +110,7 @@ built-in namespaces.
 | `lexer.trk` | tokens as `(kind, value, start, end)` records; keywords interned first |
 | `ast.trk` | node pool: seven words per node, child lists in a list pool |
 | `parser.trk` | recursive descent over the full grammar, same precedence as `src/parser/` |
-| `loader.trk` | whole-program loading in the order the Rust checker visits modules |
+| `loader.trk` | whole-program loading in the order the former Rust checker visited modules |
 | `symbols.trk` | functions, enum/union layouts, aliases, integer constants |
 | `checker.trk` | the ownership checker |
 | `life.trk` | lifecycle summaries, errors E0211-E0214, warnings W0301-W0305, the placement plan ([lifecycles.md](lifecycles.md)) |
@@ -267,8 +263,8 @@ in-bounds index and `a`, `i` in registers reads the element as a memory
 operand; `n % d` by a constant adds the sign
 fix-up `s & -d` to `n` beside the quotient multiply instead of after it. `syscall6`, `load64`, `store64`, `load8`,
 `store8` compile to instructions, as do the libc names `elf.trk` uses
-(`open64`, `write`, `fchmod`, `close`, `memset`) so that the Rust
-bootstrap compiler, which knows no machine builtins, links them from libc. String
+(`open64`, `write`, `fchmod`, `close`, `memset`) so that the
+C backend, which knows no machine builtins, links them from libc. String
 literals follow the code. `_start` calls `rt_start(argc, argv)`, then
 `main()`, then `sys_exit(result)` (the compiler/rt `rt_start` runs main
 and exits itself, so the rest is a fallback; see docs/native.md).
@@ -350,7 +346,7 @@ and tail calls are optimised away, so very deep non-tail recursion (about
 a million calls) overflows the stack and dies with SIGSEGV where the C
 build at `-O2` may survive.
 The natively built `trackc` compiles itself to a byte-identical fixed
-point (`tests/native_tests.rs`); `scripts/native_parity.sh <trackc>`
+point (`tests/sh/native.sh`); `scripts/native_parity.sh <trackc>`
 compares native and C builds of the examples.
 
 ### Bootstrapping from .trk alone
@@ -376,8 +372,9 @@ the script on every push.
 
 ## The runtime
 
-`runtime/track_runtime.c` is the single source of truth. The Rust compiler
-embeds it with `include_str!`; `scripts/embed_runtime.sh` regenerates
+`runtime/track_runtime.c` is the single source of truth (the Rust compiler
+used to embed it with `include_str!`, as its header comment still says);
+`scripts/embed_runtime.sh` regenerates
 `compiler/src/runtime_c.trk`, which holds the source as Track string
 literals plus each function's prototype and arity. CI runs
 `scripts/embed_runtime.sh --check` so the two copies cannot drift.
@@ -387,7 +384,7 @@ literals plus each function's prototype and arity. CI runs
 
 ## Ownership checker
 
-`checker.trk` implements the same rules as `src/checker/` (see
+`checker.trk` implements the rules the Rust checker in `src/checker/` had (see
 [SPEC.md](../SPEC.md)): moves of non-copy values, borrows that freeze their
 target while the reference is live, lens locks, the `if`/`else` merge rule,
 no consumption of outer resources in loops, reference escape analysis, lens
@@ -395,13 +392,14 @@ escape analysis, forbidden manual frees, and the "did you mean" check for
 misspelled calls. Instead of cloning maps at every branch it keeps a table
 of variable slots (name, state, type, mutability, lens flag, the previous
 slot with the same name, provenance) and snapshots slot states at
-branches. `tests/selfhost_tests.rs` asserts that both checkers return the
-same verdict on a shared set of accepted and rejected programs.
+branches. Its verdicts on a shared set of accepted and rejected programs,
+once compared with the Rust checker, are pinned in `tests/cases/` and run
+by `tests/run.sh`.
 
 ## Testing
 
 ```sh
-cargo test --test selfhost_tests   # fixed point, parity, verdicts, native tests
-(cd compiler && yard test)          # native tests built by the Rust compiler
+tests/run.sh -j 4                   # fixed point, verdicts, native tests, compiler/tests
+(cd compiler && yard test)          # compiler/tests via yard (tools/yard)
 (cd compiler && target/trackc run tests/parser_test.trk)  # ... or by trackc
 ```

@@ -1,0 +1,1 @@
+fn twice<T>(x: T) -> T { let a = x; let b = x; return b; } fn main() -> void { let s = str_concat("a", "b"); print(twice(s)); }

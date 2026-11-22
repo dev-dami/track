@@ -1,0 +1,1 @@
+error[E0214]: 'p' would be ended twice: fields 'Bag.a' and 'Bag.b' both take ownership of the borrowed 'r'.

@@ -1,0 +1,8 @@
+const ONE = 1 < 2;
+enum E { A = ONE, B }
+const Q = E::B + 10;
+const N = !ONE || (3 >= 3);
+fn main() -> void {
+    print(ONE); print(E::A); print(E::B); print(Q); print(N);
+    print(7 / (1 < 2));
+}

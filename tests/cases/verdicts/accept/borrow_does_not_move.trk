@@ -1,0 +1,1 @@
+fn f(x: &Str) -> i64 { return 0; } fn main() -> void { let s = str_concat("a", "b"); f(&s); print(s); }

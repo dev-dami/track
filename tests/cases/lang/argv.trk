@@ -1,0 +1,5 @@
+fn main() -> void {
+    print(os_args_count());
+    let first = os_arg(1);
+    print(first);
+}

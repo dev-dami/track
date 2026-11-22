@@ -68,14 +68,14 @@ export function highlightBash(code: string): string {
     if (line.trim().startsWith("#")) {
       return `<span class="text-zinc-500 italic">${line}</span>`;
     }
-    let tokenized = line;
-    // Command prefixes
-    tokenized = tokenized.replace(/\b(curl|yard|track|cargo|bash|git|cd|mkdir|cp|echo)\b/g, '<span class="text-amber-400 font-semibold">$1</span>');
-    // Flags
-    tokenized = tokenized.replace(/(--[a-zA-Z0-9_-]+|-[a-zA-Z0-9]+)/g, '<span class="text-cyan-400 font-mono">$1</span>');
-    // Strings
-    tokenized = tokenized.replace(/(&quot;.*?&quot;|".*?")/g, '<span class="text-emerald-400">$1</span>');
-    return tokenized;
+    // One pass, so later rules never match inside spans emitted by earlier ones
+    return line.replace(
+      /(&quot;.*?&quot;|".*?")|\b(curl|yard|track|trackc|cargo|bash|git|cd|mkdir|cp|echo)\b|(\s)(--[a-zA-Z0-9_-]+|-[a-zA-Z0-9]+)/g,
+      (_m, str, cmd, sp, flag) =>
+        str ? `<span class="text-emerald-400">${str}</span>`
+        : cmd ? `<span class="text-amber-400 font-semibold">${cmd}</span>`
+        : `${sp}<span class="text-cyan-400 font-mono">${flag}</span>`
+    );
   });
 
   return lines.join("\n");

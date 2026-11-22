@@ -1,0 +1,4 @@
+struct Point { x: i64, y: i64 }
+fn take(p: Point) -> i64 { return p.x; }
+fn peek(r: &Point) -> i64 { return take(*r); }
+fn main() -> void { let p = Point { x: 1, y: 2 }; print(peek(&p)); }

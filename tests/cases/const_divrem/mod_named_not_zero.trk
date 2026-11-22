@@ -1,0 +1,1 @@
+const Z = !(3 > 2); const Q = 7 % (Z + Z); fn main() -> void { print(Q); }

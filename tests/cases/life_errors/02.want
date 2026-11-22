@@ -1,0 +1,1 @@
+error[E0212]: local 'p' escapes 'make' through field 'Holder.p'; it dies when 'make' returns.

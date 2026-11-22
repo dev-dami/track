@@ -1,0 +1,3 @@
+struct C { n: i64 }
+fn bump(c: &C) -> i64 { with c -> l { l.n = l.n + 1; } return 0; }
+fn main() -> void { let c = C { n: 0 }; bump(&c); print(c.n); }

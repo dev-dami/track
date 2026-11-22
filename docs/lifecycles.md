@@ -260,7 +260,7 @@ value (`'p'` in e5), or at the literal if nothing calls the function.
 
 *As built (L5w):* the four rules are widened; every case below has an
 error test and a look-alike that must check clean in
-`tests/selfhost_tests.rs` (`LIFE_ERRORS`, `LIFE_CLEAN`).
+`tests/selfhost_tests.rs` (`LIFE_ERRORS`, `LIFE_CLEAN`; now `tests/sh/lifecycle.sh`).
 
 - **E0211** also fires for an owned place read through a `&` variable
   (`take(r.p)`, `take(*r)`, `r.0`, `r[i]`) passed to a by-value parameter
@@ -330,7 +330,7 @@ no caller.
   unaffected, so the bootstrap's byte-identical gates are untouched.
 - The compiler's own sources stay warning-clean. The L6 accept
   requires `trackc check --deny-warnings compiler/src/main.trk`.
-- Rust checker parity (`tests/selfhost_tests.rs`, shared verdicts): the
+- Rust checker parity (historical; the Rust checker is deleted) (`tests/selfhost_tests.rs`, shared verdicts): the
   new errors are trackc-only, like K2's early-return moves. Mark the
   new test programs trackc-only. `compiler/` must still pass the Rust
   stage 0, and it does, because it holds handles as `i64`, which these
@@ -659,7 +659,7 @@ Every card in this chart has landed.
 Every accept includes the **self-hosting gate**:
 `scripts/bootstrap.sh` (stage1/stage2 C identical, stage2/stage3
 binaries identical), `scripts/selfhost.sh` (n2 = n3 = n4), and
-`cargo test --test selfhost_tests`. The compiler is the biggest test.
+`tests/run.sh` (formerly `cargo test --test selfhost_tests`). The compiler is the biggest test.
 "check budget" means `trackc check compiler/src/main.trk` stays at most
 15 ms above the base and under 75 ms (median of 5).
 

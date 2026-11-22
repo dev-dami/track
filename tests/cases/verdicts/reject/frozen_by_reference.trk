@@ -1,0 +1,1 @@
+fn main() -> void { let s = str_concat("a", "b"); let r = &s; let t = s; }

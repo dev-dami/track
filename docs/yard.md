@@ -2,7 +2,7 @@
 
 Yard is the package manager and build orchestrator for the Track programming language.
 
-Yard is written in Track (`tools/yard/*.trk`) and drives the self-hosted compiler `trackc`. The Rust implementation (`src/yard/`, `cargo build --bin yard`) is still in the tree until the remaining Rust parts are ported; both behave the same for everything below.
+Yard is written in Track (`tools/yard/*.trk`) and drives the self-hosted compiler `trackc`. It replaced an earlier Rust implementation (`src/yard/`), since deleted; the behaviour below is unchanged.
 
 ## Building yard
 
@@ -40,7 +40,7 @@ tests/yard/run.sh                       # builds yard with trackc, then tests it
 YARD_BIN=./yard tests/yard/run.sh       # tests an existing binary
 ```
 
-Each case matches a test in `tests/yard_tests.rs`. The runner needs no cargo.
+Each case matches a test of the deleted Rust suite (`tests/yard_tests.rs`), named in its header.
 
 ## Project Structure
 

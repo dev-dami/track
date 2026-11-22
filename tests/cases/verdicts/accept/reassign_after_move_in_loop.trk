@@ -1,0 +1,1 @@
+fn eat(s: Str) -> void { } fn main() -> void { let mut s = str_concat("a", "b"); let mut i: i64 = 0; while i < 2 { eat(s); s = str_concat("x", "y"); i = i + 1; } }

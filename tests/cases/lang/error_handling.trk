@@ -1,0 +1,26 @@
+const ERR_NOT_FOUND = 1;
+
+fn file_len(path: &ptr<u8>) -> (i64, i32) {
+    let ok = file_exists(path);
+    if (!ok) {
+        return (-1, ERR_NOT_FOUND);
+    }
+    return (file_size(path), 0);
+}
+
+fn total(path: &ptr<u8>, fallback: i64) -> i64 {
+    let (size, err) = file_len(path);
+    if (err == ERR_NOT_FOUND) {
+        print_err("missing input, using fallback");
+        return fallback;
+    }
+    if (err != 0) {
+        abort("fatal: unexpected error");
+    }
+    return size;
+}
+
+fn main() -> void {
+    print(total("/etc/hostname", -7));
+    print(total("/definitely/not/here", 7));
+}

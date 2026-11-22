@@ -1,0 +1,1 @@
+fn id<T>(x: T) -> T { return x; } fn main() -> void { let s = id(str_concat("a", "b")); print(s); print(id(3)); }

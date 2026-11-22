@@ -1,0 +1,1 @@
+const M = 0 - 9223372036854775807 - 1; const Q = M / 2 + M % 3; fn main() -> void { print(Q); }

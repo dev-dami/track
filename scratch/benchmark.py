@@ -2,7 +2,7 @@
 """
 Track Benchmark Suite — fair, statistically rigorous, auto-reporting.
 
-When run, this script compiles and measures Track (Cranelift) vs C (gcc -O3)
+When run, this script compiles and measures Track (trackc) vs C (gcc -O3)
 vs Rust (rustc -O) vs Python 3 across multiple workloads that stress different
 language subsystems: tight loops, branching, recursion, and tuple operations.
 All workloads use IDENTICAL algorithms across languages (no branchless
@@ -29,7 +29,8 @@ from pathlib import Path
 # Paths & constants
 # ---------------------------------------------------------------------------
 BENCH_DIR = Path(__file__).resolve().parent / "benchmarks"
-TRACK_BIN = Path(__file__).resolve().parent.parent / "target" / "release" / "track"
+# trackc: $TRACKC, else the stage3 compiler scripts/bootstrap.sh leaves.
+TRACK_BIN = Path(os.environ.get("TRACKC") or Path(__file__).resolve().parent.parent / "build" / "bootstrap" / "stage3" / "trackc")
 RESULTS_MD = Path(__file__).resolve().parent / "benchmark_results.md"
 BENCH_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -207,23 +208,11 @@ def get_versions():
     return info
 
 def compile_track(f_trk: Path) -> Path | None:
-    # track build writes executable named after stem into cwd — run with cwd=BENCH_DIR
-    res = subprocess.run([str(TRACK_BIN), "build", str(f_trk)], cwd=str(BENCH_DIR), capture_output=True, text=True)
-    if res.returncode != 0:
-        # fallback: legacy `track <file>` form
-        res = subprocess.run([str(TRACK_BIN), str(f_trk)], cwd=str(BENCH_DIR), capture_output=True, text=True)
-        if res.returncode != 0:
-            print(f"[compile] track failed for {f_trk.name}: {res.stderr[:500]}")
-            return None
     bin_path = BENCH_DIR / f_trk.stem
-    # track may have emitted to parent cwd if invoked differently; also check parent
-    if not bin_path.exists():
-        alt = Path(__file__).resolve().parent.parent / f_trk.stem
-        if alt.exists():
-            alt.rename(bin_path)
-        else:
-            print(f"[compile] track binary not found for {f_trk.name}")
-            return None
+    res = subprocess.run([str(TRACK_BIN), "build", str(f_trk), "-o", str(bin_path)], cwd=str(BENCH_DIR), capture_output=True, text=True)
+    if res.returncode != 0 or not bin_path.exists():
+        print(f"[compile] trackc failed for {f_trk.name}: {res.stderr[:500]}")
+        return None
     return bin_path
 
 def compile_c(f_c: Path, f_bin: Path) -> bool:
@@ -366,7 +355,7 @@ def run_benchmarks(quick: bool = False):
     lines.append("|---|---|---|---|---|---|")
 
     # lang labels for display
-    label = {"track": "**Track (Cranelift)**", "c": "C (`gcc -O3`)", "rust": "Rust (`rustc -O`)", "python": "Python 3"}
+    label = {"track": "**Track (trackc)**", "c": "C (`gcc -O3`)", "rust": "Rust (`rustc -O`)", "python": "Python 3"}
     for name in per_task:
         res = per_task[name]
         track_med = res.get("track", (None,))[0]
@@ -395,7 +384,7 @@ def run_benchmarks(quick: bool = False):
     lines.append("")
     lines.append("### Notes")
     lines.append("")
-    lines.append("- Track binaries are built with `track build` (Cranelift, `opt_level=speed`, `is_pic=false`) and linked via `cc -O3 -lm -no-pie`.")
+    lines.append("- Track binaries are built with `trackc build` (Track -> C, then the C compiler trackc invokes).")
     lines.append("- C is `gcc -O3`, Rust is `rustc -O` — both in release mode, single-file, no LTO tuning.")
     lines.append("- Python is CPython as found on `PATH`; 100M-iteration loops dominate its runtime.")
     lines.append("- Each task recompiles fresh sources in `scratch/benchmarks/` and is timed end-to-end (process spawn included) with warmup runs discarded; median is the primary metric.")

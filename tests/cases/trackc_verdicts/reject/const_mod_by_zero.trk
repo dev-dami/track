@@ -1,0 +1,1 @@
+const D = 7 % 0; fn main() -> void { print(D); }

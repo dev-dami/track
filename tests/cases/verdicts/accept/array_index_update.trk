@@ -1,0 +1,1 @@
+fn main() -> void { let mut a = [1, 2]; a[1] = 7; print(a[1]); }

@@ -1,0 +1,1 @@
+fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } fn f(k: i64) -> i64 { let s = str_concat("a", "b"); match k { 1 if eatb(s) => return 1, _ => return eatr(s), } } fn main() -> void { print(f(1)); }

@@ -1,0 +1,1 @@
+fn f() -> i64 { return 1; } const D = f(); fn main() -> void { print(D); }

@@ -1,7 +1,9 @@
+# yard writes target/ (target/_yard_root.trk, target/objects/) in the project it builds
 /target
 /tmp_benchmark
 *.o
 *.out
+!tests/cases/**/*.out
 *.exe
 
 # IDE

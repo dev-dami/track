@@ -1,0 +1,17 @@
+union Value { Int(i64), Flag(bool), Nothing }
+enum Code { A = 5, B, C = 10 }
+fn describe(v: Value) -> i64 {
+    let mut out: i64 = -1;
+    match v {
+        Value::Int(n) => out = n,
+        Value::Flag(f) => out = 1000 + f,
+        Value::Nothing => out = 0,
+    }
+    return out;
+}
+fn main() -> void {
+    print(describe(Value::Int(42)));
+    print(describe(Value::Flag(true)));
+    print(describe(Value::Nothing));
+    print(Code::A); print(Code::B); print(Code::C);
+}

@@ -47,7 +47,7 @@ export const languageComparisons: LanguageComparisonRow[] = [
   },
   {
     feature: 'Compiler Backend',
-    track: 'Cranelift Standalone (Sub-ms native compilation)',
+    track: 'Built-in native x86-64 backend, or portable C emitter',
     rust: 'LLVM (Large memory & build overhead)',
     zig: 'LLVM / C Emitter / Self-hosted x86',
     c: 'GCC / Clang (LLVM)',
@@ -74,7 +74,7 @@ export const languageComparisons: LanguageComparisonRow[] = [
   },
   {
     feature: 'Self-Hosting Status',
-    track: 'v0.7.0 Native Lexer -> v0.9.0 3-Stage Byte Verify',
+    track: 'Self-hosted: trackc is written in Track; C-seed bootstrap with byte-identical fixed points',
     rust: 'Self-hosted via LLVM',
     zig: 'Self-hosted',
     c: 'Self-hosted (GCC/Clang)',

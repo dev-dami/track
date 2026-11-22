@@ -1,0 +1,5 @@
+struct Point { x: i64, y: i64 }
+struct Outer { p: Point, n: i64 }
+fn take(p: Point) -> i64 { return p.x; }
+fn own(o: Outer) -> i64 { return take(o.p); }
+fn main() -> void { let o = Outer { p: Point { x: 1, y: 2 }, n: 3 }; print(own(o)); }

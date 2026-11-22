@@ -82,7 +82,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 transition-colors px-2 py-2"
           >
             <Milestone className="h-3.5 w-3.5 text-purple-400" />
-            <span>v0.9.0 Bootstrapping Roadmap</span>
+            <span>Self-Hosting Roadmap</span>
           </button>
         </div>
       </section>
@@ -160,10 +160,10 @@ export const HomePage: React.FC<HomePageProps> = ({
 
           <div className="space-y-2 border-l-2 border-emerald-500/80 pl-4">
             <h3 className="font-mono font-bold text-zinc-100">
-              Standalone Cranelift Backend
+              Native Backend, No Linker
             </h3>
             <p className="text-xs text-zinc-400 leading-relaxed font-sans">
-              Fast, standalone native code generation for x86_64 and aarch64 without multi-gigabyte LLVM dynamic libraries. Multi-threaded worker ISA sharing ensures instant check and build cycles.
+              trackc build --native writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker. Prefer C? trackc build compiles through generated C.
             </p>
           </div>
         </div>
@@ -219,7 +219,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             </p>
           </div>
           <div className="rounded border border-zinc-800 bg-[#0d0e12] p-4 space-y-2">
-            <div className="text-cyan-400 font-bold">Language Server: track-lsp</div>
+            <div className="text-cyan-400 font-bold">Language Server: trackc lsp</div>
             <p className="text-zinc-400 font-sans">
               Provides real-time AST diagnostics, autocompletion, and type-checks <code className="text-zinc-200">```track</code> code blocks embedded in markdown files.
             </p>

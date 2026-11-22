@@ -1,0 +1,1 @@
+fn main() -> void { let a = [1, 2]; let n = array_len(a); print(a[0]); }

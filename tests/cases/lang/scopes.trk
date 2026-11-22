@@ -1,0 +1,12 @@
+fn main() -> void {
+    let x = 10;
+    if true {
+        let x = 20;
+        print(x);
+    }
+    print(x);
+    match 1 {
+        x => print(x),
+    }
+    print(x);
+}

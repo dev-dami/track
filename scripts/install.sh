@@ -45,7 +45,7 @@ banner() {
       ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
 BANNER
   printf "${RESET}"
-  printf "${DIM}  Track — linear ownership, scoped lenses, Cranelift${RESET}\n"
+  printf "${DIM}  Track — linear ownership, scoped lenses, self-hosted${RESET}\n"
   hr
 }
 
@@ -90,18 +90,12 @@ step "Checking prerequisites"
 
 need_ok=1
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | head -n1 | awk '{print $3}')"; else err "git not found — install git"; need_ok=0; fi
-if command -v cargo >/dev/null 2>&1; then
-  ok "cargo $(cargo --version | awk '{print $2}')"
-else
-  err "cargo not found — install Rust: https://rustup.rs"
-  printf "    ${DIM}curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh${RESET}\n"
-  need_ok=0
-fi
-if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then
-  ccv=$(cc --version 2>/dev/null | head -n1 || gcc --version | head -n1)
+if command -v "${CC:-cc}" >/dev/null 2>&1; then
+  ccv=$("${CC:-cc}" --version 2>/dev/null | head -n1)
   ok "cc ${ccv:0:48}"
 else
-  warn "cc/gcc not found — linking may fail"
+  err "C compiler '${CC:-cc}' not found — the bootstrap builds the C seed with it"
+  need_ok=0
 fi
 if [[ $need_ok == 0 ]]; then err "fix prerequisites and re-run"; exit 1; fi
 
@@ -112,7 +106,7 @@ INSTALL_DIR="$REPLY"
 # expand ~
 INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
 
-if [[ -d "$INSTALL_DIR" ]] && ls "$INSTALL_DIR"/track >/dev/null 2>&1; then
+if [[ -d "$INSTALL_DIR" ]] && ls "$INSTALL_DIR"/trackc >/dev/null 2>&1; then
   warn "existing Track found at $INSTALL_DIR"
   ask "Overwrite existing binaries? (y/N)" "y"
   case "$REPLY" in y|Y|yes|YES) :;; *) info "aborted by user"; exit 0;; esac
@@ -149,21 +143,26 @@ ok "cloned to $TMP_DIR/track"
 cd "$TMP_DIR/track"
 
 # ── build ─────────────────────────────────────────────────────────
-step "Building release binaries"
-printf "  ${DIM}cargo build --release --bins  (this may take a minute)${RESET}\n"
-# show cargo output with dim prefix; keep colors if terminal
-if ! cargo build --release --bins 2>&1 | sed 's/^/  '"$GRAY"'│ '"$RESET"'/'; then
-  err "cargo build failed — check Rust toolchain"
+step "Bootstrapping trackc from the C seed"
+printf "  ${DIM}scripts/bootstrap.sh --no-native  (this may take a minute)${RESET}\n"
+if ! scripts/bootstrap.sh --no-native 2>&1 | sed 's/^/  '"$GRAY"'│ '"$RESET"'/'; then
+  err "bootstrap failed — check the C compiler"
   exit 1
 fi
-ok "built track, yard, track-lsp"
+mkdir -p build/bin
+cp build/bootstrap/stage3/trackc build/bin/trackc
+if ! build/bin/trackc build --native tools/yard/main.trk -o build/bin/yard >/dev/null; then
+  err "building yard failed"
+  exit 1
+fi
+ok "built trackc (with trackc lsp) and yard"
 
 # ── install ───────────────────────────────────────────────────────
 step "Installing"
 mkdir -p "$INSTALL_DIR"
-BINARIES=("track" "yard" "track-lsp")
+BINARIES=("trackc" "yard")
 for bin in "${BINARIES[@]}"; do
-  src="target/release/$bin"
+  src="build/bin/$bin"
   if [[ ! -f "$src" ]]; then err "missing $src (build failed)"; exit 1; fi
   cp "$src" "$INSTALL_DIR/$bin"
   chmod +x "$INSTALL_DIR/$bin"
@@ -262,11 +261,11 @@ printf "\n"
 hr
 printf "${BOLD}${GREEN}  Track installed!${RESET}\n"
 printf "  ${DIM}bin:${RESET} %s\n" "$INSTALL_DIR"
-printf "  ${DIM}track:${RESET} %s\n" "$("$INSTALL_DIR/track" --version 2>/dev/null || echo "track")"
+printf "  ${DIM}trackc:${RESET} %s\n" "$("$INSTALL_DIR/trackc" --version 2>/dev/null || echo "trackc")"
 printf "  ${DIM}yard:${RESET}  %s\n" "$("$INSTALL_DIR/yard" --version 2>/dev/null || echo "yard")"
 printf "\n"
 printf "  ${BOLD}Quick start:${RESET}\n"
-printf "    ${CYAN}track --help${RESET}          type-check / build\n"
+printf "    ${CYAN}trackc --help${RESET}         type-check / build\n"
 printf "    ${CYAN}yard init my_app${RESET}      new project\n"
 printf "    ${CYAN}yard run${RESET}              build & run\n"
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then

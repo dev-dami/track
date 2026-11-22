@@ -1,0 +1,1 @@
+error[E0213]: 'r' refers to 'b', which ends at the close of this block (line 9); 'r' is used after it at line 14.
