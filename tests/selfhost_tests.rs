@@ -1138,6 +1138,66 @@ const LIFE_ERRORS: &[(&str, &str)] = &[
         "struct Point { x: i64, y: i64 }\nfn take(p: Point) -> i64 { return p.x; }\nfn peek(r: &Point) -> i64 {\n    let q = r;\n    return take(q);\n}\nfn main() -> void { let p = Point { x: 1, y: 2 }; print(peek(&p)); }\n",
         "error[E0211]: 'take' consumes its parameter 'p', but 'r' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.",
     ),
+    // L5w: E0211 field of a borrowed struct.
+    (
+        "struct Point { x: i64, y: i64 }\nstruct Outer { p: Point, n: i64 }\nfn take(p: Point) -> i64 { return p.x; }\nfn peek(r: &Outer) -> i64 { return take(r.p); }\nfn main() -> void { let o = Outer { p: Point { x: 1, y: 2 }, n: 3 }; print(peek(&o)); }\n",
+        "error[E0211]: 'take' consumes its parameter 'p', but 'r.p' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.",
+    ),
+    // L5w: E0211 deref of a reference.
+    (
+        "struct Point { x: i64, y: i64 }\nfn take(p: Point) -> i64 { return p.x; }\nfn peek(r: &Point) -> i64 { return take(*r); }\nfn main() -> void { let p = Point { x: 1, y: 2 }; print(peek(&p)); }\n",
+        "error[E0211]: 'take' consumes its parameter 'p', but '*r' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.",
+    ),
+    // L5w: E0211 generic parameter.
+    (
+        "struct Point { x: i64, y: i64 }\nstruct Outer { p: Point, n: i64 }\nfn eat<T>(v: T) -> i64 { return 1; }\nfn peek(r: &Outer) -> i64 { return eat(r.p); }\nfn main() -> void { let o = Outer { p: Point { x: 1, y: 2 }, n: 3 }; print(peek(&o)); }\n",
+        "error[E0211]: 'eat' consumes its parameter 'v', but 'r.p' is only lent to 'peek'. Pass '&' and make 'v: &T', or take ownership in 'peek'.",
+    ),
+    // L5w: E0212 union payload.
+    (
+        "struct Point { x: i64, y: i64 }\nunion U { P(&Point), N }\nfn mk() -> U { let p = Point { x: 1, y: 2 }; return U::P(&p); }\nfn main() -> void { let u = mk(); match u { U::P(r) => print(r.x), U::N => print(0) } }\n",
+        "error[E0212]: local 'p' escapes 'mk' inside the returned payload of 'U::P'; it dies when 'mk' returns.",
+    ),
+    // L5w: E0212 reference alias.
+    (
+        "struct Point { x: i64, y: i64 }\nfn pair() -> (&Point, i64) { let p = Point { x: 1, y: 2 }; let b = &p; return (b, 7); }\nfn main() -> void { let t = pair(); print(t.1); }\n",
+        "error[E0212]: local 'p' escapes 'pair' inside the returned tuple (element 0), through 'b'; it dies when 'pair' returns.",
+    ),
+    // L5w: E0212 literal alias.
+    (
+        "struct Point { x: i64, y: i64 }\nfn pair() -> (&Point, i64) { let p = Point { x: 1, y: 2 }; let t = (&p, 7); let u = t; return u; }\nfn main() -> void { let t = pair(); print(t.1); }\n",
+        "error[E0212]: local 'p' escapes 'pair' through 'u'; it dies when 'pair' returns.",
+    ),
+    // L5w: E0213 through a call.
+    (
+        "struct Point { x: i64, y: i64 }\nfn id(a: &Point) -> &Point { return a; }\nfn main() -> void {\n    let a = Point { x: 1, y: 2 };\n    let mut r = &a;\n    let flag: i64 = 1;\n    if flag > 0 {\n        let b = Point { x: 3, y: 4 };\n        r = id(&b);\n    } else {\n        let b = Point { x: 5, y: 6 };\n        r = id(&b);\n    }\n    print(r.x);\n}\n",
+        "error[E0213]: 'r' refers to 'b', which ends at the close of this block (line 9); 'r' is used after it at line 14.",
+    ),
+    // L5w: E0213 through an alias.
+    (
+        "struct Point { x: i64, y: i64 }\nfn main() -> void {\n    let a = Point { x: 1, y: 2 };\n    let mut r = &a;\n    let flag: i64 = 1;\n    if flag > 0 {\n        let b = Point { x: 3, y: 4 };\n        let q = &b;\n        r = q;\n    } else {\n        let b = Point { x: 5, y: 6 };\n        r = &b;\n    }\n    print(r.x);\n}\n",
+        "error[E0213]: 'r' refers to 'b', which ends at the close of this block (line 9); 'r' is used after it at line 14.",
+    ),
+    // L5w: E0214 returned tuple.
+    (
+        "struct Point { x: i64, y: i64 }\nfn dup(r: &Point) -> (Point, Point) { return (r, r); }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let t = dup(&p); print(t.0.x); }\n",
+        "error[E0214]: 'p' would be ended twice: elements 0 and 1 of the tuple both take ownership of the borrowed 'r'.",
+    ),
+    // L5w: E0214 annotated let.
+    (
+        "struct Point { x: i64, y: i64 }\nfn dup(r: &Point) -> i64 { let t: (Point, Point) = (r, r); return t.0.x; }\nfn main() -> void { let p = Point { x: 1, y: 2 }; print(dup(&p)); }\n",
+        "error[E0214]: 'p' would be ended twice: elements 0 and 1 of the tuple both take ownership of the borrowed 'r'.",
+    ),
+    // L5w: E0214 tuple in an owned struct field.
+    (
+        "struct Point { x: i64, y: i64 }\nstruct Bag { t: (Point, Point) }\nfn mk(r: &Point) -> Bag { return Bag { t: (r, r) }; }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let b = mk(&p); print(b.t.0.x); }\n",
+        "error[E0214]: 'p' would be ended twice: elements 0 and 1 of the tuple both take ownership of the borrowed 'r'.",
+    ),
+    // L5w: E0214 tuple argument, local reference.
+    (
+        "struct Point { x: i64, y: i64 }\nfn eat(t: (Point, Point)) -> i64 { return 1; }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let r = &p; print(eat((r, r))); }\n",
+        "error[E0214]: 'p' would be ended twice: elements 0 and 1 of the tuple both take ownership of the borrowed 'r'.",
+    ),
 ];
 
 #[test]
@@ -1161,6 +1221,49 @@ fn lifecycle_hard_errors_print_the_catalogue_texts() {
             "{}: unexpected diagnostic:\n{}",
             prog,
             stderr
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Programs that look like the lifecycle hard errors but are correct
+/// (card L5w): `trackc check` must accept them.
+const LIFE_CLEAN: &[&str] = &[
+    // E0211: lending a field on.
+    "struct Point { x: i64, y: i64 }\nstruct Outer { p: Point, n: i64 }\nfn look(p: &Point) -> i64 { return p.x; }\nfn peek(r: &Outer) -> i64 { return look(&r.p) + r.n; }\nfn main() -> void { let o = Outer { p: Point { x: 1, y: 2 }, n: 3 }; print(peek(&o)); }\n",
+    // E0211: a generic parameter bound to the reference itself.
+    "struct Point { x: i64, y: i64 }\nfn eat<T>(v: T) -> i64 { return 1; }\nfn peek(r: &Point) -> i64 { return eat(r); }\nfn main() -> void { let p = Point { x: 1, y: 2 }; print(peek(&p)); }\n",
+    // E0211: moving a field out of an owned parameter.
+    "struct Point { x: i64, y: i64 }\nstruct Outer { p: Point, n: i64 }\nfn take(p: Point) -> i64 { return p.x; }\nfn own(o: Outer) -> i64 { return take(o.p); }\nfn main() -> void { let o = Outer { p: Point { x: 1, y: 2 }, n: 3 }; print(own(o)); }\n",
+    // E0212: a payload holding a parameter's reference.
+    "struct Point { x: i64, y: i64 }\nunion U { P(&Point), N }\nfn wrap(r: &Point) -> U { return U::P(r); }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let u = wrap(&p); match u { U::P(r) => print(r.x), U::N => print(0) } }\n",
+    // E0212: an alias of a parameter.
+    "struct Point { x: i64, y: i64 }\nfn pair(r: &Point) -> (&Point, i64) { let b = r; let t = (b, 7); return t; }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let t = pair(&p); print(t.1); }\n",
+    // E0212: only a copy leaves.
+    "struct Point { x: i64, y: i64 }\nfn pair() -> (i64, i64) { let p = Point { x: 1, y: 2 }; let t = (&p, 7); let u = t; return (u.1, 8); }\nfn main() -> void { let t = pair(); print(t.1); }\n",
+    // E0212: a field read through an alias.
+    "struct Point { x: i64, y: i64 }\nfn pair() -> (i64, i64) { let p = Point { x: 1, y: 2 }; let b = &p; return (b.x, 7); }\nfn main() -> void { let t = pair(); print(t.1); }\n",
+    // E0213: alias and call targets that outlive the reference.
+    "struct Point { x: i64, y: i64 }\nfn id(a: &Point) -> &Point { return a; }\nfn main() -> void {\n    let a = Point { x: 1, y: 2 };\n    let c = Point { x: 7, y: 8 };\n    let mut r = &a;\n    let flag: i64 = 1;\n    if flag > 0 {\n        let q = &c;\n        r = q;\n    } else {\n        r = id(&c);\n    }\n    print(r.x);\n}\n",
+    // E0214: a tuple of references.
+    "struct Point { x: i64, y: i64 }\nfn two(r: &Point) -> (&Point, &Point) { return (r, r); }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let t = two(&p); print(t.0.x); }\n",
+    // E0214: owned tuple elements from distinct values.
+    "struct Point { x: i64, y: i64 }\nfn mk(a: Point, b: Point) -> (Point, Point) { return (a, b); }\nfn main() -> void { let t = mk(Point { x: 1, y: 2 }, Point { x: 3, y: 4 }); print(t.0.x); }\n",
+];
+
+#[test]
+fn lifecycle_lookalikes_check_clean() {
+    let dir = scratch("life_clean");
+    for (i, prog) in LIFE_CLEAN.iter().enumerate() {
+        let file = dir.join(format!("clean{}.trk", i));
+        fs::write(&file, prog).unwrap();
+        let out = run_trackc(&["check", file.to_str().unwrap()], &dir);
+        assert!(
+            out.status.success(),
+            "clean{} rejected:\n{}\n{}",
+            i,
+            prog,
+            String::from_utf8_lossy(&out.stderr)
         );
     }
     let _ = fs::remove_dir_all(&dir);
