@@ -2,7 +2,7 @@ fn pair
   L8 tuple ret-slot ends L8
 fn main
   L20 tuple stack ends L21
-  L22 call heap-autofree deep ends L23
+  L22 call stack ends L23
   L24 array stack ends L25
   L24 struct heap ends -
   L24 struct heap ends -

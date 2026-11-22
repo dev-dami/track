@@ -1,5 +1,5 @@
 fn make
-  L7 struct ret-slot ends L7
+  L7 struct heap ends -
   L7 struct heap ends -
 fn take
   L16 call heap-autofree ends L17

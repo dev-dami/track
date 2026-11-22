@@ -2682,12 +2682,22 @@ fn life_warnings(c: i64) -> i64 {
 //                  (`x[i]`, `x[i] = v`), when the cell fits the stack cap
 //                  (PL_CELL_MAX words, PL_FRAME_MAX words per function),
 //                  and `x` is never reassigned a fresh cell (L9: such an
-//                  `x` is heap-autofree, so every cell it held is freed).
-//                  Field writes go through the slot. A return, a store, a
-//                  copy, `&x` kept anywhere, or a call whose parameter
-//                  escapes or returns it keeps `x` off the stack.
-//   ret-slot       the literal is returned directly and the function's
-//                  result origin is exactly `fresh` with a fixed-size type.
+//                  `x` is heap-autofree, so every cell it held is freed),
+//                  or is only reassigned cells cgen writes in place (L10,
+//                  mode 4: a flat struct literal or a ret-slot call; the
+//                  site is dumped `stack` with `x`'s ENDS). A `let x =
+//                  f(..)` of a ret-slot function `f` is stack by the same
+//                  rule: the caller passes a slot. Field writes go through
+//                  the slot. A return, a store, a copy, `&x` kept anywhere,
+//                  or a call whose parameter escapes or returns it keeps
+//                  `x` off the stack.
+//   ret-slot       the literal (or ret-slot call) is returned directly from
+//                  a ret-slot function (`life_ret_slot_fn`): result origin
+//                  exactly `fresh`, a flat struct or tuple type, and every
+//                  `return` such a site. cgen (L10) writes it into the
+//                  caller's cell, passed as a hidden last argument.
+//                  `x = f(..)` of a heap-autofree `x` is dumped
+//                  `heap-autofree`: the result is written into `x`'s cell.
 //   heap-autofree  `let x = site` (a struct, tuple, array or union cell) where
 //                  `x` may also be read through its fields or lent to
 //                  calls whose parameter neither escapes nor flows into the
@@ -2711,8 +2721,9 @@ const LT_PLACE = 13; // by node: PL_*, 0 when not a site
 const LT_SITES = 14; // [fn node, site node, PL_*, ends pos]*, in walk order
 const LT_DEEP = 15;  // by node: 1 when a heap-autofree site's free may run drop glue
 const LT_CURTY = 16; // type of the site whose uses `pl_use_ok` mode 3 is checking
+const LT_RSFN = 17;  // by fn node: 1 when it has a ret-slot entry (card L10)
 
-const PS_FLAG = 0;  // by name: ENDS pos + 1 when bound to a stack-tuple local, else 0
+const PS_FLAG = 0;  // by name: `pl_let`'s flag for the local it binds (below), else 0
 const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
 const PS_FN = 2;    // function being walked (-1 for top-level statements)
 const PS_RET = 3;   // 1 when its literal returns can use the caller's slot
@@ -2722,6 +2733,25 @@ const PS_WIDTH = 5;
 // Stack cap (§3.1): at most 32 words per cell and 4 KiB of cells per frame.
 const PL_CELL_MAX = 32;
 const PL_FRAME_MAX = 512;
+
+// The flag a local is bound with: ENDS + 1 (> 0) for a K2 stack tuple,
+// whose tuple reassignments get their own slot; `pl_inplace_flag(ENDS)`
+// for a struct, array, union or call stack cell, whose reassignments to
+// a flat struct literal or a ret-slot call rewrite the cell in place;
+// `pl_inplace_flag(ENDS) - PL_AUTOFLAG` for a heap-autofree local, whose
+// ret-slot call reassignments rewrite its heap cell in place.
+const PL_AUTOFLAG = 1099511627776; // 1 << 40
+
+fn pl_inplace_flag(ends: i64) -> i64 { return 0 - ends - 2; }
+fn pl_flag_auto(flag: i64) -> bool { return flag <= 0 - 2 - PL_AUTOFLAG; }
+fn pl_flag_inplace(flag: i64) -> bool { return flag <= 0 - 2 && !pl_flag_auto(flag); }
+
+fn pl_flag_ends(flag: i64) -> i64 {
+    if pl_flag_auto(flag) {
+        return 0 - flag - 2 - PL_AUTOFLAG;
+    }
+    return 0 - flag - 2;
+}
 
 fn life_place_of(c: i64, n: i64) -> i64 {
     let table = ck(c, CK_LIFE);
@@ -3005,6 +3035,175 @@ fn pl_arg_ok(c: i64, n: i64, i: i64, is_addr: bool, read_only: bool) -> bool {
     return is_addr || pe != 0;
 }
 
+// True when `v` is a call whose arguments include `name` or `&name`.
+fn pl_call_takes(c: i64, v: i64, name: i64) -> bool {
+    if v < 0 || nk(c, v) != K_CALL {
+        return false;
+    }
+    let args = nb(c, v);
+    let mut i: i64 = 0;
+    while i < list_len(c, args) {
+        let a = list_at(c, args, i);
+        if pl_is_name(c, a, name) || (nk(c, a) == K_ADDR && pl_is_name(c, na(c, a), name)) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Words of the cell a ret-slot entry writes for result type `t`, or -1
+// when `t` is not a flat struct or tuple: one whose cell owns no child
+// cell drop glue would free, so a caller's slot never hides one.
+fn pl_flat_words(c: i64, t: i64) -> i64 {
+    let kind = pl_drop_kind(c, t);
+    let mut types: i64 = -1;
+    let mut from: i64 = 0;
+    let mut step: i64 = 1;
+    if kind == 1 {
+        types = nb(c, struct_def(c, na(c, t)));
+        from = 1;
+        step = 2;
+    } else if kind == 2 {
+        types = na(c, t);
+    } else {
+        return -1;
+    }
+    let mut i = from;
+    while i < list_len(c, types) {
+        if pl_drop_kind(c, list_at(c, types, i)) != 0 {
+            return -1;
+        }
+        i = i + step;
+    }
+    let count = list_len(c, types) / step;
+    if kind == 1 {
+        return 1 + count;
+    }
+    return pl_max(count, 1);
+}
+
+// True when function node `f` has a ret-slot entry (card L10): its
+// result is exactly `fresh`, of a flat struct or tuple type, and every
+// `return` builds a literal or calls a ret-slot function.
+fn life_ret_slot_fn(c: i64, f: i64) -> bool {
+    let table = ck(c, CK_LIFE);
+    if f < 0 || vlen(table) <= LT_RSFN || vget(table, LT_RSFN) == 0 || f >= vlen(vget(table, LT_RSFN)) {
+        return false;
+    }
+    return vget(vget(table, LT_RSFN), f) == 1;
+}
+
+// True when `v` calls a function with a ret-slot entry.
+fn pl_rs_call(c: i64, v: i64) -> bool {
+    if v < 0 || nk(c, v) != K_CALL {
+        return false;
+    }
+    return life_ret_slot_fn(c, callee_fn(c, na(c, v)));
+}
+
+// True when cgen can write `v` into the cell a local already has: a flat
+// struct literal (every cell of the type has its size) or a ret-slot call.
+fn pl_in_place(c: i64, v: i64) -> bool {
+    if pl_rs_call(c, v) {
+        return true;
+    }
+    return nk(c, v) == K_SINIT && pl_flat_words(c, infer_type(c, v)) > 0;
+}
+
+fn pl_ends_in_return(c: i64, body: i64) -> bool {
+    let len = list_len(c, body);
+    if len == 0 {
+        return false;
+    }
+    let last = list_at(c, body, len - 1);
+    if nk(c, last) == K_RETURN {
+        return na(c, last) >= 0;
+    }
+    if nk(c, last) == K_IF {
+        return pl_ends_in_return(c, nb(c, last)) && pl_ends_in_return(c, nc(c, last));
+    }
+    return false;
+}
+
+fn pl_rets_list(c: i64, l: i64, from: i64, step: i64, rsfn: i64) -> bool {
+    let mut i = from;
+    while i < list_len(c, l) {
+        if !pl_rets_ok(c, list_at(c, l, i), rsfn) {
+            return false;
+        }
+        i = i + step;
+    }
+    return true;
+}
+
+// True when every `return` in statement `n` builds a struct or tuple
+// literal or calls a function `rsfn` marks.
+fn pl_rets_ok(c: i64, n: i64, rsfn: i64) -> bool {
+    if n < 0 {
+        return true;
+    }
+    let k = nk(c, n);
+    if k == K_RETURN {
+        let v = na(c, n);
+        if v < 0 {
+            return false;
+        }
+        let kv = nk(c, v);
+        if kv == K_SINIT || kv == K_TUPLE {
+            return true;
+        }
+        if kv == K_CALL {
+            let f = callee_fn(c, na(c, v));
+            return f >= 0 && vget(rsfn, f) == 1;
+        }
+        return false;
+    }
+    if k == K_IF { return pl_rets_ok(c, na(c, n), rsfn) && pl_rets_list(c, nb(c, n), 0, 1, rsfn) && pl_rets_list(c, nc(c, n), 0, 1, rsfn); }
+    if k == K_WHILE { return pl_rets_list(c, nb(c, n), 0, 1, rsfn); }
+    if k == K_FOR || k == K_LENS { return pl_rets_list(c, nc(c, n), 0, 1, rsfn); }
+    if k == K_LET { return pl_rets_ok(c, nd(c, n), rsfn); }
+    if k == K_LETD { return pl_rets_ok(c, nc(c, n), rsfn); }
+    if k == K_ASSIGN { return pl_rets_ok(c, nb(c, n), rsfn); }
+    if k == K_MATCH { return pl_rets_list(c, nb(c, n), 2, 3, rsfn); }
+    return true;
+}
+
+// Mark the functions with a ret-slot entry (LT_RSFN): the greatest set
+// where each candidate's returns only build literals or call members, so
+// self and mutual recursion through `return f(..)` qualify.
+fn pl_ret_fns(c: i64) -> i64 {
+    let rsfn = vfill(vnew_cap(node_count(c) + 1), node_count(c), 0);
+    vset(ck(c, CK_LIFE), LT_RSFN, rsfn);
+    let items = cx(c, CX_ITEMS);
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let f = vget(items, i);
+        if nk(c, f) == K_FN {
+            let at = life_summary(c, na(c, f));
+            let words = pl_flat_words(c, nd(c, f));
+            if at >= 0 && vget(life_records(c), at + LR_RES) == O_FRESH && words > 0 && words <= PL_CELL_MAX && pl_ends_in_return(c, ne(c, f)) {
+                vset(rsfn, f, 1);
+            }
+        }
+        i = i + 1;
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut j: i64 = 0;
+        while j < vlen(items) {
+            let f = vget(items, j);
+            if vget(rsfn, f) == 1 && !pl_rets_list(c, ne(c, f), 0, 1, rsfn) {
+                vset(rsfn, f, 0);
+                changed = true;
+            }
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
 fn pl_uses_ok(c: i64, l: i64, name: i64, mode: i64) -> bool {
     let mut i: i64 = 0;
     while i < list_len(c, l) {
@@ -3040,7 +3239,12 @@ fn pl_is_name(c: i64, n: i64, name: i64) -> bool {
 // (heap-autofree) also requires every `name = v` to build a fresh cell;
 // mode 3 (drop glue) also rejects any use that may move a child cell out
 // or swap one in: reading a field or element drop glue would free,
-// destructuring, matching, and lending to a parameter that mutates.
+// destructuring, matching, and lending to a parameter that mutates. Mode
+// 4 (stack, rewritten in place, card L10) is mode 1 except that every
+// `name = v` must build a flat struct literal or call a ret-slot function,
+// which cgen writes into the cell `name` already has. In every mode but 0,
+// `return f(.., name)` and `return f(.., &name)` escape, as ngen refuses
+// them (card L11).
 fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     let k = nk(c, n);
     if k == K_INT || k == K_STR || k == K_BOOL { return true; }
@@ -3054,7 +3258,7 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     }
     if k == K_TINDEX {
         if pl_is_name(c, na(c, n), name) {
-            return mode < 3 || pl_member_kept(c, n);
+            return mode != 3 || pl_member_kept(c, n);
         }
         return pl_use_ok(c, na(c, n), name, mode);
     }
@@ -3066,7 +3270,7 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     if k == K_SLICE { return pl_use_ok(c, na(c, n), name, mode) && pl_use_opt(c, nb(c, n), name, mode) && pl_use_opt(c, nc(c, n), name, mode); }
     if k == K_FIELD {
         if mode > 0 && pl_is_name(c, na(c, n), name) {
-            return mode < 3 || pl_member_kept(c, n);
+            return mode != 3 || pl_member_kept(c, n);
         }
         return pl_use_ok(c, na(c, n), name, mode);
     }
@@ -3109,7 +3313,12 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     if k == K_IF { return pl_use_ok(c, na(c, n), name, mode) && pl_uses_ok(c, nb(c, n), name, mode) && pl_uses_ok(c, nc(c, n), name, mode); }
     if k == K_WHILE { return pl_use_ok(c, na(c, n), name, mode) && pl_uses_ok(c, nb(c, n), name, mode); }
     if k == K_FOR { return pl_use_ok(c, nb(c, n), name, mode) && pl_uses_ok(c, nc(c, n), name, mode); }
-    if k == K_RETURN { return pl_use_opt(c, na(c, n), name, mode); }
+    if k == K_RETURN {
+        if mode > 0 && pl_call_takes(c, na(c, n), name) {
+            return false;
+        }
+        return pl_use_opt(c, na(c, n), name, mode);
+    }
     if k == K_ASSIGN {
         if pl_is_name(c, na(c, n), name) {
             // heap-autofree frees the old cell here, so the new one must be
@@ -3122,6 +3331,9 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
             if mode == 1 && pl_fresh_site(c, nb(c, n)) {
                 return false;
             }
+            if mode == 4 && !pl_in_place(c, nb(c, n)) {
+                return false;
+            }
             if mode == 3 && !pl_deep_fresh(c, nb(c, n)) {
                 return false;
             }
@@ -3132,7 +3344,7 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     if k == K_LET { return pl_use_ok(c, nd(c, n), name, mode); }
     if k == K_LETD {
         if pl_is_name(c, nc(c, n), name) && nk(c, na(c, n)) != P_IDENT {
-            return mode < 3;
+            return mode != 3;
         }
         return pl_use_ok(c, nc(c, n), name, mode);
     }
@@ -3228,24 +3440,6 @@ fn pl_last(c: i64, n: i64, name: i64) -> i64 {
     return best;
 }
 
-// True when a result of type `t` has a size known at compile time.
-fn pl_fixed_size(c: i64, t: i64) -> bool {
-    if t < 0 {
-        return false;
-    }
-    let k = nk(c, t);
-    if k == T_TUPLE {
-        return true;
-    }
-    if k == T_ARRAY {
-        return nb(c, t) >= 0;
-    }
-    if k == T_CUSTOM {
-        return struct_def(c, na(c, t)) >= 0 || is_payload_union(c, na(c, t));
-    }
-    return false;
-}
-
 // Plan every site in expression `n` that no context places: heap.
 fn pl_walk(c: i64, p: i64, n: i64) -> i64 {
     if n < 0 {
@@ -3281,6 +3475,9 @@ fn pl_cell_words(c: i64, v: i64) -> i64 {
         return 1 + list_len(c, na(c, v));
     }
     if k == K_CALL {
+        if pl_site_kind(c, v) == 5 {
+            return pl_flat_words(c, pl_site_type(c, v));
+        }
         return 1 + list_len(c, nb(c, v));
     }
     return -1;
@@ -3305,7 +3502,7 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
     let mut place = PL_HEAP;
     if body >= 0 && kind == 1 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, 0) {
         place = PL_STACK;
-    } else if body >= 0 && kind >= 2 && kind <= 4 && i + 1 < list_len(c, body) && pl_cell_fits(c, p, v) && pl_rest_ok(c, body, i + 1, name, 1) {
+    } else if body >= 0 && ((kind >= 2 && kind <= 4) || pl_rs_call(c, v)) && i + 1 < list_len(c, body) && pl_cell_fits(c, p, v) && (pl_rest_ok(c, body, i + 1, name, 1) || pl_rest_ok(c, body, i + 1, name, 4)) {
         place = PL_STACK;
         vset(p, PS_WORDS, vget(p, PS_WORDS) + pl_cell_words(c, v));
     } else if body >= 0 && (kind == 4 || pl_drop_kind(c, pl_site_type(c, v)) != 0) && pl_rest_ok(c, body, i + 1, name, 2) {
@@ -3328,6 +3525,12 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
     pl_parts(c, p, v);
     if place == PL_STACK && kind == 1 {
         return ends + 1;
+    }
+    if place == PL_STACK {
+        return pl_inplace_flag(ends);
+    }
+    if place == PL_AUTO {
+        return pl_inplace_flag(ends) - PL_AUTOFLAG;
     }
     return 0;
 }
@@ -3412,8 +3615,18 @@ fn pl_parts(c: i64, p: i64, n: i64) -> i64 {
     if k == K_ASSIGN {
         let target = na(c, n);
         let v = nb(c, n);
-        if nk(c, target) == K_VAR && nk(c, v) == K_TUPLE && pl_flag(c, p, na(c, target)) > 0 {
-            pl_record(c, p, v, PL_STACK, pl_flag(c, p, na(c, target)) - 1);
+        let mut flag: i64 = 0;
+        if nk(c, target) == K_VAR {
+            flag = pl_flag(c, p, na(c, target));
+        }
+        if nk(c, v) == K_TUPLE && flag > 0 {
+            pl_record(c, p, v, PL_STACK, flag - 1);
+            pl_parts(c, p, v);
+        } else if pl_flag_inplace(flag) && pl_in_place(c, v) {
+            pl_record(c, p, v, PL_STACK, pl_flag_ends(flag));
+            pl_parts(c, p, v);
+        } else if pl_flag_auto(flag) && pl_rs_call(c, v) {
+            pl_record(c, p, v, PL_AUTO, pl_flag_ends(flag));
             pl_parts(c, p, v);
         } else {
             pl_walk(c, p, v);
@@ -3423,7 +3636,7 @@ fn pl_parts(c: i64, p: i64, n: i64) -> i64 {
     if k == K_RETURN {
         let v = na(c, n);
         let kind = pl_site_kind(c, v);
-        if kind != 0 && kind != 5 && vget(p, PS_RET) == 1 {
+        if vget(p, PS_RET) == 1 && ((kind != 0 && kind != 5) || pl_rs_call(c, v)) {
             pl_record(c, p, v, PL_RET, npos(c, n));
             return pl_parts(c, p, v);
         }
@@ -3491,11 +3704,8 @@ fn pl_function(c: i64, p: i64, f: i64, prelude: i64) -> i64 {
     vset(p, PS_FN, f);
     vset(p, PS_RET, 0);
     vset(p, PS_WORDS, 0);
-    let at = life_summary(c, na(c, f));
-    if nk(c, f) == K_FN && at >= 0 && pl_fixed_size(c, nd(c, f)) {
-        if vget(life_records(c), at + LR_RES) == O_FRESH {
-            vset(p, PS_RET, 1);
-        }
+    if life_ret_slot_fn(c, f) {
+        vset(p, PS_RET, 1);
     }
     let mark = vlen(vget(p, PS_BOUND));
     let params = nc(c, f);
@@ -3526,9 +3736,10 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_CURTY {
+    while vlen(table) <= LT_RSFN {
         vpush(table, 0);
     }
+    pl_ret_fns(c);
     vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
     vset(table, LT_DEEP, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     vset(table, LT_SITES, vnew_cap(256));

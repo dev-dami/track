@@ -3,7 +3,7 @@ fn direct
   L7 struct heap ends -
 fn wrapped
   L13 struct heap ends -
-  L14 struct ret-slot ends L14
+  L14 struct heap ends -
 fn field_out
   L18 call heap-autofree ends L19
 fn main

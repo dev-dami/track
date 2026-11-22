@@ -1548,8 +1548,12 @@ fn autofree_frees_heap_cells() {
     }
     for (line, why) in [
         (
-            "L21 call heap-autofree deep ends L22",
+            "L23 call heap-autofree deep ends L24",
             "a fresh cell passed to a `die` parameter is freed by the caller",
+        ),
+        (
+            "L21 call stack ends L22",
+            "a ret-slot result passed to a `die` parameter is a stack slot (L10)",
         ),
         (
             "L19 struct stack ends L20",
