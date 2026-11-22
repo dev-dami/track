@@ -204,6 +204,21 @@ literals share one copy, so `"abc" == "abc"` is `1` as with the C
 compiler's literal merging. A program without `main` gets an empty one
 that runs its top-level statements, as on the C path.
 
+Cells the plan marks `heap-autofree` are freed as the C backend frees
+them (card L12a; cgen's `gen_frees`/`gen_drop` are the specification):
+at block end, at every `return` after its value is read, and the old cell
+at each reassignment once the new one is built; `deep` sites run drop
+glue into their owned child cells. A tail call frees after its arguments
+are computed and before the jump, unless an argument could hold one of
+the cells (anything but arithmetic or a scalar-typed read): then it is an
+ordinary call. A latch-first loop whose body declares such a cell sends
+the skipped `if` to the frees ahead of the latch, and an accumulator loop
+frees before its back edge (functions that would pass a cell to the
+recursive call keep plain recursion). The free is inlined (`ng_dealloc_rax`:
+bytes in use down, block onto its class's free list; large blocks call
+`dealloc`), and the inlined allocator pops a freed block of 32 or 64
+bytes and zeroes its payload before it bumps the arena.
+
 The runtime is Track code loaded with the program: the compiler/rt
 modules embedded in `runtime_trk.trk`. It is loaded only after the user
 program has been checked (also for `--rt=track`), so its plain-`i64`

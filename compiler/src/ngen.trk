@@ -637,7 +637,7 @@ fn ng_dealloc_rax(c: i64) -> i64 {
     let used = ng_rt_const(c, "RS_USED");
     let free = ng_rt_const(c, "RS_FREE");
     let large = ng_rt_const(c, "RT_LARGE_TAG");
-    if base < 0 || used < 0 || free < 0 || large < 0 || env_exists("TRACKC_NATIVE_CALL_FREE") == 1 {
+    if base < 0 || used < 0 || free < 0 || large < 0 {
         x_mov_rr(b, 7, 0);
         return ng_call_regs(c, intern(c, "dealloc"), 1);
     }
