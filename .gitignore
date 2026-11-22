@@ -27,3 +27,4 @@ scratch/benchmarks/rec
 !tests/autofree/*.out
 !tests/retslot/*.out
 !tests/names/*.out
+!tests/handles/*.out

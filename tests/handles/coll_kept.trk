@@ -1,0 +1,29 @@
+// L13: a handle pushed into another collection, or set into one, is
+// never freed: the outer collection keeps it.
+fn main() -> void {
+    let outer: i64 = track_i64_collection_new(4);
+    let mut r: i64 = 0;
+    while r < 3 {
+        let inner: i64 = track_i64_collection_new(4);
+        track_i64_collection_push(inner, r * 10);
+        track_i64_collection_push(inner, r * 10 + 1);
+        track_i64_collection_push(outer, inner);
+        let v: i64 = vec_init(2);
+        vec_push(v, r);
+        track_i64_collection_push(outer, v);
+        r = r + 1;
+    }
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < track_i64_collection_len(outer) {
+        let h: i64 = track_i64_collection_get(outer, i);
+        if i % 2 == 0 {
+            total = total + track_i64_collection_get(h, 0) + track_i64_collection_get(h, 1);
+        } else {
+            total = total + vec_get(h, 0);
+        }
+        i = i + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

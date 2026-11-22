@@ -1,0 +1,4 @@
+fn sum_squares
+  L3 collection heap-autofree ends L12
+fn vec_total
+  L19 vec heap-autofree ends L27

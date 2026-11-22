@@ -1,0 +1,16 @@
+// L13: int_to_str in a loop: each string dies in the loop body and is
+// freed before the next iteration.
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 20000 {
+        let s: Str = int_to_str(i);
+        total = total + str_len(&s);
+        if i % 5000 == 0 {
+            print(&s);
+        }
+        i = i + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

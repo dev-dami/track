@@ -1,0 +1,25 @@
+// L13: a fresh Str that is returned, stored in a collection or aliased is
+// never freed by the function that made it.
+fn make(n: i64) -> Str {
+    let s: Str = int_to_str(n);
+    return s;
+}
+
+fn main() -> void {
+    let keep: i64 = track_i64_collection_new(4);
+    let mut i: i64 = 0;
+    while i < 5 {
+        let s: Str = str_concat(make(i), "!");
+        track_i64_collection_push(keep, s);
+        let alias: Str = str_concat("k", make(i));
+        let other: Str = alias;
+        print(other);
+        i = i + 1;
+    }
+    let mut j: i64 = 0;
+    while j < track_i64_collection_len(keep) {
+        print(track_i64_collection_get(keep, j));
+        j = j + 1;
+    }
+    print(sys_get_memory_used());
+}
