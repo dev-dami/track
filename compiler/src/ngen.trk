@@ -1199,6 +1199,18 @@ fn ng_inline_body(c: i64, f: i64) -> i64 {
     if nk(c, f) != K_FN {
         return -1;
     }
+    // the cached answer in a small frame; the first look in its own
+    let known = vget(ng(c, NG_INL), na(c, f));
+    if known == 1 {
+        return na(c, list_at(c, ne(c, f), 0));
+    }
+    if known == 2 {
+        return -1;
+    }
+    return ng_inline_body_first(c, f);
+}
+
+fn ng_inline_body_first(c: i64, f: i64) -> i64 {
     let name = na(c, f);
     let map = ng(c, NG_INL);
     if vlen(map) <= name {
