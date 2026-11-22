@@ -238,14 +238,17 @@ fn lex_ident(c: i64, bytes: i64, start: i64, base: i64) -> i64 {
         push_token(c, TK_UNDERSCORE, 0, base + start, base + i);
         return i;
     }
-    let sb = cx(c, CX_SB);
-    sb_reset(sb);
-    let mut j = start;
-    while j < i {
-        sb_byte(sb, vget(bytes, j));
-        j = j + 1;
+    let mut id = intern_find_span(c, bytes, start, i);
+    if id < 0 {
+        let sb = cx(c, CX_SB);
+        sb_reset(sb);
+        let mut j = start;
+        while j < i {
+            sb_byte(sb, vget(bytes, j));
+            j = j + 1;
+        }
+        id = intern(c, sb_text(sb));
     }
-    let id = intern(c, sb_text(sb));
     if id < KW_COUNT {
         push_token(c, TK_IMPORT + id, id, base + start, base + i);
     } else {

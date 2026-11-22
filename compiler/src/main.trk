@@ -384,11 +384,11 @@ fn cmd_build_native(path: i64) -> i64 {
         exe = file_stem(path);
     }
     life_place_program(c); // stack cells (ngen `ng_site_cell`)
-    let image = generate_native(c);
-    if image == 0 {
+    let body = generate_native(c);
+    if body == 0 {
         quit(1);
     }
-    if elf_write_file(exe, image) != 0 {
+    if elf_write_file(exe, body) != 0 {
         err(text_cat3("trackc: cannot write '", exe, "'\n"));
         quit(1);
     }
