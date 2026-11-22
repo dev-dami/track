@@ -1,0 +1,31 @@
+// L13c: every fresh cell in `f(g(h()))` dies at its consumer.
+struct Rect { w: i64, h: i64 }
+struct Inner { v: i64 }
+struct Outer { inner: Inner, n: i64 }
+
+fn make_outer(i: i64) -> Outer {
+    return Outer { inner: Inner { v: i }, n: 1 };
+}
+
+fn grow(o: &Outer) -> Outer {
+    return Outer { inner: Inner { v: o.inner.v + 1 }, n: o.n + 1 };
+}
+
+fn to_rect(o: &Outer) -> Rect {
+    return Rect { w: o.inner.v, h: o.n };
+}
+
+fn area(r: Rect) -> i64 {
+    return r.w * r.h;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        total = total + area(to_rect(&grow(&grow(&make_outer(i)))));
+        i = i + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

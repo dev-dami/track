@@ -1,0 +1,24 @@
+// L13c: a cell temporary the callee stores in its result is never freed.
+struct Rect { w: i64, h: i64 }
+struct Holder { r: Rect, n: i64 }
+
+fn make_rect(w: i64, h: i64) -> Rect {
+    return Rect { w: w, h: h };
+}
+
+fn hold(r: Rect, n: i64) -> Holder {
+    return Holder { r: r, n: n };
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3 {
+        let h = hold(make_rect(i, 2), i);
+        let g = hold(Rect { w: 1, h: i }, 5);
+        total = total + h.r.w * h.r.h + h.n + g.r.h + g.n;
+        print(total);
+        i = i + 1;
+    }
+    print(sys_get_memory_used());
+}

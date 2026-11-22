@@ -1,0 +1,42 @@
+// L13c: fresh cell temporaries passed straight to calls that only lend
+// them die at the call, every iteration: a flat literal or ret-slot call
+// lives on the stack, a cell with owned child cells is freed with drop
+// glue.
+struct Rect { w: i64, h: i64 }
+struct Inner { v: i64 }
+struct Outer { inner: Inner, n: i64 }
+
+fn make_rect(w: i64, h: i64) -> Rect {
+    return Rect { w: w, h: h };
+}
+
+fn make_outer(i: i64) -> Outer {
+    return Outer { inner: Inner { v: i }, n: 2 };
+}
+
+fn area(r: Rect) -> i64 {
+    return r.w * r.h;
+}
+
+fn depth(o: &Outer) -> i64 {
+    return o.inner.v + o.n;
+}
+
+fn sum2(t: (i64, i64)) -> i64 {
+    return t.0 + t.1;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 20000 {
+        total = total + area(make_rect(i, 2));
+        total = total + area(Rect { w: i, h: 3 });
+        total = total + depth(&make_outer(i));
+        total = total + depth(&Outer { inner: Inner { v: i }, n: 1 });
+        total = total + sum2((i, 1));
+        i = i + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

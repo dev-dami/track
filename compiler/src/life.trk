@@ -3032,6 +3032,9 @@ fn life_warnings(c: i64) -> i64 {
 //   temp-autofree  a fresh Str or handle call that is an argument of a
 //                  call which only lends it, or a discarded statement
 //                  (L13b, `pl_call_args`); freed right after that call.
+//                  A fresh cell argument likewise (L13c, `pl_temp_cell`),
+//                  `deep` when its free runs drop glue; a flat one that
+//                  fits the frame is a stack cell instead.
 //                  ENDS is the consuming call's line.
 //   heap           everything else, including anything uncertain.
 // ENDS is the position of the last mention of `x` (stack and autofree),
@@ -3063,7 +3066,8 @@ const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
 const PS_FN = 2;    // function being walked (-1 for top-level statements)
 const PS_RET = 3;   // 1 when its literal returns can use the caller's slot
 const PS_WORDS = 4; // words of struct/array/union stack cells planned in this function
-const PS_WIDTH = 5;
+const PS_INRET = 5; // 1 while walking a `return` value (no stack temporaries there)
+const PS_WIDTH = 6;
 
 // Stack cap (§3.1): at most 32 words per cell and 4 KiB of cells per frame.
 const PL_CELL_MAX = 32;
@@ -3820,6 +3824,29 @@ fn pl_temp_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
     return (res & O_UNKNOWN) == 0 && ((res >> i) & 1) == 0;
 }
 
+// Fresh cell temporary `v`, argument `i` of call `n` (card L13c). A flat
+// struct or tuple literal, an array literal or a ret-slot call that fits
+// the frame budget lives in a stack cell of this frame: it dies when `n`
+// returns, so the slot is free again before the site runs again. Not in a
+// `return` value, whose call may be a tail call that drops the frame.
+// Anything else is temp-autofree with consumer `n`: freed right after `n`
+// returns, with drop glue (deep) when every child cell is fresh and `n`
+// only reads the argument, else the shell alone.
+fn pl_temp_cell(c: i64, p: i64, v: i64, n: i64, i: i64, is_addr: bool) -> i64 {
+    let kind = pl_site_kind(c, v);
+    let lit = kind == 3 || ((kind == 1 || kind == 2) && pl_flat_words(c, pl_site_type(c, v)) > 0);
+    if vget(p, PS_INRET) == 0 && (lit || pl_rs_call(c, v)) && pl_cell_fits(c, p, v) {
+        vset(p, PS_WORDS, vget(p, PS_WORDS) + pl_cell_words(c, v));
+        return pl_record(c, p, v, PL_STACK, npos(c, n));
+    }
+    let table = ck(c, CK_LIFE);
+    vset(vget(table, LT_TEMP), v, n);
+    if pl_deep_fresh(c, v) && pl_arg_ok(c, n, i, is_addr, true) {
+        vset(vget(table, LT_DEEP), v, 1);
+    }
+    return pl_record(c, p, v, PL_TEMP, npos(c, n));
+}
+
 // The arguments of call `n`, in cgen's order: fresh temporaries are
 // planned temp-autofree, the rest walked.
 fn pl_call_args(c: i64, p: i64, n: i64) -> i64 {
@@ -3833,11 +3860,22 @@ fn pl_call_args(c: i64, p: i64, n: i64) -> i64 {
             inner = na(c, a);
         }
         let hk = hd_call_kind(c, inner);
-        if hk > 0 && pl_temp_arg_ok(c, n, i, is_addr) {
-            pl_temp(c, p, inner, n, hk);
-            pl_parts(c, p, inner);
+        if hk > 0 {
+            if pl_temp_arg_ok(c, n, i, is_addr) {
+                pl_temp(c, p, inner, n, hk);
+                pl_parts(c, p, inner);
+            } else {
+                pl_walk(c, p, a);
+            }
         } else {
-            pl_walk(c, p, a);
+            // `pl_walk(c, p, a)` unrolled, so the site kind is found once.
+            let kind = pl_site_kind(c, inner);
+            if kind != 0 && kind != 4 && pl_drop_kind(c, pl_site_type(c, inner)) != 0 && pl_temp_arg_ok(c, n, i, is_addr) {
+                pl_temp_cell(c, p, inner, n, i, is_addr);
+            } else if kind != 0 {
+                pl_record(c, p, inner, PL_HEAP, -1);
+            }
+            pl_parts(c, p, inner);
         }
         i = i + 1;
     }
@@ -4327,11 +4365,15 @@ fn pl_parts(c: i64, p: i64, n: i64) -> i64 {
     if k == K_RETURN {
         let v = na(c, n);
         let kind = pl_site_kind(c, v);
+        let inret = vget(p, PS_INRET);
+        vset(p, PS_INRET, 1);
         if vget(p, PS_RET) == 1 && ((kind != 0 && kind != 5) || pl_rs_call(c, v)) {
             pl_record(c, p, v, PL_RET, npos(c, n));
-            return pl_parts(c, p, v);
+            pl_parts(c, p, v);
+        } else {
+            pl_walk(c, p, v);
         }
-        return pl_walk(c, p, v);
+        return vset(p, PS_INRET, inret);
     }
     if k == K_IF {
         pl_walk(c, p, na(c, n));
