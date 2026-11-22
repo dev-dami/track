@@ -165,7 +165,11 @@ fn native_binaries_carry_a_symbol_table() {
     let (with, without) = (fs::read(&exe).unwrap(), fs::read(&plain).unwrap());
     assert!(with.len() > without.len());
     assert_eq!(with[64..176], without[64..176], "program headers differ");
-    assert_eq!(with[176..without.len()], without[176..], "loaded bytes differ");
+    assert_eq!(
+        with[176..without.len()],
+        without[176..],
+        "loaded bytes differ"
+    );
     let nm = Command::new("nm").arg(&exe).output().unwrap();
     let text = String::from_utf8_lossy(&nm.stdout);
     assert!(
