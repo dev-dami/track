@@ -3883,7 +3883,7 @@ fn hd_program(c: i64) -> i64 {
 // reaching the free is a fresh Str call (`hd_call_kind` HK_STR: the
 // `let` literal and every `x = v` literal for a local, the literal for a
 // temporary), and no use can move it out or swap it: a read `x.f` is only
-// a lent call argument (`hd_arg_ok`, not in a `return` value) or a binary
+// a lent call argument (`hd_arg_ok`, not of a returned call) or a binary
 // operand; `x` or `&x` only goes to a parameter that lends its Str fields
 // (LT_SFLENT); anything else, `x.f = v`, or a non-literal `x = v` clears
 // the bit. Only the cell's own fields count; child cells' Str fields leak.
@@ -4110,12 +4110,26 @@ fn sf_param_decl(c: i64, t: i64) -> i64 {
 // LT_SFLENT, the least fixpoint: a struct parameter with Str fields is
 // marked once its body keeps every Str field bit (`sf_mask`), counting
 // only parameters already marked; marks are only ever set.
+// A program declaring no struct with a Str field needs neither table.
 fn sf_program(c: i64) -> i64 {
     let table = ck(c, CK_LIFE);
+    vset(table, LT_SFLENT, 0);
+    vset(table, LT_SMASK, 0);
+    let items = cx(c, CX_ITEMS);
+    let mut any = false;
+    let mut i: i64 = 0;
+    while i < vlen(items) && !any {
+        let s = vget(items, i);
+        any = nk(c, s) == K_STRUCT && sf_all(c, s) != 0;
+        i = i + 1;
+    }
+    if !any {
+        return 0;
+    }
     let nn = node_count(c);
     let lent = vfill(vnew_cap(nn + 1), nn, 0);
     vset(table, LT_SFLENT, lent);
-    let items = cx(c, CX_ITEMS);
+    vset(table, LT_SMASK, vfill(vnew_cap(nn + 1), nn, 0));
     let mut changed = true;
     while changed {
         changed = false;
@@ -4221,7 +4235,9 @@ fn pl_temp_cell(c: i64, p: i64, v: i64, n: i64, i: i64, is_addr: bool) -> i64 {
     vset(vget(table, LT_TEMP), v, n);
     if deep {
         vset(vget(table, LT_DEEP), v, 1);
-        vset(vget(table, LT_SMASK), v, smask);
+        if smask != 0 {
+            vset(vget(table, LT_SMASK), v, smask);
+        }
     }
     return pl_record(c, p, v, PL_TEMP, npos(c, n));
 }
@@ -4630,7 +4646,9 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
     vset(ck(c, CK_LIFE), LT_CURTY, pl_site_type(c, v));
     if place == PL_AUTO && pl_deep_fresh(c, v) && pl_rest_ok(c, body, i + 1, name, 3) {
         vset(vget(ck(c, CK_LIFE), LT_DEEP), v, 1);
-        vset(vget(ck(c, CK_LIFE), LT_SMASK), v, smask);
+        if smask != 0 {
+            vset(vget(ck(c, CK_LIFE), LT_SMASK), v, smask);
+        }
     }
     pl_parts(c, p, v);
     if place == PL_STACK && kind == 1 {
@@ -4875,7 +4893,6 @@ fn life_place_program(c: i64) -> i64 {
     pl_glue_fns(c);
     hd_program(c);
     sf_program(c);
-    vset(table, LT_SMASK, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
     vset(table, LT_DEEP, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     vset(table, LT_HSITE, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));

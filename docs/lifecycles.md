@@ -481,6 +481,41 @@ with temporaries. ASan-built self-compile
 of `compiler/src/main.trk`: 771,893 leaked allocations (64.7 MB) before,
 584,001 (56.9 MB) after, 0 errors [observed].
 
+### 3.6 Owned Str fields (card L13e)
+
+Drop glue frees Str fields per site, never per type. A deep site's
+`LT_SMASK` bit f says its struct cell owns Str field f, and both
+backends free that word (`track_str_free`, `gen_drop_strs` /
+`ng_drop_strs`) before the glue frees the rest. A bit is set only when:
+
+- the field's value at every construction reaching the free is a fresh
+  Str call (`hd_call_kind` HK_STR: `int_to_str`, `str_concat`, the
+  builder's result, a program function whose every `return` is one).
+  For a local that is the `let` literal and every `x = v`, which must be
+  a struct literal with that field fresh too; for a temporary, its
+  literal. A literal, a parameter, a variable or a field read never sets
+  it, so a field that may be fresh or static is never freed;
+- no later use can move the string out or swap it: a read `x.f` is only
+  a lent argument (`hd_arg_ok`: the callee neither keeps, frees nor
+  returns it) that is not an argument of a returned call (which ngen may
+  turn into a tail call after the frees), or a binary operand. `x` or
+  `&x` only goes to a struct parameter that lends its Str fields
+  (`LT_SFLENT`, the least fixpoint of the same rule over the callee's
+  body). `let s = x.f`, `return x.f`, `x.f = v`, destructuring or
+  matching `x` clear the bit.
+
+Since Str is linear, a fresh Str in a field has no other owner, so these
+rules make the cell its only holder when it dies. A struct literal
+owning a fresh Str field is heap-autofree (or temp-autofree) with drop
+glue even where it would fit a stack cell, so the free has a point to
+run; a fresh Str call field no longer stops a literal from being
+`pl_deep_fresh`. Only the cell's own fields count: Str fields of child
+cells still leak. The plan prints `deep strs` for such sites. ASan-built
+self-compile of `compiler/src/main.trk` (same input): 298,630 leaked
+allocations before, 298,635 after [observed]; the compiler builds no
+struct with Str fields, so its leaks are untouched (largest buckets:
+bump cells, i64 collections, `str_concat`, string builders).
+
 ---
 
 ## 4. Measured motivation
