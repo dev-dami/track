@@ -1,0 +1,14 @@
+// L12b: native caller return slots. `pair` writes its result into the
+// caller's cell: `acc = pair(i)` rewrites `acc`'s stack cell in place, so
+// a hundred thousand calls fit under a 100 KB limit and nothing is left
+// in use at the end (the C backend prints the same).
+struct Pair { a: i64, b: i64 }
+fn pair(i: i64) -> Pair { return Pair { a: i, b: i * 3 }; }
+fn main() -> i64 {
+    sys_set_memory_limit(100000);
+    let mut acc = pair(0);
+    let mut i: i64 = 0;
+    while i < 100000 { acc = pair(i); i = i + 1; }
+    print(acc.b); print(sys_get_memory_used());
+    return 0;
+}

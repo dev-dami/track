@@ -1,0 +1,40 @@
+// L12b: ret-slot entries with more than six parameters (the hidden cell
+// makes seven or eight words, passed on the stack), called in place, in a
+// `let`, through a tail call and through the allocating wrapper.
+struct Big { a: i64, b: i64, c: i64 }
+fn seven(p: i64, q: i64, r: i64, s: i64, t: i64, u: i64, v: i64) -> Big {
+    return Big { a: p + q, b: r + s + t, c: u * v };
+}
+fn six(p: i64, q: i64, r: i64, s: i64, t: i64, u: i64) -> Big {
+    return Big { a: p - q, b: r * s, c: t + u };
+}
+fn via(p: i64, q: i64, r: i64, s: i64, t: i64, u: i64, v: i64) -> Big {
+    if p > 3 { return six(p, q, r, s, t, u); }
+    return seven(v, u, t, s, r, q, p);
+}
+fn total(b: Big) -> i64 { return b.a + b.b + b.c; }
+fn keep(n: i64) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        t = t + total(seven(i, 1, 2, 3, 4, 5, 6));
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    sys_set_memory_limit(100000);
+    let mut acc = seven(1, 2, 3, 4, 5, 6, 7);
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 30000 {
+        acc = seven(i, acc.a % 7, 3, 4, 5, acc.c % 11, 7);
+        let w = six(i, 2, 3, 4, 5, 6);
+        let v = via(i % 6, 1, 2, 3, 4, 5, 6);
+        t = (t + acc.a + acc.b + acc.c + w.a + w.b + v.a + v.b + v.c) % 1000003;
+        i = i + 1;
+    }
+    print(t); print(sys_get_memory_used());
+    print(keep(10));
+    return 0;
+}

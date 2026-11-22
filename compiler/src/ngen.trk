@@ -75,7 +75,10 @@ const NG_NOSTACK = 48; // literals of the current function refused stack cells (
 const NG_AUTO = 49;    // (slot, site, name) triples: heap-autofree locals live here (L12a)
 const NG_AUTOBASE = 50; // NG_AUTO length at the entry of each inlined body (parallels NG_EXITS)
 const NG_TAILFREE = 51; // the tail call being generated frees NG_AUTO from this index before its jump (-1)
-const NG_SLOTS = 52;
+const NG_RS = 52;      // ret-slot target of the PL_RET sites being generated (`ng_rs_addr`), -1 none (L12b)
+const NG_RSARG = 53;   // ret-slot target the next `ng_call` passes to `<f>__rs`, -1 none
+const NG_RSMODE = 54;  // function being generated: 0 as written, 1 its `<f>__rs` entry, 2 its allocating wrapper
+const NG_SLOTS = 55;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -301,6 +304,18 @@ fn ng_cell_slots(c: i64, words: i64) -> i64 {
 // The cell of site `n` from `count` words pushed in order: frame slots when
 // `ng_stack_site`, else a heap cell. Leaves the cell address in rax.
 fn ng_site_cell(c: i64, n: i64, count: i64) -> i64 {
+    if ng_into_rs(c, n) {
+        // the caller's cell (L12b), stored only after every word is pushed
+        let b = ncode(c);
+        ng_rs_addr(c, ng(c, NG_RS), 1);
+        let mut i: i64 = count - 1;
+        while i >= 0 {
+            x_pop_rax(b);
+            x_store_at_rcx(b, i * 8);
+            i = i - 1;
+        }
+        return x_bytes3(b, 72, 137, 200); // mov rax, rcx
+    }
     if !ng_stack_site(c, n) {
         return ng_cell(c, count);
     }
@@ -699,6 +714,80 @@ fn ng_drop(c: i64, t: i64, depth: i64) -> i64 {
         x_pop_rax(b);
     }
     return ng_dealloc_rax(c);
+}
+
+// ------------------------------------------------------------ return slots
+//
+// Card L12b, the native port of cgen's L10 caller return slots. A function
+// `life_ret_slot_fn` marks is emitted twice: `<f>__rs` takes one more
+// argument after its own, the address of the cell its result goes in (in
+// the next argument register, or pushed last when that makes more than
+// six words), writes it at each `return` and returns it in rax; `<f>`
+// allocates the cell and calls `<f>__rs`. The literal a `return` builds
+// computes every word into a temp before it stores the first, so the cell
+// may be one the callee reads through an argument (`acc = f(&acc)`), and
+// a `return g(..)` passes the cell on (a tail call when it can be one).
+// Callers pass a frame cell (`let x = f(..)` where x is stack), x's own
+// cell (`x = f(..)` where x is stack or heap-autofree), or call `<f>`.
+//
+// A target (NG_RS, NG_RSARG) is a slot holding the cell address (>= 0) or
+// `-2 - base` for the frame cell whose base slot is `base`.
+
+fn ng_rs_name(c: i64, name: i64) -> i64 {
+    return intern(c, text_cat(name_text(c, name), "__rs"));
+}
+
+// Register r = the cell address of target `t`.
+fn ng_rs_addr(c: i64, t: i64, r: i64) -> i64 {
+    if t >= 0 {
+        return ng_load_to(c, t, r);
+    }
+    return x_rm(ncode(c), 141, r, 5, ng_disp(c, -2 - t)); // lea r, [rbp + d]
+}
+
+// True when call `v` resolves to a function with a ret-slot entry.
+fn ng_rs_call(c: i64, v: i64) -> bool {
+    return nk(c, v) == K_CALL && life_ret_slot_fn(c, ng_call_target(c, v));
+}
+
+// True when site `n` writes the current function's return slot.
+fn ng_into_rs(c: i64, n: i64) -> bool {
+    return ng(c, NG_RS) != -1 && life_place_of(c, n) == PL_RET;
+}
+
+// `let name = f(..)` of a stack ret-slot call: the callee writes a frame
+// cell of this function. Returns the local's slot, or -1 when `n` is not
+// such a `let`.
+fn ng_let_rs(c: i64, n: i64) -> i64 {
+    let v = nd(c, n);
+    if !ng_rs_call(c, v) || !ng_stack_site(c, v) {
+        return -1;
+    }
+    let base = ng_cell_slots(c, pl_flat_words(c, pl_site_type(c, v)));
+    ng_set(c, NG_RSARG, -2 - base);
+    ng_call(c, v, nb(c, v));
+    let id = ng_new_local(c, na(c, n));
+    ng_store(c, id);
+    ng_let_facts(c, n, id);
+    return id;
+}
+
+// `x = f(..)` of a ret-slot call the plan writes into x's cell (x stack or
+// heap-autofree): x keeps its cell, nothing is freed. False when `n` is
+// not such an assignment.
+fn ng_assign_rs(c: i64, n: i64) -> bool {
+    let target = na(c, n);
+    let v = nb(c, n);
+    if nk(c, target) != K_VAR || ni(c, na(c, target), NI_CVAR) < 0 || !ng_rs_call(c, v) {
+        return false;
+    }
+    let place = life_place_of(c, v);
+    if place != PL_STACK && place != PL_AUTO {
+        return false;
+    }
+    ng_set(c, NG_RSARG, ni(c, na(c, target), NI_CVAR));
+    ng_call(c, v, nb(c, v));
+    return true;
 }
 
 // String literal: identical literals share one copy in the data, so
@@ -3133,9 +3222,13 @@ fn ng_struct_init(c: i64, n: i64) -> i64 {
     // 0, or frame slots at [rbp + d] (every word written: frame memory is
     // not zeroed like fresh arena memory)
     let stack = ng_stack_site(c, n);
+    let into = ng_into_rs(c, n);
     let mut cr: i64 = 0;
     let mut d: i64 = 0;
-    if stack {
+    if into {
+        // the caller's cell (L12b): every word is in a temp by now
+        ng_rs_addr(c, ng(c, NG_RS), 0);
+    } else if stack {
         cr = 5;
         d = ng_disp(c, ng_cell_slots(c, nf + 1));
     } else {
@@ -3165,7 +3258,7 @@ fn ng_struct_init(c: i64, n: i64) -> i64 {
                 r = 1;
             }
             x_rm(b, 137, r, cr, d + 8 * (f + 1));
-        } else if stack {
+        } else if stack || into {
             x_mov_mi(b, cr, d + 8 * (f + 1), 0);
         }
         f = f + 1;
@@ -3356,8 +3449,10 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     let count = list_len(c, args);
     let tail = ng(c, NG_TAIL) == 1;
     let tailfree = ng(c, NG_TAILFREE);
+    let mut rsarg = ng(c, NG_RSARG);
     ng_set(c, NG_TAIL, 0);
     ng_set(c, NG_TAILFREE, -1);
+    ng_set(c, NG_RSARG, -1);
     if is_qualified(c, name) {
         let disc = variant_disc(c, name);
         if disc >= 0 {
@@ -3405,21 +3500,32 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
             vpush(ng(c, NG_MISSING), target);
         }
     }
+    let rsf = f >= 0 && life_ret_slot_fn(c, f);
+    if !rsf {
+        rsarg = -1;
+    }
     if f >= 0 && na(c, n) == name {
+        // an inlined ret-slot body writes `rsarg`, or a heap cell (-1)
+        let saved_rs = ng(c, NG_RS);
+        if rsf {
+            ng_set(c, NG_RS, rsarg);
+        }
         let mark = ng_inline_begin(c, f, args);
         if mark >= 0 {
             ng_gen(c, ng_inline_body(c, f));
-            return ng_inline_end(c, mark);
+            ng_inline_end(c, mark);
+            return ng_set(c, NG_RS, saved_rs);
         }
-        if ng_prim(c, name_text(c, callee), args, count) {
+        if !rsf && ng_prim(c, name_text(c, callee), args, count) {
             return 0;
         }
         if !tail && ng_inline_full(c, f, args) {
-            return 0;
+            return ng_set(c, NG_RS, saved_rs);
         }
-        if !tail && ng(c, NG_INLDEPTH) > 0 && f == ng(c, NG_CURFN) && ng_call_guarded(c, f, args) {
-            return 0;
+        if !tail && rsarg == -1 && ng(c, NG_INLDEPTH) > 0 && f == ng(c, NG_CURFN) && ng_call_guarded(c, f, args) {
+            return ng_set(c, NG_RS, saved_rs);
         }
+        ng_set(c, NG_RS, saved_rs);
     }
     if builtin >= 0 && ng_mem_builtin(c, name_text(c, target), args) {
         return 0;
@@ -3435,6 +3541,13 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     while i < arity {
         x_push_zero(b);
         i = i + 1;
+    }
+    if rsarg != -1 {
+        // the hidden last argument of `<f>__rs`: the result cell
+        ng_rs_addr(c, rsarg, 0);
+        x_push_rax(b);
+        arity = arity + 1;
+        callee = ng_rs_name(c, callee);
     }
     if builtin < 0 && tail {
         // tail call: frame gone, arguments where the callee expects them, jump
@@ -3567,10 +3680,13 @@ fn ng_stmt(c: i64, n: i64) -> i64 {
     if k == K_IF {
         return ng_if(c, n, true);
     }
-    if k == K_ASSIGN && (ng_assign_auto(c, n) || ng_assign_local(c, n)) {
+    if k == K_ASSIGN && (ng_assign_rs(c, n) || ng_assign_auto(c, n) || ng_assign_local(c, n)) {
         return 0;
     }
     if k == K_LET {
+        if ng_let_rs(c, n) >= 0 {
+            return 0;
+        }
         let value = nd(c, n);
         let vk = ng_opnd(c, value);
         let vv = ng(c, NG_OPV);
@@ -4347,8 +4463,17 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         return 0;
     }
     if k == K_ADDR { return ng_gen(c, na(c, n)); }
-    if k == K_CALL || k == K_MACROCALL { return ng_call(c, n, nb(c, n)); }
+    if k == K_CALL || k == K_MACROCALL {
+        if k == K_CALL && ng_into_rs(c, n) {
+            // `return g(..)` in a ret-slot body: g writes our caller's cell
+            ng_set(c, NG_RSARG, ng(c, NG_RS));
+        }
+        return ng_call(c, n, nb(c, n));
+    }
     if k == K_LET {
+        if ng_let_rs(c, n) >= 0 {
+            return 0;
+        }
         ng_gen(c, nd(c, n));
         let id = ng_new_local(c, na(c, n));
         ng_store(c, id);
@@ -4356,7 +4481,7 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         return ng_let_facts(c, n, id);
     }
     if k == K_ASSIGN {
-        if ng_assign_auto(c, n) {
+        if ng_assign_rs(c, n) || ng_assign_auto(c, n) {
             return 0;
         }
         ng_gen(c, nb(c, n));
@@ -4565,7 +4690,14 @@ fn ng_emit_cold(c: i64) -> i64 {
 
 fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     let b = ncode(c);
-    ni_set(c, na(c, f), NI_EXTERN, x_here(b));
+    let mode = ng(c, NG_RSMODE);
+    if mode == 1 {
+        ni_set(c, ng_rs_name(c, na(c, f)), NI_EXTERN, x_here(b));
+    } else {
+        ni_set(c, na(c, f), NI_EXTERN, x_here(b));
+    }
+    ng_set(c, NG_RS, -1);
+    ng_set(c, NG_RSARG, -1);
     ng_set(c, NG_NSLOT, 0);
     ng_set(c, NG_DEPTH, 0);
     let is_main = text_eq(name_text(c, na(c, f)), "main");
@@ -4576,7 +4708,11 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     }
     ng_set(c, NG_RETVAL, returns);
     let params = nc(c, f);
-    let count = list_len(c, params) / 2;
+    let own = list_len(c, params) / 2;
+    let mut count = own;
+    if mode == 1 {
+        count = own + 1; // the result cell (L12b)
+    }
     ng_set(c, NG_NPARAM, count);
     let stackargs = count > 6;
     if stackargs {
@@ -4594,7 +4730,11 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     let uses = ng(c, NG_USE);
     let mut i: i64 = 0;
     while i < count {
-        let id = ng_new_local(c, list_at(c, params, i * 2));
+        let mut pname = intern(c, "rs$");
+        if i < own {
+            pname = list_at(c, params, i * 2);
+        }
+        let id = ng_new_local(c, pname);
         let r = ng_reg(c, id);
         if stackargs {
             if r >= 0 {
@@ -4631,7 +4771,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     vtrunc(ng(c, NG_AUTO), 0);
     vtrunc(ng(c, NG_AUTOBASE), 0);
     ng_set(c, NG_TAILFREE, -1);
-    if returns == 1 && !is_main && ng_find_acc(c, f, ne(c, f)) {
+    if returns == 1 && !is_main && mode != 2 && ng_find_acc(c, f, ne(c, f)) {
         let acc = ng_slot(c);
         ng_set_imm(c, acc, 0);
         ng_set(c, NG_ACC, acc);
@@ -4640,14 +4780,30 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         ng_set(c, NG_ACCBODY, -1);
         ng_set(c, NG_ACCRET, -1);
     }
-    if prelude >= 0 {
-        let mut p: i64 = 0;
-        while p < vlen(prelude) {
-            ng_stmt(c, vget(prelude, p));
-            p = p + 1;
-        }
+    if mode == 1 {
+        ng_set(c, NG_RS, own);
     }
-    ng_block_v(c, ne(c, f), returns != 1);
+    if mode == 2 {
+        // `<f>`: a heap cell for `<f>__rs` to write
+        let mut q: i64 = 0;
+        while q < count {
+            ng_load(c, q);
+            x_push_rax(b);
+            q = q + 1;
+        }
+        ng_alloc_const(c, pl_flat_words(c, ret) * 8);
+        x_push_rax(b);
+        ng_call_id(c, ng_rs_name(c, na(c, f)), count + 1);
+    } else {
+        if prelude >= 0 {
+            let mut p: i64 = 0;
+            while p < vlen(prelude) {
+                ng_stmt(c, vget(prelude, p));
+                p = p + 1;
+            }
+        }
+        ng_block_v(c, ne(c, f), returns != 1);
+    }
     if is_main || returns != 1 {
         x_mov_rax_imm(b, 0);
     }
@@ -4881,6 +5037,8 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_AUTO, vnew());
     ng_set(c, NG_AUTOBASE, vnew());
     ng_set(c, NG_TAILFREE, -1);
+    ng_set(c, NG_RS, -1);
+    ng_set(c, NG_RSARG, -1);
     ng_set(c, NG_ACCBODY, -1);
     ng_set(c, NG_ACCRET, -1);
     ng_set(c, NG_STRLEN, vnew());
@@ -4915,7 +5073,14 @@ fn generate_native(c: i64) -> i64 {
     let mut j: i64 = 0;
     while j < vlen(items) {
         let n = vget(items, j);
-        if ng_is_declaration(c, n) {
+        if nk(c, n) == K_FN && life_ret_slot_fn(c, n) {
+            // `<f>__rs`, then the allocating `<f>` (L12b)
+            ng_set(c, NG_RSMODE, 1);
+            ng_function(c, n, -1);
+            ng_set(c, NG_RSMODE, 2);
+            ng_function(c, n, -1);
+            ng_set(c, NG_RSMODE, 0);
+        } else if ng_is_declaration(c, n) {
             if n == main_fn {
                 ng_function(c, n, prelude);
             } else {

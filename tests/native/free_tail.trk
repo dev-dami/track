@@ -3,15 +3,23 @@
 // computed and before the jump (the C build frees it when the call
 // returns, so the depth stays within the 1 MB limit for both). `lend`
 // passes its cell to `look`, which allocates and reads it back: a cell
-// handed to the callee is not freed before the callee runs.
+// handed to the callee is not freed before the callee runs. `pt_heap`
+// returns a local, so it has no ret-slot entry (L10/L12b) and its result
+// is a heap cell; `lend` keeps `look`'s call out of its `return`, which
+// would count as an escape of `p` (L10) and leak it in both backends.
 struct Pt { x: i64, y: i64, z: i64 }
 
 fn pt(x: i64, y: i64) -> Pt {
     return Pt { x: x, y: y, z: x & 3 };
 }
 
+fn pt_heap(x: i64, y: i64) -> Pt {
+    let q = Pt { x: x, y: y, z: x & 3 };
+    return q;
+}
+
 fn walk(n: i64, acc: i64) -> i64 {
-    let p = pt(n, acc);
+    let p = pt_heap(n, acc);
     if p.x == 0 {
         return p.y;
     }
@@ -25,8 +33,9 @@ fn look(q: &Pt, n: i64) -> i64 {
 }
 
 fn lend(n: i64) -> i64 {
-    let p = pt(n, n * 2);
-    return look(&p, n + 100);
+    let p = pt_heap(n, n * 2);
+    let r = look(&p, n + 100);
+    return r;
 }
 
 fn main() -> i64 {

@@ -1,0 +1,33 @@
+// L12b: mutual recursion and `return g(..)` chains through ret-slot
+// entries: every function passes its caller's cell on (tail calls), and
+// the literal at the bottom writes it.
+struct Pair { a: i64, b: i64 }
+fn base(i: i64) -> Pair { return Pair { a: i, b: 0 - i }; }
+fn even(n: i64, k: i64) -> Pair {
+    if n == 0 { return base(k); }
+    return odd(n - 1, k + 1);
+}
+fn odd(n: i64, k: i64) -> Pair {
+    if n == 0 { return Pair { a: k, b: 1 }; }
+    return even(n - 1, k + 2);
+}
+fn chain3(i: i64) -> Pair { return chain2(i + 1); }
+fn chain2(i: i64) -> Pair { return chain1(i * 2); }
+fn chain1(i: i64) -> Pair { return base(i - 1); }
+fn main() -> i64 {
+    sys_set_memory_limit(100000);
+    let mut acc = even(10, 0);
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 20000 {
+        acc = even(i % 37, i);
+        t = (t + acc.a + acc.b) % 1000003;
+        let c = chain3(i);
+        t = (t + c.a + c.b * 3) % 1000003;
+        i = i + 1;
+    }
+    let h = odd(100001, 0);
+    print(t); print(acc.a); print(h.a); print(h.b);
+    print(sys_get_memory_used());
+    return 0;
+}
