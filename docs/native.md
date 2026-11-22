@@ -105,7 +105,8 @@ arguments (`rdi, rsi, rdx, rcx, r8, r9`, result in `rax`).
 
 In the C backend the runtime functions are Track functions (`tk_alloc`);
 runtime names the emitter calls directly (`alloc`, `track_alloc_nz` for
-struct, tuple, array and union cells, `track_array_get/set/slice`, `track_words_copy`, `track_bad_field`,
+struct, tuple, array and union cells, `track_array_get/set/slice`,
+`track_words_copy`, `track_bad_field`,
 `track_trap_div`, `track_abort` for `abort`) are emitted as
 `__attribute__((alias))` symbols. A native backend can simply resolve those
 names to the Track functions.
