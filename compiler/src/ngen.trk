@@ -81,7 +81,10 @@ const NG_RSMODE = 54;  // function being generated: 0 as written, 1 its `<f>__rs
 const NG_TEMPS = 55;   // (consumer node, slot, HK_*) of live temporaries (L13b)
 const NG_SYMS = 56;    // (name text, start, end) code range of each generated function, for the ELF .symtab
 const NG_CODELEN = 57; // bytes of code before the data (the ELF .text size)
-const NG_SLOTS = 58;
+const NG_COLLECT = 58; // 0, or a vector ng_free_ok / ng_names_ok push the names they would check against NI_CVAR to
+const NG_FREEV = 59;   // name id -> 0 unknown, else ng_free_ok's names for the function's inline body
+const NG_NAMESV = 60;  // name id -> 0 unknown, else ng_list_names_ok's names for the function's whole body
+const NG_SLOTS = 61;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -1099,7 +1102,8 @@ fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
     let k = nk(c, n);
     if k == K_VAR {
         let name = na(c, n);
-        if ni(c, name, NI_CVAR) == -1 {
+        let out = ng(c, NG_COLLECT);
+        if out == 0 && ni(c, name, NI_CVAR) == -1 {
             return true;
         }
         let params = nc(c, f);
@@ -1109,6 +1113,10 @@ fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
                 return true;
             }
             i = i + 2;
+        }
+        if out != 0 {
+            vpush(out, name);
+            return true;
         }
         return false;
     }
@@ -1141,6 +1149,44 @@ fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
             }
             i = i + step;
         }
+    }
+    return true;
+}
+
+// The names `n` (inline body or, with `names` >= 0, whole body of `f`)
+// mentions that are not `f`'s own, cached by f's name in `slot`: the
+// walk ng_free_ok / ng_list_names_ok makes, without the NI_CVAR test,
+// which depends on the call site (ng_vars_unbound).
+fn ng_free_vars(c: i64, n: i64, f: i64, slot: i64, names: i64) -> i64 {
+    let key = na(c, f);
+    let memo = ng(c, slot);
+    if vlen(memo) <= key {
+        vfill(memo, key + 1 - vlen(memo), 0);
+    }
+    let known = vget(memo, key);
+    if known != 0 {
+        return known;
+    }
+    let out = vnew();
+    ng_set(c, NG_COLLECT, out);
+    if names < 0 {
+        ng_free_ok(c, n, f);
+    } else {
+        ng_list_names_ok(c, n, names);
+    }
+    ng_set(c, NG_COLLECT, 0);
+    vset(memo, key, out);
+    return out;
+}
+
+// No name in `vars` is bound to a local at this site.
+fn ng_vars_unbound(c: i64, vars: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < vlen(vars) {
+        if ni(c, vget(vars, i), NI_CVAR) != -1 {
+            return false;
+        }
+        i = i + 1;
     }
     return true;
 }
@@ -1190,7 +1236,7 @@ fn ng_inline_begin(c: i64, f: i64, args: i64) -> i64 {
     }
     let params = nc(c, f);
     let count = list_len(c, args);
-    if count * 2 != list_len(c, params) || !ng_free_ok(c, e, f) {
+    if count * 2 != list_len(c, params) || !ng_vars_unbound(c, ng_free_vars(c, e, f, NG_FREEV, -1)) {
         return -1;
     }
     return ng_bind_args(c, params, args, ng(c, NG_NONE));
@@ -1346,7 +1392,8 @@ fn ng_names_ok(c: i64, n: i64, names: i64) -> bool {
     let k = nk(c, n);
     if k == K_VAR {
         let name = na(c, n);
-        if ni(c, name, NI_CVAR) == -1 {
+        let out = ng(c, NG_COLLECT);
+        if out == 0 && ni(c, name, NI_CVAR) == -1 {
             return true;
         }
         let mut i: i64 = 0;
@@ -1355,6 +1402,10 @@ fn ng_names_ok(c: i64, n: i64, names: i64) -> bool {
                 return true;
             }
             i = i + 1;
+        }
+        if out != 0 {
+            vpush(out, name);
+            return true;
         }
         return false;
     }
@@ -1498,7 +1549,7 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     }
     let params = nc(c, f);
     let count = list_len(c, args);
-    if count * 2 != list_len(c, params) || !ng_list_names_ok(c, ne(c, f), names) {
+    if count * 2 != list_len(c, params) || !ng_vars_unbound(c, ng_free_vars(c, ne(c, f), f, NG_NAMESV, names)) {
         return false;
     }
     let assigned = vnew();
@@ -5270,6 +5321,8 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_COLD, vnew());
     ng_set(c, NG_CBIND, vnew());
     ng_set(c, NG_BODYOK, vnew());
+    ng_set(c, NG_FREEV, vnew());
+    ng_set(c, NG_NAMESV, vnew());
     ng_set(c, NG_EXITS, vnew());
     ng_set(c, NG_NONE, vnew());
     ng_set(c, NG_SLEN, vnew());
