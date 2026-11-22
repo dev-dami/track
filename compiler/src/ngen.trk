@@ -326,6 +326,9 @@ fn ng_site_cell(c: i64, n: i64, count: i64) -> i64 {
     }
     if !ng_stack_site(c, n) {
         ng_cell(c, count);
+        if nk(c, n) == K_CALL {
+            return 0; // `Enum::V(..)`: ng_call registers the temporary
+        }
         return ng_temp_cell(c, n);
     }
     let b = ncode(c);
