@@ -1,0 +1,5 @@
+fn main
+  L8 collection heap-autofree ends L17
+  L11 call heap ends -
+  L12 call heap ends -
+  L12 str temp-autofree ends L12

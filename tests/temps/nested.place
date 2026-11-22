@@ -1,0 +1,10 @@
+fn main
+  L4 str heap-autofree ends L18
+  L5 str heap-autofree ends L18
+  L9 str heap-autofree ends L12
+  L9 str temp-autofree ends L9
+  L9 str temp-autofree ends L9
+  L13 str temp-autofree ends L13
+  L13 str temp-autofree ends L13
+  L13 str temp-autofree ends L13
+  L13 str temp-autofree ends L13

@@ -2719,6 +2719,7 @@ const PL_STACK = 1;
 const PL_RET = 2;
 const PL_HEAP = 3;
 const PL_AUTO = 4;
+const PL_TEMP = 5;
 
 const LT_PLACE = 13; // by node: PL_*, 0 when not a site
 const LT_SITES = 14; // [fn node, site node, PL_*, ends pos]*, in walk order
@@ -2730,6 +2731,7 @@ const LT_HFN = 19;   // by fn node: HK_* when every `return` is a fresh call of 
 const LT_HLENT = 20; // by fn node: bits of the parameters the function only lends (L13)
 const LT_HSITE = 21; // by node: HK_* of a heap-autofree Str or handle site, else 0
 const LT_CURHK = 22; // HK_* of the site whose uses `pl_use_ok` mode 5 is checking
+const LT_TEMP = 23;  // by node: consumer of a temp-autofree call (L13b), else -1
 
 const PS_FLAG = 0;  // by name: `pl_let`'s flag for the local it binds (below), else 0
 const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
@@ -3005,6 +3007,7 @@ fn pl_place_text(place: i64) -> i64 {
     if place == PL_STACK { return "stack"; }
     if place == PL_RET { return "ret-slot"; }
     if place == PL_AUTO { return "heap-autofree"; }
+    if place == PL_TEMP { return "temp-autofree"; }
     return "heap";
 }
 
@@ -3443,6 +3446,81 @@ fn life_auto_handle(c: i64, n: i64) -> i64 {
     return vget(sites, n);
 }
 
+// ------------------------------------------- fresh temporaries (L13b)
+//
+// docs/lifecycles.md §3.5. A fresh Str or handle call (`hd_call_kind`)
+// that is an argument of call `n` (`f(g())` or `f(&g())`) dies when `f`
+// returns when f's summary for that parameter is die-only: it neither
+// keeps nor frees nor returns it, and f's result is not derived from it
+// (`pl_temp_arg_ok`). The site is temp-autofree with `n` as its consumer
+// (LT_TEMP); the backends free it right after `n` returns. A fresh call
+// that is a statement before the last of a block is its own consumer: its
+// result is discarded, so it is freed right after it returns. A `return
+// g()` or `let x = g()` is never a temporary; anything uncertain is not
+// freed.
+
+fn pl_temp(c: i64, p: i64, n: i64, consumer: i64, hk: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    vset(vget(table, LT_TEMP), n, consumer);
+    vset(vget(table, LT_HSITE), n, hk);
+    return pl_record(c, p, n, PL_TEMP, npos(c, consumer));
+}
+
+// True when argument `i` of call `n` may be a temporary freed after `n`:
+// `hd_arg_ok` (neither kept nor freed) and the result of `n` neither
+// derives from parameter `i` nor has an unknown origin.
+fn pl_temp_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
+    if i >= O_MAXPARAMS || !hd_arg_ok(c, n, i, is_addr) {
+        return false;
+    }
+    let callee = life_callee(c, na(c, n));
+    let mut res: i64 = O_UNKNOWN;
+    if callee >= 0 {
+        res = vget(vget(ck(c, CK_LIFE), LT_RECS), callee + LR_RES);
+    } else if callee <= C_RT0 {
+        res = vget(vget(ck(c, CK_LIFE), LT_RTRECS), C_RT0 - callee + LR_RES);
+    }
+    return (res & O_UNKNOWN) == 0 && ((res >> i) & 1) == 0;
+}
+
+// The arguments of call `n`, in cgen's order: fresh temporaries are
+// planned temp-autofree, the rest walked.
+fn pl_call_args(c: i64, p: i64, n: i64) -> i64 {
+    let args = nb(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, args) {
+        let a = list_at(c, args, i);
+        let mut inner = a;
+        let is_addr = nk(c, a) == K_ADDR;
+        if is_addr {
+            inner = na(c, a);
+        }
+        let hk = hd_call_kind(c, inner);
+        if hk > 0 && pl_temp_arg_ok(c, n, i, is_addr) {
+            pl_temp(c, p, inner, n, hk);
+            pl_parts(c, p, inner);
+        } else {
+            pl_walk(c, p, a);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The consumer of temp-autofree call `n` (the call it is an argument of,
+// or `n` itself for a discarded statement), or -1.
+fn life_temp_of(c: i64, n: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    if vlen(table) <= LT_TEMP || n < 0 {
+        return -1;
+    }
+    let t = vget(table, LT_TEMP);
+    if t == 0 || n >= vlen(t) {
+        return -1;
+    }
+    return vget(t, n);
+}
+
 fn pl_uses_ok(c: i64, l: i64, name: i64, mode: i64) -> bool {
     let mut i: i64 = 0;
     while i < list_len(c, l) {
@@ -3848,7 +3926,16 @@ fn pl_block(c: i64, p: i64, body: i64) -> i64 {
     let mark = vlen(vget(p, PS_BOUND));
     let mut i: i64 = 0;
     while i < list_len(c, body) {
-        pl_stmt(c, p, body, i, list_at(c, body, i));
+        let n = list_at(c, body, i);
+        let hk = hd_call_kind(c, n);
+        if hk > 0 && i + 1 < list_len(c, body) {
+            // A fresh result no one reads (not the block's value): both
+            // backends emit a statement before the last as a discard.
+            pl_temp(c, p, n, n, hk);
+            pl_parts(c, p, n);
+        } else {
+            pl_stmt(c, p, body, i, n);
+        }
         i = i + 1;
     }
     return pl_scope_end(p, mark);
@@ -3869,7 +3956,8 @@ fn pl_parts(c: i64, p: i64, n: i64) -> i64 {
     if k == K_BIN { pl_walk(c, p, nb(c, n)); return pl_walk(c, p, nc(c, n)); }
     if k == K_UN { return pl_walk(c, p, nb(c, n)); }
     if k == K_ADDR || k == K_TINDEX || k == K_FIELD { return pl_walk(c, p, na(c, n)); }
-    if k == K_CALL || k == K_MACROCALL { return pl_walk_list(c, p, nb(c, n), 0, 1); }
+    if k == K_CALL { return pl_call_args(c, p, n); }
+    if k == K_MACROCALL { return pl_walk_list(c, p, nb(c, n), 0, 1); }
     if k == K_TUPLE || k == K_ARRAY { return pl_walk_list(c, p, na(c, n), 0, 1); }
     if k == K_SINIT { return pl_walk_list(c, p, nb(c, n), 1, 2); }
     if k == K_INDEX || k == K_RANGE { pl_walk(c, p, na(c, n)); return pl_walk(c, p, nb(c, n)); }
@@ -4002,7 +4090,7 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_CURHK {
+    while vlen(table) <= LT_TEMP {
         vpush(table, 0);
     }
     pl_ret_fns(c);
@@ -4010,6 +4098,7 @@ fn life_place_program(c: i64) -> i64 {
     vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
     vset(table, LT_DEEP, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     vset(table, LT_HSITE, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
+    vset(table, LT_TEMP, vfill(vnew_cap(node_count(c) + 1), node_count(c), -1));
     vset(table, LT_SITES, vnew_cap(256));
     let p = vfill(vnew_cap(PS_WIDTH), PS_WIDTH, 0);
     vset(p, PS_FLAG, vfill(vnew_cap(name_count(c) + 1), name_count(c), 0));

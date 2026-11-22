@@ -1,0 +1,3 @@
+fn main
+  L8 str temp-autofree ends L8
+  L10 str temp-autofree ends L10
