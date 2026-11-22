@@ -90,6 +90,7 @@ const LT_CUR = 9;     // record offset of the function being walked
 const LT_POINTS = 10; // (ref slot, target slot) pairs from `r = &x`
 const LT_DANGLE = 11; // (ref slot, target name, block end pos) of dangling refs
 const LT_BSTART = 12; // first slot of the innermost block being walked
+const LT_HOLDS = 13;  // (slot, local slot) of non-ref locals bound to a literal holding `&local`
 
 // Callee cache values: >= 0 is a program record offset, <= C_RT0 a runtime
 // record (offset C_RT0 - value), C_UNKNOWN a conservative callee.
@@ -268,6 +269,9 @@ fn walk_block(c: i64, s: i64, body: i64) -> i64 {
     }
     if vlen(vget(table, LT_POINTS)) > 0 && list_len(c, body) > 0 {
         refs_outlive_block(c, count, npos(c, list_at(c, body, list_len(c, body) - 1)));
+    }
+    if vlen(vget(table, LT_HOLDS)) > 0 {
+        holds_close(c, count);
     }
     vset(table, LT_BSTART, outer);
     truncate_vars(c, count);
@@ -499,6 +503,8 @@ fn ev_assign(c: i64, s: i64, n: i64) -> i64 {
         }
         if ty_is_ref(c, vf(c, slot, V_TYPE)) {
             ref_rebound(c, slot, nb(c, n));
+        } else {
+            holds_bind(c, s, slot, nb(c, n));
         }
         return 0;
     }
@@ -773,8 +779,15 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         if life_tracked(c, ty) {
             slot_origin_set(c, slot, o);
         }
+        let rhs = nd(c, n);
+        // `let x = x;` shadows: the right side named the older slot.
+        let shadow = rhs >= 0 && nk(c, rhs) == K_VAR && na(c, rhs) == na(c, n);
         if ty_is_ref(c, ty) {
-            ref_points(c, slot, nd(c, n));
+            if !shadow {
+                ref_points(c, slot, rhs);
+            }
+        } else if !shadow {
+            holds_bind(c, s, slot, rhs);
         }
         return 0;
     }
@@ -1195,6 +1208,7 @@ fn life_errors_init(table: i64) -> i64 {
     vpush(table, vnew()); // LT_POINTS
     vpush(table, vnew()); // LT_DANGLE
     vpush(table, 0);      // LT_BSTART
+    vpush(table, vnew()); // LT_HOLDS
     return 0;
 }
 
@@ -1203,6 +1217,7 @@ fn life_errors_enter(c: i64, at: i64) -> i64 {
     vset(table, LT_CUR, at);
     vtrunc(vget(table, LT_POINTS), 0);
     vtrunc(vget(table, LT_DANGLE), 0);
+    vtrunc(vget(table, LT_HOLDS), 0);
     return 0;
 }
 
@@ -1366,13 +1381,168 @@ fn lent_text(c: i64, n: i64, root: i64) -> i64 {
     return root;
 }
 
-// E0212: a returned literal holds `&x` for a local `x` of this frame.
+// True when `slot` is an owned local of this frame (not a parameter, not
+// a reference): it dies when the function returns.
+fn frame_local(c: i64, s: i64, slot: i64) -> bool {
+    return slot >= lsg(s, LS_BASE) + lsg(s, LS_NP) && !ty_is_ref(c, vf(c, slot, V_TYPE));
+}
+
+// True when `v` builds a value from parts: a tuple, array, struct or
+// union payload literal.
+fn is_literal(c: i64, v: i64) -> bool {
+    let k = nk(c, v);
+    if k == K_TUPLE || k == K_ARRAY || k == K_SINIT {
+        return true;
+    }
+    return k == K_CALL && ni(c, na(c, v), NI_OWNER) >= 0;
+}
+
+// The frame local whose address the value `e` carries, or -1: `&x`, a
+// `&` variable that points at `x` (LT_POINTS), a variable bound to a
+// literal holding `&x` (LT_HOLDS), or a literal with such an element.
+fn local_addr_in(c: i64, s: i64, e: i64) -> i64 {
+    if e < 0 {
+        return -1;
+    }
+    let k = nk(c, e);
+    if k == K_ADDR {
+        let root = place_var(c, na(c, e));
+        if root < 0 {
+            return -1;
+        }
+        let slot = lookup(c, root);
+        if slot >= 0 && frame_local(c, s, slot) {
+            return slot;
+        }
+        return -1;
+    }
+    if k == K_VAR {
+        let slot = lookup(c, na(c, e));
+        if slot < lsg(s, LS_BASE) {
+            return -1;
+        }
+        let table = ck(c, CK_LIFE);
+        let mut list = vget(table, LT_HOLDS);
+        if ty_is_ref(c, vf(c, slot, V_TYPE)) {
+            list = vget(table, LT_POINTS);
+        }
+        let mut j: i64 = 0;
+        while j < vlen(list) {
+            if vget(list, j) == slot && frame_local(c, s, vget(list, j + 1)) {
+                return vget(list, j + 1);
+            }
+            j = j + 2;
+        }
+        return -1;
+    }
+    if !is_literal(c, e) {
+        return -1;
+    }
+    let mut l = na(c, e);
+    let mut from: i64 = 0;
+    let mut step: i64 = 1;
+    if k == K_SINIT {
+        l = nb(c, e);
+        from = 1;
+        step = 2;
+    } else if k == K_CALL {
+        l = nb(c, e);
+    }
+    let mut i = from;
+    while i < list_len(c, l) {
+        let t = local_addr_in(c, s, list_at(c, l, i));
+        if t >= 0 {
+            return t;
+        }
+        i = i + step;
+    }
+    return -1;
+}
+
+// E0212 bookkeeping: `slot` (not a reference) is now bound to `rhs`; it
+// holds a local's address when `rhs` is a literal or variable that does.
+fn holds_bind(c: i64, s: i64, slot: i64, rhs: i64) -> i64 {
+    let mut t: i64 = -1;
+    if rhs >= 0 && (nk(c, rhs) == K_VAR || is_literal(c, rhs)) {
+        t = local_addr_in(c, s, rhs);
+    }
+    let h = vget(ck(c, CK_LIFE), LT_HOLDS);
+    let mut j: i64 = 0;
+    while j < vlen(h) {
+        if vget(h, j) == slot {
+            vset(h, j + 1, -1);
+        }
+        j = j + 2;
+    }
+    if t >= 0 {
+        vpush(h, slot);
+        vpush(h, t);
+    }
+    return 0;
+}
+
+// The block whose slots start at `count` closes: forget holders and
+// targets declared inside it.
+fn holds_close(c: i64, count: i64) -> i64 {
+    let h = vget(ck(c, CK_LIFE), LT_HOLDS);
+    let keep = vnew_cap(vlen(h));
+    let mut j: i64 = 0;
+    while j < vlen(h) {
+        if vget(h, j) < count && vget(h, j + 1) >= 0 && vget(h, j + 1) < count {
+            vpush(keep, vget(h, j));
+            vpush(keep, vget(h, j + 1));
+        }
+        j = j + 2;
+    }
+    vtrunc(h, 0);
+    j = 0;
+    while j < vlen(keep) {
+        vpush(h, vget(keep, j));
+        j = j + 1;
+    }
+    return 0;
+}
+
+fn escape_error(c: i64, at: i64, slot: i64, place: i64, via: i64) -> i64 {
+    let fname = quoted(c, cur_fn_name(c));
+    let b = sb_new();
+    sb_add(b, "local ");
+    sb_add(b, quoted(c, vf(c, slot, V_NAME)));
+    sb_add(b, " escapes ");
+    sb_add(b, fname);
+    sb_add(b, place);
+    if via >= 0 {
+        if text_len(place) > 0 {
+            sb_add(b, ",");
+        }
+        sb_add(b, " through ");
+        sb_add(b, quoted(c, via));
+    }
+    sb_add(b, "; it dies when ");
+    sb_add(b, fname);
+    sb_add(b, " returns.");
+    return life_error(c, npos(c, at), "E0212", sb_text(b));
+}
+
+// E0212: a returned literal holds `&x` for a local `x` of this frame,
+// directly, through a `&` alias of `x`, or through a variable bound to a
+// literal that holds it; or the returned variable is such a holder.
 fn check_return_escape(c: i64, s: i64, v: i64) -> i64 {
     if v < 0 {
         return 0;
     }
     let k = nk(c, v);
-    if k != K_TUPLE && k != K_ARRAY && k != K_SINIT {
+    if k == K_VAR {
+        let slot = lookup(c, na(c, v));
+        if slot >= lsg(s, LS_BASE) && !ty_is_ref(c, vf(c, slot, V_TYPE)) {
+            let t = local_addr_in(c, s, v);
+            if t >= 0 {
+                escape_error(c, v, t, "", na(c, v));
+            }
+        }
+        return 0;
+    }
+    if !is_literal(c, v) {
         return 0;
     }
     let mut l = na(c, v);
@@ -1382,35 +1552,32 @@ fn check_return_escape(c: i64, s: i64, v: i64) -> i64 {
         l = nb(c, v);
         from = 1;
         step = 2;
+    } else if k == K_CALL {
+        l = nb(c, v);
     }
     let mut i = from;
     while i < list_len(c, l) {
         let e = list_at(c, l, i);
-        if nk(c, e) == K_ADDR {
-            let root = place_var(c, na(c, e));
-            let slot = lookup(c, root);
-            if root >= 0 && slot >= lsg(s, LS_BASE) + lsg(s, LS_NP) && !ty_is_ref(c, vf(c, slot, V_TYPE)) {
+        let ek = nk(c, e);
+        if ek == K_ADDR || ek == K_VAR {
+            let t = local_addr_in(c, s, e);
+            if t >= 0 {
                 let mut place: i64 = 0;
                 if k == K_SINIT {
-                    place = text_cat3("through field '", name_text(c, na(c, v)), ".");
+                    place = text_cat3(" through field '", name_text(c, na(c, v)), ".");
                     place = text_cat3(place, name_text(c, list_at(c, l, i - 1)), "'");
                 } else if k == K_TUPLE {
-                    place = text_cat3("inside the returned tuple (element ", text_of_int(i), ")");
+                    place = text_cat3(" inside the returned tuple (element ", text_of_int(i), ")");
+                } else if k == K_ARRAY {
+                    place = text_cat3(" inside the returned array (element ", text_of_int(i), ")");
                 } else {
-                    place = text_cat3("inside the returned array (element ", text_of_int(i), ")");
+                    place = text_cat3(" inside the returned payload of '", name_text(c, na(c, v)), "'");
                 }
-                let fname = quoted(c, cur_fn_name(c));
-                let b = sb_new();
-                sb_add(b, "local ");
-                sb_add(b, quoted(c, root));
-                sb_add(b, " escapes ");
-                sb_add(b, fname);
-                sb_add(b, " ");
-                sb_add(b, place);
-                sb_add(b, "; it dies when ");
-                sb_add(b, fname);
-                sb_add(b, " returns.");
-                life_error(c, npos(c, e), "E0212", sb_text(b));
+                let mut via: i64 = -1;
+                if ek == K_VAR {
+                    via = na(c, e);
+                }
+                escape_error(c, e, t, place, via);
             }
         } else {
             check_return_escape(c, s, e);
