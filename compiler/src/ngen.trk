@@ -1046,6 +1046,24 @@ fn ng_expr_size(c: i64, n: i64) -> i64 {
         }
         return total;
     }
+    if k == K_SINIT || k == K_TUPLE {
+        // literals (L12b: an inlined ret-slot body writes the caller's cell)
+        let mut from: i64 = 0;
+        let mut step: i64 = 1;
+        let mut l = na(c, n);
+        if k == K_SINIT {
+            from = 1;
+            step = 2;
+            l = nb(c, n);
+        }
+        let mut size: i64 = 1;
+        let mut j = from;
+        while j < list_len(c, l) {
+            size = size + ng_expr_size(c, list_at(c, l, j));
+            j = j + step;
+        }
+        return size;
+    }
     return 1000;
 }
 
@@ -1080,14 +1098,22 @@ fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
     if k == K_INDEX {
         return ng_free_ok(c, na(c, n), f) && ng_free_ok(c, nb(c, n), f);
     }
-    if k == K_CALL {
-        let args = nb(c, n);
-        let mut i: i64 = 0;
+    if k == K_CALL || k == K_SINIT || k == K_TUPLE {
+        let mut args = nb(c, n);
+        let mut from: i64 = 0;
+        let mut step: i64 = 1;
+        if k == K_SINIT {
+            from = 1;
+            step = 2;
+        } else if k == K_TUPLE {
+            args = na(c, n);
+        }
+        let mut i = from;
         while i < list_len(c, args) {
             if !ng_free_ok(c, list_at(c, args, i), f) {
                 return false;
             }
-            i = i + 1;
+            i = i + step;
         }
     }
     return true;
@@ -1253,6 +1279,16 @@ fn ng_node_size(c: i64, n: i64, names: i64) -> i64 {
     if k == K_CALL {
         return 2 + ng_list_size(c, nb(c, n), names);
     }
+    if k == K_SINIT {
+        let fields = nb(c, n);
+        let mut size: i64 = 1;
+        let mut j: i64 = 1;
+        while j < list_len(c, fields) {
+            size = size + ng_node_size(c, list_at(c, fields, j), names);
+            j = j + 2;
+        }
+        return size;
+    }
     if k == K_LET {
         vpush(names, na(c, n));
         return 1 + ng_node_size(c, nd(c, n), names);
@@ -1316,6 +1352,17 @@ fn ng_names_ok(c: i64, n: i64, names: i64) -> bool {
     }
     if k == K_CALL {
         return ng_list_names_ok(c, nb(c, n), names);
+    }
+    if k == K_SINIT {
+        let fields = nb(c, n);
+        let mut j: i64 = 1;
+        while j < list_len(c, fields) {
+            if !ng_names_ok(c, list_at(c, fields, j), names) {
+                return false;
+            }
+            j = j + 2;
+        }
+        return true;
     }
     if k == K_LET {
         return ng_names_ok(c, nd(c, n), names);
