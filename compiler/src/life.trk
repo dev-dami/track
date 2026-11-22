@@ -3343,34 +3343,97 @@ fn pl_glue_fn(c: i64, f: i64) -> bool {
     return vget(gfn, f) == 1;
 }
 
-// True when every `return` in statement `n` gives a deep-fresh value
-// (`pl_deep_fresh`: a literal whose child cells are fresh, or a fresh
-// call, which LT_GFN may already admit).
-fn pl_glue_rets_ok(c: i64, n: i64) -> bool {
+// ------------------------------------------- every return of a function
+//
+// `if` and `match` are expressions, so a `return` can hide anywhere an
+// expression can: a `let` or assignment value, a call argument, a
+// condition, a match target or guard, an operand, a literal element. A
+// walker that decides "every return of f is fresh" must see them all, or
+// the plan frees a static or shared value (card F1).
+
+// Push onto `out` every K_RETURN reachable inside node `n` (statement or
+// expression), its own value included; nested declarations are skipped.
+fn rets_walk(c: i64, n: i64, out: i64) -> i64 {
     if n < 0 {
-        return true;
+        return 0;
     }
     let k = nk(c, n);
     if k == K_RETURN {
-        return na(c, n) >= 0 && pl_deep_fresh(c, na(c, n));
+        vpush(out, n);
+        return rets_walk(c, na(c, n), out);
     }
-    if k == K_IF { return pl_glue_rets_ok(c, na(c, n)) && pl_glue_rets_list(c, nb(c, n), 0, 1) && pl_glue_rets_list(c, nc(c, n), 0, 1); }
-    if k == K_WHILE { return pl_glue_rets_list(c, nb(c, n), 0, 1); }
-    if k == K_FOR || k == K_LENS { return pl_glue_rets_list(c, nc(c, n), 0, 1); }
-    if k == K_LET { return pl_glue_rets_ok(c, nd(c, n)); }
-    if k == K_LETD { return pl_glue_rets_ok(c, nc(c, n)); }
-    if k == K_ASSIGN { return pl_glue_rets_ok(c, nb(c, n)); }
-    if k == K_MATCH { return pl_glue_rets_list(c, nb(c, n), 2, 3); }
-    return true;
+    if k == K_BIN { rets_walk(c, nb(c, n), out); return rets_walk(c, nc(c, n), out); }
+    if k == K_UN { return rets_walk(c, nb(c, n), out); }
+    if k == K_ADDR || k == K_TINDEX || k == K_FIELD { return rets_walk(c, na(c, n), out); }
+    if k == K_CALL { return rets_list(c, nb(c, n), 0, 1, out); }
+    if k == K_MACROCALL { rets_list(c, nb(c, n), 0, 1, out); return rets_list(c, nc(c, n), 0, 1, out); }
+    if k == K_TUPLE || k == K_ARRAY { return rets_list(c, na(c, n), 0, 1, out); }
+    if k == K_SINIT { return rets_list(c, nb(c, n), 1, 2, out); }
+    if k == K_INDEX || k == K_RANGE { rets_walk(c, na(c, n), out); return rets_walk(c, nb(c, n), out); }
+    if k == K_SLICE { rets_walk(c, na(c, n), out); rets_walk(c, nb(c, n), out); return rets_walk(c, nc(c, n), out); }
+    if k == K_LET { return rets_walk(c, nd(c, n), out); }
+    if k == K_LETD { return rets_walk(c, nc(c, n), out); }
+    if k == K_ASSIGN { rets_walk(c, na(c, n), out); return rets_walk(c, nb(c, n), out); }
+    if k == K_IF { rets_walk(c, na(c, n), out); rets_list(c, nb(c, n), 0, 1, out); return rets_list(c, nc(c, n), 0, 1, out); }
+    if k == K_WHILE { rets_walk(c, na(c, n), out); return rets_list(c, nb(c, n), 0, 1, out); }
+    if k == K_FOR { rets_walk(c, nb(c, n), out); return rets_list(c, nc(c, n), 0, 1, out); }
+    if k == K_LENS { return rets_list(c, nc(c, n), 0, 1, out); }
+    if k == K_MATCH {
+        rets_walk(c, na(c, n), out);
+        let arms = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            // Patterns hold only literals; the guard and body are nodes.
+            rets_walk(c, list_at(c, arms, i + 1), out);
+            rets_walk(c, list_at(c, arms, i + 2), out);
+            i = i + 3;
+        }
+        return 0;
+    }
+    // Literals, names, and declarations (K_FN, K_MACRODEF, ...).
+    return 0;
 }
 
-fn pl_glue_rets_list(c: i64, l: i64, from: i64, step: i64) -> bool {
+fn rets_list(c: i64, l: i64, from: i64, step: i64, out: i64) -> i64 {
     let mut i = from;
     while i < list_len(c, l) {
-        if !pl_glue_rets_ok(c, list_at(c, l, i)) {
+        rets_walk(c, list_at(c, l, i), out);
+        i = i + step;
+    }
+    return 0;
+}
+
+// Every K_RETURN in the body of function `f`, in source order, cached in
+// LT_RETS for the fixpoints that ask again.
+fn life_fn_rets(c: i64, f: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    let mut cache: i64 = 0;
+    if table != 0 && vlen(table) > LT_RETS {
+        cache = vget(table, LT_RETS);
+    }
+    if cache != 0 && f < vlen(cache) && vget(cache, f) != 0 {
+        return vget(cache, f);
+    }
+    let out = vnew();
+    rets_list(c, ne(c, f), 0, 1, out);
+    if cache != 0 && f < vlen(cache) {
+        vset(cache, f, out);
+    }
+    return out;
+}
+
+// True when every `return` of function `f` gives a deep-fresh value
+// (`pl_deep_fresh`: a literal whose child cells are fresh, or a fresh
+// call, which LT_GFN may already admit).
+fn pl_glue_rets_ok(c: i64, f: i64) -> bool {
+    let rs = life_fn_rets(c, f);
+    let mut i: i64 = 0;
+    while i < vlen(rs) {
+        let v = na(c, vget(rs, i));
+        if v < 0 || !pl_deep_fresh(c, v) {
             return false;
         }
-        i = i + step;
+        i = i + 1;
     }
     return true;
 }
@@ -3414,7 +3477,7 @@ fn pl_glue_fns(c: i64) -> i64 {
         let mut j: i64 = 0;
         while j < vlen(cand) {
             let f = vget(cand, j);
-            if vget(gfn, f) == 0 && pl_glue_rets_list(c, ne(c, f), 0, 1) {
+            if vget(gfn, f) == 0 && pl_glue_rets_ok(c, f) {
                 vset(gfn, f, 1);
                 changed = true;
             }
@@ -3578,46 +3641,27 @@ fn pl_ends_in_return(c: i64, body: i64) -> bool {
     return false;
 }
 
-fn pl_rets_list(c: i64, l: i64, from: i64, step: i64, rsfn: i64) -> bool {
-    let mut i = from;
-    while i < list_len(c, l) {
-        if !pl_rets_ok(c, list_at(c, l, i), rsfn) {
-            return false;
-        }
-        i = i + step;
-    }
-    return true;
-}
-
-// True when every `return` in statement `n` builds a struct or tuple
+// True when every `return` of function `f` builds a struct or tuple
 // literal or calls a function `rsfn` marks.
-fn pl_rets_ok(c: i64, n: i64, rsfn: i64) -> bool {
-    if n < 0 {
-        return true;
-    }
-    let k = nk(c, n);
-    if k == K_RETURN {
-        let v = na(c, n);
+fn pl_rets_ok(c: i64, f: i64, rsfn: i64) -> bool {
+    let rs = life_fn_rets(c, f);
+    let mut i: i64 = 0;
+    while i < vlen(rs) {
+        let v = na(c, vget(rs, i));
         if v < 0 {
             return false;
         }
         let kv = nk(c, v);
-        if kv == K_SINIT || kv == K_TUPLE {
-            return true;
-        }
         if kv == K_CALL {
-            let f = callee_fn(c, na(c, v));
-            return f >= 0 && vget(rsfn, f) == 1;
+            let g = callee_fn(c, na(c, v));
+            if g < 0 || vget(rsfn, g) != 1 {
+                return false;
+            }
+        } else if kv != K_SINIT && kv != K_TUPLE {
+            return false;
         }
-        return false;
+        i = i + 1;
     }
-    if k == K_IF { return pl_rets_ok(c, na(c, n), rsfn) && pl_rets_list(c, nb(c, n), 0, 1, rsfn) && pl_rets_list(c, nc(c, n), 0, 1, rsfn); }
-    if k == K_WHILE { return pl_rets_list(c, nb(c, n), 0, 1, rsfn); }
-    if k == K_FOR || k == K_LENS { return pl_rets_list(c, nc(c, n), 0, 1, rsfn); }
-    if k == K_LET { return pl_rets_ok(c, nd(c, n), rsfn); }
-    if k == K_LETD { return pl_rets_ok(c, nc(c, n), rsfn); }
-    if k == K_ASSIGN { return pl_rets_ok(c, nb(c, n), rsfn); }
-    if k == K_MATCH { return pl_rets_list(c, nb(c, n), 2, 3, rsfn); }
     return true;
 }
 
@@ -3646,7 +3690,7 @@ fn pl_ret_fns(c: i64) -> i64 {
         let mut j: i64 = 0;
         while j < vlen(items) {
             let f = vget(items, j);
-            if vget(rsfn, f) == 1 && !pl_rets_list(c, ne(c, f), 0, 1, rsfn) {
+            if vget(rsfn, f) == 1 && !pl_rets_ok(c, f, rsfn) {
                 vset(rsfn, f, 0);
                 changed = true;
             }
@@ -3785,35 +3829,20 @@ fn hd_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
     return callee >= 0 && pl_arg_ok(c, n, i, is_addr, false);
 }
 
-// HK_* when every `return` in statement list `l` (from `from`, every
-// `step`) is a call of one fresh kind; `cur` is the kind seen so far (0
-// none yet), -1 when one does not qualify.
-fn hd_rets_list(c: i64, l: i64, from: i64, step: i64, cur: i64) -> i64 {
-    let mut k = cur;
-    let mut i = from;
-    while i < list_len(c, l) && k >= 0 {
-        k = hd_rets(c, list_at(c, l, i), k);
-        i = i + step;
-    }
-    return k;
-}
-
-fn hd_rets(c: i64, n: i64, cur: i64) -> i64 {
-    if n < 0 || cur < 0 {
-        return cur;
-    }
-    let k = nk(c, n);
-    if k == K_RETURN {
-        let kind = hd_call_kind(c, na(c, n));
+// HK_* when every `return` of function `f` is a call of one fresh kind,
+// 0 when it has none, -1 when one does not qualify.
+fn hd_rets(c: i64, f: i64) -> i64 {
+    let rs = life_fn_rets(c, f);
+    let mut cur: i64 = 0;
+    let mut i: i64 = 0;
+    while i < vlen(rs) {
+        let kind = hd_call_kind(c, na(c, vget(rs, i)));
         if kind == 0 || (cur != 0 && cur != kind) {
             return -1;
         }
-        return kind;
+        cur = kind;
+        i = i + 1;
     }
-    if k == K_IF { return hd_rets_list(c, nc(c, n), 0, 1, hd_rets_list(c, nb(c, n), 0, 1, cur)); }
-    if k == K_WHILE { return hd_rets_list(c, nb(c, n), 0, 1, cur); }
-    if k == K_FOR || k == K_LENS { return hd_rets_list(c, nc(c, n), 0, 1, cur); }
-    if k == K_MATCH { return hd_rets_list(c, nb(c, n), 2, 3, cur); }
     return cur;
 }
 
@@ -3873,7 +3902,7 @@ fn hd_program(c: i64) -> i64 {
                 let was_h = vget(hfn, f);
                 let was_l = vget(lent, f);
                 if vget(hfn, f) == 0 && pl_ends_in_return(c, ne(c, f)) {
-                    let kind = hd_rets_list(c, ne(c, f), 0, 1, 0);
+                    let kind = hd_rets(c, f);
                     if kind > 0 {
                         vset(hfn, f, kind);
                         changed = true;
@@ -4052,6 +4081,7 @@ const LT_SMASK = 25;  // by node: owned Str field bits of a deep site (L13e)
 const LT_SFLENT = 26; // by fn node: bits of the struct parameters whose Str fields it only lends
 const LT_SFRES = 27;  // by fn node: Str field bits its result cell owns (L15)
 const LT_SFMOVE = 28; // by node: HK_* of a fresh local its last mention moves (field or `y = x`, L15)
+const LT_RETS = 29;   // by fn node: vector of every K_RETURN in its body (`life_fn_rets`), 0 until asked
 
 // Owned Str field bits of deep site `n`, or 0.
 fn life_str_mask(c: i64, n: i64) -> i64 {
@@ -4545,30 +4575,15 @@ fn sm_program(c: i64, nn: i64) -> i64 {
 
 // ------------------------------------------- owned Str results (L15)
 
-// The bits of `m` every `return` in statement `n` fills fresh
+// The bits of `m` every `return` of function `f` fills fresh
 // (`sf_init_mask`, which reads the current LT_SFRES).
-fn sr_rets(c: i64, n: i64, m: i64) -> i64 {
-    if n < 0 || m == 0 {
-        return m;
-    }
-    let k = nk(c, n);
-    if k == K_RETURN { return m & sf_init_mask(c, na(c, n)); }
-    if k == K_IF { return sr_rets_list(c, nc(c, n), sr_rets_list(c, nb(c, n), m, 0, 1), 0, 1); }
-    if k == K_WHILE { return sr_rets_list(c, nb(c, n), m, 0, 1); }
-    if k == K_FOR || k == K_LENS { return sr_rets_list(c, nc(c, n), m, 0, 1); }
-    if k == K_MATCH { return sr_rets_list(c, nb(c, n), m, 2, 3); }
-    if k == K_LET { return sr_rets(c, nd(c, n), m); }
-    if k == K_LETD { return sr_rets(c, nc(c, n), m); }
-    if k == K_ASSIGN { return sr_rets(c, nb(c, n), m); }
-    return m;
-}
-
-fn sr_rets_list(c: i64, l: i64, m: i64, from: i64, step: i64) -> i64 {
+fn sr_rets(c: i64, f: i64, m: i64) -> i64 {
+    let rs = life_fn_rets(c, f);
     let mut r = m;
-    let mut i = from;
-    while i < list_len(c, l) && r != 0 {
-        r = sr_rets(c, list_at(c, l, i), r);
-        i = i + step;
+    let mut i: i64 = 0;
+    while i < vlen(rs) && r != 0 {
+        r = r & sf_init_mask(c, na(c, vget(rs, i)));
+        i = i + 1;
     }
     return r;
 }
@@ -4615,7 +4630,7 @@ fn sr_program(c: i64, nn: i64) -> i64 {
             let f = vget(cand, j);
             let m = vget(res, f);
             if m != 0 {
-                let r = sr_rets_list(c, ne(c, f), m, 0, 1);
+                let r = sr_rets(c, f, m);
                 if r != m {
                     vset(res, f, r);
                     changed = true;
@@ -5360,9 +5375,10 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_SFMOVE {
+    while vlen(table) <= LT_RETS {
         vpush(table, 0);
     }
+    vset(table, LT_RETS, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     pl_ret_fns(c);
     pl_glue_fns(c);
     hd_program(c);

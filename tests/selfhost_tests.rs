@@ -2423,6 +2423,94 @@ fn strfield_frees_owned_str_fields() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Returns hidden inside expressions (card F1): `if` and `match` are
+/// expressions, so a `return` can sit in a `let` or assignment value, a
+/// call argument, a condition, a match target, an operand or a literal
+/// field. The walkers deciding that every return of a function is fresh
+/// (LT_HFN, LT_SFRES, LT_GFN, LT_RSFN) must see each one, or the plan
+/// frees a static Str or field. Every program in tests/returns/ prints its
+/// `<stem>.out` with both backends, never gets the plan its hidden return
+/// rules out, and, where gcc has AddressSanitizer, runs clean.
+#[test]
+fn returns_hidden_in_expressions_are_seen() {
+    let root = repo();
+    let dir = scratch("returns");
+    let cases = [
+        ("str_let", "str temp-autofree"),
+        ("str_hidden", "str temp-autofree"),
+        ("sfres_cond", "deep strs"),
+        ("sfres_hidden", "deep strs"),
+        ("glue_hidden", "temp-autofree"),
+        ("retslot_hidden", "ret-slot"),
+    ];
+    for (stem, banned) in cases {
+        let rel = format!("tests/returns/{}.trk", stem);
+        let want = fs::read_to_string(root.join(format!("tests/returns/{}.out", stem))).unwrap();
+        let exe = dir.join(stem);
+        let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
+        assert!(out.status.success(), "{}: build failed", rel);
+        assert_eq!(run_exe(&exe), (want.clone(), Some(0)), "{}: C output", rel);
+        let nat = dir.join(format!("{}_nat", stem));
+        let out = run_trackc(
+            &["build", "--native", &rel, "-o", nat.to_str().unwrap()],
+            &root,
+        );
+        assert!(out.status.success(), "{}: native build failed", rel);
+        assert_eq!(run_exe(&nat), (want, Some(0)), "{}: native output", rel);
+        let plan = run_trackc(&["life", "--place", &rel], &root);
+        let got = String::from_utf8_lossy(&plan.stdout).into_owned();
+        assert!(
+            !got.contains(banned),
+            "{}: a hidden return rules out `{}`:\n{}",
+            rel,
+            banned,
+            got
+        );
+    }
+    let asan = Command::new("gcc")
+        .args(["-fsanitize=address", "-x", "c", "-", "-o"])
+        .arg(dir.join("probe"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"int main(void){return 0;}")?;
+            child.wait()
+        })
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if asan {
+        for (stem, _) in cases {
+            let rel = format!("tests/returns/{}.trk", stem);
+            let exe = dir.join(format!("{}_asan", stem));
+            let out = Command::new(trackc())
+                .args(["build", &rel, "-o", exe.to_str().unwrap()])
+                .env("CC", "gcc -fsanitize=address -g")
+                .env("TRACKC_CACHE", dir.join("cache"))
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}: ASan build failed", rel);
+            let run = Command::new(&exe)
+                .env("ASAN_OPTIONS", "detect_leaks=0")
+                .output()
+                .unwrap();
+            let err = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                run.status.success() && !err.contains("Sanitizer"),
+                "{}: ASan reports an error:\n{}",
+                rel,
+                err
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Caller return slots in the C backend (card L10, docs/lifecycles.md
 /// §3.2): every program in tests/retslot/ builds, prints its `<stem>.out`
 /// and plans as its `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them).
