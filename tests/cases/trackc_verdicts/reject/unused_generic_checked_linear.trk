@@ -1,0 +1,1 @@
+fn dup<T>(x: T) -> (T, T) { return (x, x); } fn main() -> void { print(1); }

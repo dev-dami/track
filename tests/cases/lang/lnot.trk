@@ -1,0 +1,11 @@
+fn main() -> void {
+    let ok = file_exists("/etc/hostname");
+    if (!ok) {
+        print(999);
+        return;
+    }
+    let missing = file_exists("/definitely/not/here");
+    if (!missing) {
+        print(42);
+    }
+}

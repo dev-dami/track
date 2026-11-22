@@ -1,0 +1,3 @@
+struct V { x: i64 }
+fn show(a: &V) -> V { print(a.x); return V { x: a.x }; }
+fn main() -> void { let a = V { x: 1 }; show(&a); }

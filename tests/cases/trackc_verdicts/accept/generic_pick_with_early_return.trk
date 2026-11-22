@@ -1,0 +1,1 @@
+fn pick<T>(c: bool, a: T, b: T) -> T { if c { return a; } return b; } fn main() -> void { let x: i64 = 1; let y: i64 = 2; print(pick(true, x, y)); print(x + y); }

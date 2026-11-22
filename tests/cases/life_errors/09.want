@@ -1,0 +1,1 @@
+error[E0211]: 'eat' consumes its parameter 'v', but 'r.p' is only lent to 'peek'. Pass '&' and make 'v: &T', or take ownership in 'peek'.

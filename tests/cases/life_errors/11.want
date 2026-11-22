@@ -1,0 +1,1 @@
+error[E0212]: local 'p' escapes 'pair' inside the returned tuple (element 0), through 'b'; it dies when 'pair' returns.

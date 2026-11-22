@@ -1,0 +1,1 @@
+error[E0212]: local 'p' escapes 'mk' inside the returned payload of 'U::P'; it dies when 'mk' returns.

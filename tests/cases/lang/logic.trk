@@ -1,0 +1,13 @@
+fn loud(v: i64) -> i64 {
+    print(v);
+    return v;
+}
+fn main() -> void {
+    let x: i64 = 1;
+    let y: i64 = 2;
+    if x && y { print(10); } else { print(11); }
+    if loud(0) && loud(5) { print(12); }
+    if loud(3) || loud(6) { print(13); }
+    let z = x && y;
+    print(z);
+}

@@ -1,0 +1,15 @@
+struct Point { x: i64, y: i64 }
+fn id(a: &Point) -> &Point { return a; }
+fn main() -> void {
+    let a = Point { x: 1, y: 2 };
+    let c = Point { x: 7, y: 8 };
+    let mut r = &a;
+    let flag: i64 = 1;
+    if flag > 0 {
+        let q = &c;
+        r = q;
+    } else {
+        r = id(&c);
+    }
+    print(r.x);
+}

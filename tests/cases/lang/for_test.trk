@@ -1,0 +1,6 @@
+import "std/io";
+fn main() -> void {
+    for i in 0..3 {
+        print(i);
+    }
+}

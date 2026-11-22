@@ -1,0 +1,1 @@
+fn main() -> void { let (a, b) = 1; print(a); }

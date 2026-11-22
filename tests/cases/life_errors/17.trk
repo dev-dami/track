@@ -1,0 +1,4 @@
+struct Point { x: i64, y: i64 }
+struct Bag { t: (Point, Point) }
+fn mk(r: &Point) -> Bag { return Bag { t: (r, r) }; }
+fn main() -> void { let p = Point { x: 1, y: 2 }; let b = mk(&p); print(b.t.0.x); }

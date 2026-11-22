@@ -1,0 +1,3 @@
+struct Point { x: i64, y: i64 }
+fn dup(r: &Point) -> i64 { let t: (Point, Point) = (r, r); return t.0.x; }
+fn main() -> void { let p = Point { x: 1, y: 2 }; print(dup(&p)); }

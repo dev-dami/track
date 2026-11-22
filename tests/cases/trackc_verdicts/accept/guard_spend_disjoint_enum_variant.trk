@@ -1,0 +1,1 @@
+fn eatb(s: Str) -> bool { return true; } fn eatr(s: Str) -> i64 { return 1; } fn readb(s: &Str) -> bool { return true; } fn eat(s: Str) -> void { } enum C { R, G, B } fn f(k: C) -> i64 { let s = str_concat("a", "b"); match k { C::R if eatb(s) => return 1, C::G => return eatr(s), _ => return 0, } } fn main() -> void { print(f(C::G)); }

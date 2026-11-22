@@ -1,0 +1,1 @@
+fn main() -> void { let mut p = (1, 2); let mut i = 0; while i < 3 { p = (p.1, p.0 + p.1); i = i + 1; } print(p.0); print(p.1); }

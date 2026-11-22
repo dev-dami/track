@@ -1,0 +1,11 @@
+const BASE = 100;
+const OFFSET = BASE + 23;
+
+fn get_offset() -> i64 {
+    return OFFSET;
+}
+
+fn main() -> void {
+    print(BASE);
+    print(get_offset());
+}

@@ -1,0 +1,1 @@
+enum E { Z, O } const Q = 7 / E::O; fn main() -> void { print(Q); }

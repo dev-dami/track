@@ -1,0 +1,42 @@
+# name	rc	first stderr line prefix ("-" = no error line)	source (one line)
+# Ported from regression_tests.rs, soundness_tests.rs,
+# logic_and_soundness_strict_tests.rs, checker_tests.rs and cli_tests.rs:
+# the Rust stage0 verdict each test asserted, now asserted on `trackc check`
+# with trackc's exact first diagnostic line.
+regression_nested_expressions	0	-	fn main() -> void { let x: i64 = ((10 + 20) * (30 - 5)) / (2 % 1 + 5); print(x); }
+regression_nested_if_else_chain	0	-	fn classify(n: i32) -> i32 { if n < 0 { return -1; } else if n == 0 { return 0; } else if n < 10 { return 1; } else { return 2; } }
+regression_multiple_macro_calls	0	-	@macro add_one(x: i32) -> i32 { return x + 1; } fn main() -> void { let a = @add_one(10); let b = @add_one(@add_one(20)); print(a + b); }
+regression_complex_match_guards	0	-	union Number { Int(i32), Big(i64), Zero, } fn check_num(n: Number) -> i32 { match n { Number::Int(val) if val > 100 => print(val), Number::Int(val) => print(val), Number::Big(val) => print(val), Number::Zero => print(0), _ => print(-1), } return 0; }
+regression_nested_lens_blocks	0	-	fn main() -> void { let mut outer = Outer { inner: Inner { value: 42 } }; with outer -> o { with o -> i { let v = i.value(); } } }
+regression_shadowed_variables	0	-	fn main() -> void { let x = 10; if true { let x = 20; print(x); } print(x); }
+regression_top_level_variables_and_deref	0	-	let x = 1; let r = &x; fn main() -> void { print("Hello, Track!"); print(*r); }
+soundness_loop_consumed_variable_use_rejected	1	error[E0200]: Cannot consume linear resource 'v' inside a loop.	fn main() -> void { let mut v = vec_init(16); while true { let x = v; } let y = v; }
+soundness_loop_reinitialization_accepted	0	-	fn main() -> void { let mut v = vec_init(16); while true { let tmp = v; v = vec_init(16); } let end = v; }
+soundness_lens_escape_rejected	1	error[E0200]: Lens 'lens' cannot be moved, stored, returned, or escape its with block.	fn main() -> void { let mut v = vec_init(16); with v -> lens { let leaked = lens; } }
+soundness_lens_alias_not_visible_after_block	1	error[E0200]: Undeclared variable 'lens'.	fn main() -> void { let mut v = vec_init(16); with v -> lens { vec_push(lens, 1); } vec_push(lens, 2); }
+soundness_nested_lens_same_target_rejected	1	error[E0200]: Cannot create lens. 'v' is not Active.	fn main() -> void { let mut v = vec_init(16); with v -> a { with v -> b { vec_push(b, 1); } } }
+soundness_lens_released_on_early_return	0	-	fn f(cond: bool) -> void { let mut v = vec_init(16); with v -> lens { if cond { return; } else { vec_push(lens, 1); } } let x = v; }
+soundness_inconsistent_branch_move_rejected	1	error[E0200]: Resource 'v' has inconsistent state after if/else.	fn main() -> void { let v = vec_init(16); let cond = true; if cond { let x = v; } else { let y = 10; } let z = v; }
+soundness_double_move_rejected	1	error[E0200]: Use-after-free! Resource 'v' is already spent.	fn main() -> void { let v = vec_init(16); let x = v; let y = v; }
+strict_mutability_reassignment_rejection	1	error[E0200]: Cannot mutate immutable variable 'x'	fn main() -> void { let x = 10; x = 20; }
+strict_mutable_variable_reassignment_allowed	0	-	fn main() -> void { let mut x = 10; x = 20; print(x); }
+strict_double_move_in_loop_rejection	1	error[E0200]: Cannot consume linear resource 'r' inside a loop.	struct Resource { id: i32 } fn consume(r: Resource) -> void { print(1); } fn main() -> void { let r = Resource { id: 1 }; let mut i = 0; while i < 5 { let consumed = r; i = i + 1; } }
+strict_unresolved_type_alias_detection	0	-	type Buffer = UnknownType; fn main() -> void { let buf = 10; }
+strict_borrow_escape_from_lens_block	0	-	struct System { state: i32 } fn main() -> void { let mut sys = System { state: 1 }; with sys -> s { let val = 10; } sys = System { state: 2 }; }
+checker_valid_code	0	-	fn main() -> void { let x: i32 = 42; let y = x; print(x); print(y); }
+checker_linear_type_transfer	0	-	fn process(v: Vec) -> void { } fn main() -> void { let v: Vec = vec_init(10); process(v); }
+checker_use_after_free_error	1	error[E0200]: Use-after-free! Resource 'v' is already spent.	fn consume(v: Vec) -> void {} fn main() -> void { let v: Vec = vec_init(10); consume(v); consume(v); }
+checker_lens_block_valid_and_locked	0	-	fn main() -> void { let mut u = User { age: 30 }; with u -> user { let a = user.age(); } print(u); }
+checker_lens_block_locked_error	1	error[E0200]: Resource 'u' is frozen (either locked in a lens or borrowed).	fn use_user(u: User) -> void {} fn main() -> void { let mut u = User { age: 30 }; with u -> user { use_user(u); } }
+checker_borrow_and_escape	0	-	fn main() -> void { let mut v: Vec = vec_init(10); let ref_v = &mut v; vec_push(ref_v, 1); }
+checker_escape_error	1	error[E0200]: Cannot return reference to local variable 'v' (escapes function scope).	fn escape() -> &Vec { let v: Vec = vec_init(10); return &v; }
+checker_enum_and_union_matching	0	-	enum Color { Red, Green, Blue } union Result { Ok(i32), Err } fn main() -> void { let c = Color::Red; match c { Color::Red => print(1), Color::Green => print(2), Color::Blue => print(3), } let r = Result::Ok(42); match r { Result::Ok(val) => print(val), Result::Err => print(0), } }
+checker_type_alias_and_os_api	0	-	type Buffer = []u8; fn main() -> void { let count = os_args_count(); print(count); let exists = dir_exists("src"); }
+checker_extended_char_str_path_api	0	-	fn main() -> void { let is_d = char_is_digit(53); let is_a = char_is_alpha(65); let u = char_to_upper(97); let starts = str_starts_with("compiler", "comp"); let sub = str_substr("hello world", 0, 5); let base = path_basename("/bin/track"); let ext = path_ext("main.trk"); let joined = path_join("src", "lib.rs"); }
+checker_typo_suggestion	1	error[E0200]: Undefined function 'prnt'. Did you mean 'print'?	fn main() -> void { prnt("Hello"); }
+checker_for_over_scalar_is_rejected	1	error[E0200]: `for` iterates over a range or an array; use `for i in 0..n` to count.	fn main()->i64{ let n=5; for x in n { print(x); } return 0; }
+checker_for_over_range_and_array_ok	0	-	fn main()->i64{ let a=[1,2]; for x in a { print(x); } for i in 0..3 { print(i); } return 0; }
+cli_check_generics_valid	0	-	fn identity<T>(x: T) -> T { return x; } fn main() -> void { let a: i32 = 5; print(identity(a)); }
+cli_check_generics_arity_mismatch	1	error[E0200]: Function 'pair' expects 2 argument(s) but got 1.	fn pair<T, U>(a: T, b: U) -> (T, U) { return (a, b); } fn main() -> void { let p = pair(1); }
+cli_check_const_across_functions	0	-	const BASE = 100; const OFF = BASE + 23; fn get() -> i64 { return OFF; } fn main() -> void { print(get()); }
+cli_check_invalid_syntax_fails	1	error[E0100]: expected expression, found ';'	fn main() -> void { let x = ; }

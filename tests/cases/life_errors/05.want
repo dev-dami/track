@@ -1,0 +1,1 @@
+error[E0200]: Resource 's' is spent in some match arms but not in others.

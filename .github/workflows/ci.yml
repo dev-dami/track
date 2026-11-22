@@ -111,6 +111,8 @@ jobs:
         run: |
           ./build/bootstrap/stage3/trackc check --deny-warnings tools/yard/main.trk
           env PATH=/usr/bin:/bin TRACKC="$PWD/build/bootstrap/stage3/trackc" tests/yard/run.sh
+      - name: Test suite without cargo (tests/run.sh)
+        run: env PATH=/usr/bin:/bin tests/run.sh -j "$(nproc)" -K
 
   lint:
     runs-on: ubuntu-latest

@@ -1,0 +1,18 @@
+struct Point { x: i64, y: i64 }
+struct Size { w: i64, x: i64 }
+fn make(n: i64) -> Point { let p = Point { y: n + 1, x: n }; return p; }
+fn main() -> void {
+    let mut p = make(3);
+    print(p.x); print(p.y);
+    p.x = 10;
+    let s = Size { x: 8, w: 7 };
+    print(p.x + s.x);
+    match p { Point { x: 10, y } => print(y), _ => print(0), }
+    let mut a = [1, 2, 3, 4];
+    a[3] = 40;
+    let tail = a[2..];
+    print(array_len(&tail)); print(tail[1]);
+    let mut t = (1, 2);
+    t.1 = 9;
+    print(t.1);
+}

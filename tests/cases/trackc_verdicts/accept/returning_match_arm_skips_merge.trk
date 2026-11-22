@@ -1,0 +1,1 @@
+fn eat(s: Str) -> void { } fn g(s: Str) -> i64 { return 1; } fn f(s: Str, k: i64) -> i64 { match k { 1 => return g(s), _ => print(0), } eat(s); return 0; } fn main() -> void { print(f(str_concat("a", "b"), 1)); }

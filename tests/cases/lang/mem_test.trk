@@ -1,0 +1,4 @@
+fn main() -> void {
+    sys_set_memory_limit(1000);
+    let buf = alloc(2000);
+}

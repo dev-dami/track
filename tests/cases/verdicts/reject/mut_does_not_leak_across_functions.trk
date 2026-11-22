@@ -1,0 +1,1 @@
+fn a() -> void { let mut x = 1; x = 2; } fn b() -> void { let x = 1; x = 3; }
