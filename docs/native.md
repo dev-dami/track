@@ -35,7 +35,7 @@ calls; `store64`/`store8` must not be reordered across `syscall6`.
 
 | module | contents |
 |---|---|
-| `mem.trk` | state page, size-class allocator on `mmap`, `alloc`/`dealloc`/`mem_realloc`, memory limit, raw copy/zero/strlen, `track_words_copy`, `track_runtime_init` |
+| `mem.trk` | state page, size-class allocator on `mmap`, `alloc`/`dealloc`/`mem_realloc`, memory limit, raw copy/zero/strlen, `track_alloc_nz`, `track_words_copy`, `track_runtime_init` |
 | `io.trk` | `rt_start`, `sys_exit`, buffered stdout, stderr, `print*`, `track_out`/`track_err`, `read_line`, `track_abort`, `track_trap_div`, int formatting |
 | `str.trk` | `str_*`, `int_to_str`, `track_str_bytes`, `char_*`, `path_*` |
 | `vec.trk` | `vec_*`, `track_i64_collection_*`, `track_sb_*`, `track_array_*`, `array_len`, `track_bad_field`, `math_*`, `add`/`sum`/`sub` |
@@ -104,8 +104,9 @@ and main's result. Calls follow the System V convention for word
 arguments (`rdi, rsi, rdx, rcx, r8, r9`, result in `rax`).
 
 In the C backend the runtime functions are Track functions (`tk_alloc`);
-runtime names the emitter calls directly (`alloc` for struct and union
-cells, `track_array_get/set/slice`, `track_words_copy`, `track_bad_field`,
+runtime names the emitter calls directly (`alloc`, `track_alloc_nz` for
+struct, tuple, array and union cells, `track_array_get/set/slice`,
+`track_words_copy`, `track_bad_field`,
 `track_trap_div`, `track_abort` for `abort`) are emitted as
 `__attribute__((alias))` symbols. A native backend can simply resolve those
 names to the Track functions.
@@ -115,7 +116,7 @@ names to the Track functions.
 From the generated C of `compiler/src/main.trk` (calls in code, not in the
 embedded runtime text), the runtime surface the compiler needs:
 
-- emitted by cgen: `alloc`, `track_array_get`, `track_array_set`,
+- emitted by cgen: `alloc`, `track_alloc_nz`, `track_array_get`, `track_array_set`,
   `track_array_slice`, `track_words_copy`, `track_bad_field`,
   `track_trap_div`, `track_abort`;
 - called through `base.trk`/`main.trk`: `track_i64_collection_{new,len,push,get,set,pop,truncate}`,

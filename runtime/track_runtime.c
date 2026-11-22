@@ -163,12 +163,12 @@ static size_t *g_bump_free[TK_BUMP_MAX / 16 + 2];
 
 static size_t tk_bump_span(size_t size) { return (size + sizeof(size_t) + 15) & ~(size_t)15; }
 
-static size_t *tk_bump_cell(size_t size) {
+static size_t *tk_bump_cell(size_t size, int zero) {
     size_t span = tk_bump_span(size);
     size_t *cell = g_bump_free[span / 16];
     if (cell) {
         g_bump_free[span / 16] = *(size_t **)(cell + 1);
-        memset(cell, 0, span);
+        if (zero) memset(cell, 0, span);
     } else {
         if ((size_t)(g_bump_end - g_bump_cur) < span) {
             g_bump_cur = (char *)calloc(1, TK_BUMP_CHUNK);
@@ -187,7 +187,8 @@ static void tk_bump_release(size_t *raw) {
     g_bump_free[span / 16] = raw;
 }
 
-tk_w alloc(tk_w size_w) {
+/* Zeroed when `zero`; otherwise a reused cell keeps its old bytes. */
+static tk_w tk_bump_alloc(tk_w size_w, int zero) {
     size_t size = (size_t)size_w;
     if (size_w <= 0) return 0;
     if (g_allocated_bytes + size > g_max_memory_limit) {
@@ -195,7 +196,9 @@ tk_w alloc(tk_w size_w) {
         fflush(stderr);
         exit(137);
     }
-    size_t *ptr = size <= TK_BUMP_MAX ? tk_bump_cell(size) : (size_t *)calloc(1, size + sizeof(size_t));
+    size_t *ptr = size <= TK_BUMP_MAX ? tk_bump_cell(size, zero)
+                  : zero ? (size_t *)calloc(1, size + sizeof(size_t))
+                         : (size_t *)malloc(size + sizeof(size_t));
     if (!ptr) {
         fprintf(stderr, "\nTrack Runtime Error: Out of memory allocation failure!\n");
         fflush(stderr);
@@ -205,6 +208,12 @@ tk_w alloc(tk_w size_w) {
     g_allocated_bytes += size;
     return TK_WORD(ptr + 1);
 }
+
+tk_w alloc(tk_w size_w) { return tk_bump_alloc(size_w, 1); }
+
+/* `alloc` without the zeroing, for cells whose every word is written
+ * before any is read (cell literals and constructors, array copies). */
+tk_w track_alloc_nz(tk_w size_w) { return tk_bump_alloc(size_w, 0); }
 
 tk_w dealloc(tk_w p) {
     if (!p) return 0;
@@ -248,8 +257,9 @@ tk_w mem_realloc(tk_w p, tk_w new_size_w) {
 
 /* Copy `count` words to a fresh heap cell (escaping tuples). */
 tk_w track_words_copy(tk_w src, tk_w count) {
-    tk_w dst = alloc(count > 0 ? count * 8 : 8);
-    if (src && count > 0) memcpy(TK_PTR(dst), TK_PTR(src), (size_t)count * 8);
+    if (!src || count <= 0) return alloc(8 > count * 8 ? 8 : count * 8);
+    tk_w dst = track_alloc_nz(count * 8);
+    memcpy(TK_PTR(dst), TK_PTR(src), (size_t)count * 8);
     return dst;
 }
 
@@ -613,7 +623,7 @@ typedef struct {
 } TrackVec;
 
 tk_w vec_init(tk_w cap) {
-    TrackVec *v = (TrackVec *)TK_PTR(alloc(sizeof(TrackVec)));
+    TrackVec *v = (TrackVec *)TK_PTR(track_alloc_nz(sizeof(TrackVec)));
     v->cap = cap > 0 ? cap : 16;
     v->data = (tk_w *)TK_PTR(alloc(v->cap * (tk_w)sizeof(tk_w)));
     v->len = 0;
@@ -855,7 +865,7 @@ tk_w track_array_slice(tk_w a, tk_w from, tk_w to) {
     tk_w len = a ? ((tk_w *)TK_PTR(a))[0] : 0;
     if (to < 0) to = len;
     if (from < 0 || from > to || to > len) track_abort(TK_WORD("array slice out of bounds"));
-    tk_w out = alloc((to - from + 1) * 8);
+    tk_w out = track_alloc_nz((to - from + 1) * 8);
     ((tk_w *)TK_PTR(out))[0] = to - from;
     if (to > from) memcpy((tk_w *)TK_PTR(out) + 1, (tk_w *)TK_PTR(a) + 1 + from, (size_t)(to - from) * 8);
     return out;

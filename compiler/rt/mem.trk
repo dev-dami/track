@@ -497,14 +497,22 @@ fn sys_set_memory_limit(bytes: i64) -> i64 {
 
 fn sys_get_memory_used() -> i64 { return rs(RS_USED); }
 
-fn alloc(size: i64) -> i64 {
+fn alloc(size: i64) -> i64 { return rt_alloc(size, true); }
+
+// `alloc` without the zeroing: for blocks whose every payload word is
+// written before any is read (cell literals and constructors, array
+// copies). A reused block keeps its old bytes; fresh memory is zero anyway.
+// trackc --native inlines it for constant sizes (ngen.trk ng_alloc_const).
+fn track_alloc_nz(size: i64) -> i64 { return rt_alloc(size, false); }
+
+fn rt_alloc(size: i64, zero: bool) -> i64 {
     if size <= 0 {
         return 0;
     }
     if rs(RS_USED) + size > rs(RS_LIMIT) {
         rt_limit_exceeded(size);
     }
-    let p = rt_block(size, true);
+    let p = rt_block(size, zero);
     store64(p - 8, (size << 8) | (load64(p - 8) & 255));
     rs_set(RS_USED, rs(RS_USED) + size);
     return p;
@@ -548,9 +556,10 @@ fn track_words_copy(src: i64, count: i64) -> i64 {
     if count > 0 {
         bytes = count * 8;
     }
-    let dst = alloc(bytes);
-    if src != 0 && count > 0 {
-        rt_copy(dst, src, count * 8);
+    if src == 0 || count <= 0 {
+        return alloc(bytes);
     }
+    let dst = track_alloc_nz(bytes);
+    rt_copy(dst, src, count * 8);
     return dst;
 }

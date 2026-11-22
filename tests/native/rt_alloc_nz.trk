@@ -1,0 +1,137 @@
+// rt_alloc_nz.trk (tests/native) — cell literals and constructors take
+// their block from `track_alloc_nz`, which skips the zeroing because every
+// word is written (L14). A block such a cell dirtied and freed must still
+// come back zeroed from `alloc`: each round builds struct, tuple, array
+// and union cells of several size classes, lets them be freed, then asks
+// `alloc` for the same sizes and checks every word is 0. Array slices of a
+// large array (a large block) are checked the same way. The output must be
+// the same with runtime/track_runtime.c, with `--rt=track` and with
+// `--native`.
+
+import "std" :: { dealloc };
+
+struct Wide { p: i64, q: i64, r: i64 }
+struct Big { a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64 }
+union Shape { Dot(i64), Box(i64) }
+
+fn a_new(n: i64) -> i64 { return alloc(n); }
+fn a_free(p: i64) -> i64 {
+    dealloc(p);
+    return 0;
+}
+
+fn show(label: i64, v: i64) -> i64 {
+    track_out(label);
+    track_out(" = ");
+    track_out(int_to_str(v));
+    track_out("\n");
+    return 0;
+}
+
+fn zeroed(p: i64, bytes: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < bytes {
+        if load64(p + i) != 0 {
+            return 0;
+        }
+        i = i + 8;
+    }
+    return 1;
+}
+
+// `alloc(bytes)` twice (the two most recently freed blocks of its class),
+// both checked for zero, then freed again.
+fn probe(bytes: i64) -> i64 {
+    let p: i64 = a_new(bytes);
+    let q: i64 = a_new(bytes);
+    let ok = zeroed(p, bytes) * zeroed(q, bytes);
+    a_free(q);
+    a_free(p);
+    return ok;
+}
+
+fn wide(i: i64) -> Wide { return Wide { p: i + 1, q: i + 2, r: i + 3 }; }
+
+fn big(i: i64) -> Big {
+    return Big { a: i + 1, b: i + 2, c: i + 3, d: i + 4, e: i + 5, f: i + 6, g: i + 7, h: i + 8 };
+}
+
+fn pair(i: i64) -> (i64, i64) { return (i + 11, i + 12); }
+
+fn arr(i: i64) -> [i64] { return [i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7, i + 8, i + 9]; }
+
+fn boxed(i: i64) -> Shape { return Shape::Box(i + 5); }
+
+fn shape_sum(s: &Shape) -> i64 {
+    let mut v: i64 = 0;
+    match s {
+        Shape::Dot(x) => v = x,
+        Shape::Box(y) => v = y + 1,
+    }
+    return v;
+}
+
+fn rounds(n: i64) -> i64 {
+    let mut ok: i64 = 1;
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let w = wide(i);
+        t = t + w.p + w.q + w.r;
+        ok = ok * probe(32);
+        let g = big(i);
+        t = t + g.a + g.h;
+        ok = ok * probe(72);
+        let (x, y) = pair(i);
+        t = t + x + y;
+        ok = ok * probe(16);
+        let a = arr(i);
+        t = t + a[0] + a[8];
+        ok = ok * probe(80);
+        t = t + shape_sum(&boxed(i));
+        ok = ok * probe(16);
+        i = i + 1;
+    }
+    show("cells total", t % 1000003);
+    return ok;
+}
+
+// An array of `n` words built by hand in a zeroed block.
+fn mk(n: i64) -> [i64] {
+    let p: i64 = a_new(8 * (n + 1));
+    store64(p, n);
+    let mut i: i64 = 0;
+    while i < n {
+        store64(p + 8 + 8 * i, i + 1);
+        i = i + 1;
+    }
+    return p;
+}
+
+fn sum(a: &[i64], n: i64) -> i64 {
+    let mut t: i64 = 0;
+    let mut j: i64 = 0;
+    while j < n {
+        t = t + a[j];
+        j = j + 1;
+    }
+    return t;
+}
+
+// A slice of a large array is a large block written in full; freed, the
+// large-block cache hands it to `alloc`, which must zero it.
+fn large() -> i64 {
+    let src = mk(20000);
+    let s = src[0..20000];
+    show("slice total", sum(&s, 20000));
+    dealloc(s);
+    show("large zeroed", probe(160000));
+    dealloc(src);
+    return 0;
+}
+
+fn main() -> i64 {
+    show("rounds zeroed", rounds(1000));
+    large();
+    return 0;
+}
