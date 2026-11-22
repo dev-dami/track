@@ -1,0 +1,15 @@
+// L13b: a fresh Str passed straight to a call that only reads it is freed
+// right after that call returns, every iteration.
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 20000 {
+        if i % 5000 == 0 {
+            print(&int_to_str(i));
+        }
+        total = total + str_len(&int_to_str(i));
+        i = i + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

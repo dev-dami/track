@@ -1,0 +1,5 @@
+fn main
+  L4 str heap-autofree ends L11
+  L7 str temp-autofree ends L7
+  L7 str temp-autofree ends L7
+  L8 str temp-autofree ends L8

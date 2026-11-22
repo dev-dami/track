@@ -78,7 +78,8 @@ const NG_TAILFREE = 51; // the tail call being generated frees NG_AUTO from this
 const NG_RS = 52;      // ret-slot target of the PL_RET sites being generated (`ng_rs_addr`), -1 none (L12b)
 const NG_RSARG = 53;   // ret-slot target the next `ng_call` passes to `<f>__rs`, -1 none
 const NG_RSMODE = 54;  // function being generated: 0 as written, 1 its `<f>__rs` entry, 2 its allocating wrapper
-const NG_SLOTS = 55;
+const NG_TEMPS = 55;   // (consumer node, slot, HK_*) of live temporaries (L13b)
+const NG_SLOTS = 56;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -3509,7 +3510,68 @@ fn ng_libc_call(c: i64, nr: i64) -> i64 {
     return x_bytes2(b, 15, 5);
 }
 
+// A call, then the frees of the temporaries the plan says die at it (card
+// L13b): each was kept in a frame slot (or its register) since it was
+// made; rax, the call's value, is saved around the frees. A temp-autofree
+// result is kept for its consumer, or freed here when it is a discarded
+// statement.
 fn ng_call(c: i64, n: i64, args: i64) -> i64 {
+    ng_call_body(c, n, args);
+    let b = ncode(c);
+    let temps = ng(c, NG_TEMPS);
+    let mut saved = false;
+    let mut i: i64 = 0;
+    while i < vlen(temps) {
+        if vget(temps, i) == n {
+            if !saved {
+                x_push_rax(b);
+                saved = true;
+            }
+            ng_load(c, vget(temps, i + 1));
+            x_mov_rr(b, 7, 0);
+            ng_call_regs(c, intern(c, hd_free_name(vget(temps, i + 2))), 1);
+            vset(temps, i, -1);
+        }
+        i = i + 3;
+    }
+    if saved {
+        x_pop_rax(b);
+    }
+    while vlen(temps) > 0 && vget(temps, vlen(temps) - 3) == -1 {
+        vtrunc(temps, vlen(temps) - 3);
+    }
+    let consumer = life_temp_of(c, n);
+    if consumer == n {
+        x_mov_rr(b, 7, 0);
+        ng_call_regs(c, intern(c, hd_free_name(life_auto_handle(c, n))), 1);
+        return x_mov_rax_imm(b, 0);
+    }
+    if consumer >= 0 {
+        vpush(temps, consumer);
+        vpush(temps, ng_temp(c));
+        vpush(temps, life_auto_handle(c, n));
+    }
+    return 0;
+}
+
+// True when call `n` has an argument the plan frees right after it.
+fn ng_has_temps(c: i64, n: i64) -> bool {
+    let args = nb(c, n);
+    let mut i: i64 = 0;
+    while i < list_len(c, args) {
+        let mut a = list_at(c, args, i);
+        if nk(c, a) == K_ADDR {
+            a = na(c, a);
+        }
+        if life_temp_of(c, a) == n {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn ng_call_body(c: i64, n: i64, args: i64) -> i64 {
     let b = ncode(c);
     let name = na(c, n);
     let count = list_len(c, args);
@@ -4266,7 +4328,7 @@ fn ng_return(c: i64, n: i64) -> i64 {
     }
     // A tail call frees the heap-autofree locals after its arguments are
     // computed, before the jump (ng_call): none of them may be an argument.
-    if value >= 0 && nk(c, value) == K_CALL && ng(c, NG_RETVAL) == 1 && ng(c, NG_ACC) < 0 && vlen(ng(c, NG_EXITS)) == 0 && !(live && !ng_args_free_ok(c, value, ng_auto_names(c, base))) {
+    if value >= 0 && nk(c, value) == K_CALL && !ng_has_temps(c, value) && ng(c, NG_RETVAL) == 1 && ng(c, NG_ACC) < 0 && vlen(ng(c, NG_EXITS)) == 0 && !(live && !ng_args_free_ok(c, value, ng_auto_names(c, base))) {
         ng_set(c, NG_TAIL, 1);
         ng_set(c, NG_TAILDONE, 0);
         if live {
@@ -4851,6 +4913,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     ng_set(c, NG_NOSTACK, ng_stack_bars(c, ne(c, f), prelude));
     vtrunc(ng(c, NG_AUTO), 0);
     vtrunc(ng(c, NG_AUTOBASE), 0);
+    vtrunc(ng(c, NG_TEMPS), 0);
     ng_set(c, NG_TAILFREE, -1);
     if returns == 1 && !is_main && mode != 2 && ng_find_acc(c, f, ne(c, f)) {
         let acc = ng_slot(c);
@@ -5117,6 +5180,7 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_PIN, vnew());
     ng_set(c, NG_AUTO, vnew());
     ng_set(c, NG_AUTOBASE, vnew());
+    ng_set(c, NG_TEMPS, vnew());
     ng_set(c, NG_TAILFREE, -1);
     ng_set(c, NG_RS, -1);
     ng_set(c, NG_RSARG, -1);

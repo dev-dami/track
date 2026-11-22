@@ -1,0 +1,13 @@
+// L13b: a fresh result used as a statement is discarded, so it is freed
+// right after the call returns.
+fn main() -> void {
+    let a: Str = str_concat("x", "y");
+    let mut i: i64 = 0;
+    while i < 5000 {
+        str_concat(&a, &int_to_str(i));
+        int_to_str(i);
+        i = i + 1;
+    }
+    print(&a);
+    print(sys_get_memory_used());
+}
