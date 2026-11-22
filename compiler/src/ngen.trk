@@ -66,7 +66,9 @@ const NG_PIN = 41;     // (slot, register) pairs: slots pinned to a caller-saved
 const NG_ACCBODY = 42; // accumulator loop: code position after its guard (-1)
 const NG_ACCRET = 43;  // accumulator loop: guard jumps waiting for the loop's exit code (-1)
 const NG_STRLEN = 44;  // (string slot, length slot) pairs hoisted by enclosing store-free loops
-const NG_SLOTS = 45;
+const NG_CHOIST = 45;  // (handle slot, data slot, length slot) triples hoisted by enclosing loops
+const NG_PUREC = 46;   // ng_pure also accepts collection get/set/len (header-preserving)
+const NG_SLOTS = 47;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -1405,6 +1407,10 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         return true;
     }
     if count == 2 && text_eq(text, "track_i64_collection_get") {
+        let h = ng_coll_hoisted(c, list_at(c, args, 0));
+        if h >= 0 {
+            return ng_coll_fast(c, h, list_at(c, args, 1), -1);
+        }
         ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
         let z = vnew();
         x_test_rax(b);
@@ -1416,6 +1422,10 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         return ng_cold_back(c, z, 0, -1, x_here(b)) >= 0;
     }
     if count == 3 && text_eq(text, "track_i64_collection_set") {
+        let h = ng_coll_hoisted(c, list_at(c, args, 0));
+        if h >= 0 {
+            return ng_coll_fast(c, h, list_at(c, args, 1), list_at(c, args, 2));
+        }
         let v = list_at(c, args, 2);
         let vk = ng_opnd(c, v);
         let vv = ng(c, NG_OPV);
@@ -1441,6 +1451,10 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         x_rmx(b, 0, 137, 2, 0, 1, 3, 0); // mov [rax + rcx*8], rdx
         x_mov_ri(b, 0, 1);
         return ng_cold_back(c, z, 0, -1, x_here(b)) >= 0;
+    }
+    if count == 1 && text_eq(text, "track_i64_collection_len") && ng_coll_hoisted(c, list_at(c, args, 0)) >= 0 {
+        let h = ng_coll_hoisted(c, list_at(c, args, 0));
+        return ng_load_to(c, vget(ng(c, NG_CHOIST), h + 2), 0) >= 0;
     }
     if count == 1 && (text_eq(text, "track_i64_collection_len") || text_eq(text, "array_len")) {
         ng_gen(c, list_at(c, args, 0));
@@ -1718,6 +1732,10 @@ fn ng_pure(c: i64, n: i64, depth: i64) -> bool {
         if text_eq(t, "str_char_at") || text_eq(t, "str_len") {
             return true;
         }
+        if ng(c, NG_PUREC) == 1 && (text_eq(t, "track_i64_collection_get")
+            || text_eq(t, "track_i64_collection_set") || text_eq(t, "track_i64_collection_len")) {
+            return true;
+        }
         let f = ng_call_target(c, n);
         if f < 0 || depth <= 0 || nk(c, f) != K_FN {
             return false;
@@ -1862,6 +1880,240 @@ fn ng_hoist_strlen(c: i64, n: i64) -> i64 {
         i = i + 1;
     }
     return pushed;
+}
+
+// Slots of local handles passed to collection get/set/len in `n` (into `out`, once).
+fn ng_coll_handles(c: i64, n: i64, out: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_CALL {
+        let args = nb(c, n);
+        let t = name_text(c, na(c, n));
+        if list_len(c, args) >= 1 && (text_eq(t, "track_i64_collection_get")
+            || text_eq(t, "track_i64_collection_set") || text_eq(t, "track_i64_collection_len")) {
+            let a = list_at(c, args, 0);
+            if nk(c, a) == K_VAR {
+                let ks = ni(c, na(c, a), NI_CVAR);
+                let mut seen = ks < 0;
+                let mut i: i64 = 0;
+                while i < vlen(out) {
+                    if vget(out, i) == ks {
+                        seen = true;
+                    }
+                    i = i + 1;
+                }
+                if !seen {
+                    vpush(out, ks);
+                }
+            }
+        }
+        return ng_coll_handles_list(c, args, out);
+    }
+    if k == K_BIN {
+        ng_coll_handles(c, nb(c, n), out);
+        return ng_coll_handles(c, nc(c, n), out);
+    }
+    if k == K_UN || k == K_ASSIGN {
+        return ng_coll_handles(c, nb(c, n), out);
+    }
+    if k == K_LET {
+        return ng_coll_handles(c, nd(c, n), out);
+    }
+    if k == K_RETURN {
+        return ng_coll_handles(c, na(c, n), out);
+    }
+    if k == K_IF {
+        ng_coll_handles(c, na(c, n), out);
+        ng_coll_handles_list(c, nb(c, n), out);
+        return ng_coll_handles_list(c, nc(c, n), out);
+    }
+    if k == K_WHILE {
+        ng_coll_handles(c, na(c, n), out);
+        return ng_coll_handles_list(c, nb(c, n), out);
+    }
+    return 0;
+}
+
+fn ng_coll_handles_list(c: i64, l: i64, out: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        ng_coll_handles(c, list_at(c, l, i), out);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Before a while loop that cannot change any collection header (only
+// ng_pure code plus collection get/set/len: no push, pop, truncate, other
+// calls or raw stores), the data pointer and length of each never-reassigned
+// local handle it indexes go in fresh slots (0, 0 for a null handle), so
+// get/set become an unsigned bounds test and a load or store. A second name
+// for the same collection cannot change the header either: every operation
+// that could is rejected. Returns the number of NG_CHOIST entries pushed.
+fn ng_hoist_coll(c: i64, n: i64) -> i64 {
+    let body = nb(c, n);
+    ng_set(c, NG_PUREC, 1);
+    let pure = ng_pure(c, na(c, n), 2) && ng_pure_list(c, body, 2);
+    ng_set(c, NG_PUREC, 0);
+    if !pure {
+        return 0;
+    }
+    let hs = vnew();
+    ng_coll_handles(c, na(c, n), hs);
+    ng_coll_handles_list(c, body, hs);
+    if vlen(hs) == 0 {
+        return 0;
+    }
+    let assigned = vnew();
+    if !ng_scan_assigns(c, body, assigned) {
+        return 0;
+    }
+    let declared = vnew();
+    ng_let_names(c, body, declared);
+    let b = ncode(c);
+    let v = ng(c, NG_CHOIST);
+    let mut pushed: i64 = 0;
+    let mut i: i64 = 0;
+    while i < vlen(hs) && pushed < 2 {
+        let ks = vget(hs, i);
+        let mut ok = true;
+        let mut j: i64 = 0;
+        while j < vlen(v) {
+            if vget(v, j) == ks {
+                ok = false;
+            }
+            j = j + 3;
+        }
+        let mut q: i64 = 0;
+        while q < vlen(assigned) {
+            if ni(c, vget(assigned, q), NI_CVAR) == ks {
+                ok = false;
+            }
+            q = q + 1;
+        }
+        let mut d: i64 = 0;
+        while d < vlen(declared) {
+            if ni(c, vget(declared, d), NI_CVAR) == ks {
+                ok = false;
+            }
+            d = d + 1;
+        }
+        if ok {
+            ng_load_to(c, ks, 0);
+            x_mov_rr(b, 1, 0);
+            x_test_rax(b);
+            let null = x_jcc(b, 4);              // null: data = len = 0
+            x_rm(b, 139, 1, 0, 8);               // mov rcx, [rax + 8]
+            x_rm(b, 139, 0, 0, 0);               // mov rax, [rax]
+            x_patch_here(b, null);
+            let kd = ng_slot(c);
+            ng_store_from(c, kd, 0);
+            let kl = ng_slot(c);
+            ng_store_from(c, kl, 1);
+            vpush(v, ks);
+            vpush(v, kd);
+            vpush(v, kl);
+            pushed = pushed + 1;
+        }
+        i = i + 1;
+    }
+    return pushed;
+}
+
+// Index into NG_CHOIST of the triple for handle `hn`, or -1.
+fn ng_coll_hoisted(c: i64, hn: i64) -> i64 {
+    if nk(c, hn) != K_VAR {
+        return -1;
+    }
+    let k = ni(c, na(c, hn), NI_CVAR);
+    if k < 0 {
+        return -1;
+    }
+    let v = ng(c, NG_CHOIST);
+    let mut i: i64 = 0;
+    while i < vlen(v) {
+        if vget(v, i) == k {
+            return i;
+        }
+        i = i + 3;
+    }
+    return -1;
+}
+
+// collection get/set through hoisted data/length slots. Index in a
+// register (its own, or rcx), value (set) in rdx; out of range (a cold
+// stub) gives 0 and stores nothing, as the runtime does.
+fn ng_coll_fast(c: i64, h: i64, ix: i64, val: i64) -> bool {
+    let b = ncode(c);
+    let v = ng(c, NG_CHOIST);
+    let kd = vget(v, h + 1);
+    let kl = vget(v, h + 2);
+    let ik = ng_opnd(c, ix);
+    let iv = ng(c, NG_OPV);
+    let mut ri: i64 = 1;
+    if val >= 0 {
+        let vk = ng_opnd(c, val);
+        let vv = ng(c, NG_OPV);
+        if vk > 0 {
+            if ik == 2 && ng_reg(c, iv) >= 0 {
+                ri = ng_reg(c, iv);
+            } else if ik > 0 {
+                ng_opnd_to(c, ik, iv, 1);
+            } else {
+                ng_gen(c, ix);
+                x_mov_rr(b, 1, 0);
+            }
+            ng_opnd_to(c, vk, vv, 2);
+        } else if ik > 0 {
+            ng_gen(c, val);
+            x_mov_rr(b, 2, 0);
+            if ik == 2 && ng_reg(c, iv) >= 0 {
+                ri = ng_reg(c, iv);
+            } else {
+                ng_opnd_to(c, ik, iv, 1);
+            }
+        } else {
+            ng_gen(c, ix);
+            x_push_rax(b);
+            ng_gen(c, val);
+            x_mov_rr(b, 2, 0);
+            x_pop_r(b, 1);
+        }
+    } else if ik == 2 && ng_reg(c, iv) >= 0 {
+        ri = ng_reg(c, iv);
+    } else if ik > 0 {
+        ng_opnd_to(c, ik, iv, 1);
+    } else {
+        ng_gen(c, ix);
+        x_mov_rr(b, 1, 0);
+    }
+    let lr = ng_reg(c, kl);
+    if lr >= 0 {
+        x_rr(b, 57, ri, lr);                     // cmp i, len
+    } else {
+        x_rm(b, 59, ri, 5, ng_disp(c, kl));      // cmp i, [len]
+    }
+    let out = x_jcc(b, 3);                       // jae: out of range (or < 0)
+    let mut dr = ng_reg(c, kd);
+    if val >= 0 {
+        if dr < 0 {
+            x_rm(b, 139, 0, 5, ng_disp(c, kd));
+            dr = 0;
+        }
+        x_rmx(b, 0, 137, 2, dr, ri, 3, 0);       // mov [data + i*8], rdx
+        x_mov_ri(b, 0, 1);
+    } else {
+        if dr < 0 {
+            x_rm(b, 139, 2, 5, ng_disp(c, kd));
+            dr = 2;
+        }
+        x_rmx(b, 0, 139, 0, dr, ri, 3, 0);       // mov rax, [data + i*8]
+    }
+    let z = vnew();
+    vpush(z, out);
+    return ng_cold_back(c, z, 0, -1, x_here(b)) >= 0;
 }
 
 // Names declared by `let` anywhere in statement list `l`.
@@ -2381,6 +2633,25 @@ fn ng_binop(c: i64, n: i64) -> i64 {
     if lk > 0 && (op == OP_ADD || op == OP_MUL || op == OP_BAND || op == OP_BOR) {
         ng_gen(c, r);
         return ng_op_apply(c, op, 0, lk, lv);
+    }
+    if (op == OP_ADD || op == OP_SUB || op == OP_BAND || op == OP_BOR) && nk(c, r) == K_INDEX
+        && ng_safe_index(c, na(c, r), nb(c, r)) >= 0 && ng_opnd(c, na(c, r)) == 2 {
+        let av = ng(c, NG_OPV);
+        if ng_opnd(c, nb(c, r)) == 2 {
+            // rax op= a[i] from memory, array and index in registers
+            let iv = ng(c, NG_OPV);
+            ng_gen(c, l);
+            let ra = ng_reg(c, av);
+            let ri = ng_reg(c, iv);
+            if ra >= 0 && ri >= 0 {
+                return x_rmx(b, 0, ng_op_rm(op), 0, ra, ri, 3, 8);
+            }
+            x_push_rax(b);
+            ng_index_direct(c, na(c, r), nb(c, r), false);
+            x_mov_rcx_rax(b);
+            x_pop_rax(b);
+            return ng_op_rcx(c, op);
+        }
     }
     ng_gen2(c, l, r);
     return ng_op_rcx(c, op);
@@ -3075,6 +3346,7 @@ fn ng_latch_if(c: i64, body: i64) -> i64 {
 fn ng_while(c: i64, n: i64) -> i64 {
     let b = ncode(c);
     let hoisted = ng_hoist_strlen(c, n);
+    let choisted = ng_hoist_coll(c, n);
     let body = nb(c, n);
     let t = ng_latch_if(c, body);
     ng_loop_enter(c);
@@ -3136,6 +3408,7 @@ fn ng_while(c: i64, n: i64) -> i64 {
     }
     ng_loop_leave(c);
     vtrunc(ng(c, NG_STRLEN), vlen(ng(c, NG_STRLEN)) - 2 * hoisted);
+    vtrunc(ng(c, NG_CHOIST), vlen(ng(c, NG_CHOIST)) - 3 * choisted);
     return x_mov_rax_imm(b, 0);
 }
 
@@ -3672,12 +3945,17 @@ fn ng_epilogue(c: i64) -> i64 {
 fn ng_unframe(c: i64) -> i64 {
     let b = ncode(c);
     let saved = ng(c, NG_SAVED);
-    let mut i: i64 = 0;
-    while i < vlen(saved) {
-        x_rm(b, 139, vget(saved, i), 5, 0 - 8 * (i + 1));
-        i = i + 1;
+    let n = vlen(saved);
+    if n == 0 {
+        return x_byte(b, 201); // leave
     }
-    return x_byte(b, 201); // leave
+    x_rm(b, 141, 4, 5, 0 - 8 * n); // lea rsp, [rbp - 8n]
+    let mut i = n - 1;
+    while i >= 0 {
+        x_pop_r(b, vget(saved, i));
+        i = i - 1;
+    }
+    return x_pop_r(b, 5); // pop rbp
 }
 
 // Tear down the frame for a tail call whose `nargs` (> 6, else 0) stack
@@ -3791,12 +4069,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     let mut frame: i64 = -1;
     let saved = ng(c, NG_SAVED);
     if ng(c, NG_FRAMELESS) == 0 {
-        frame = x_prologue(b);
-        let mut s: i64 = 0;
-        while s < vlen(saved) {
-            x_rm(b, 137, vget(saved, s), 5, 0 - 8 * (s + 1));
-            s = s + 1;
-        }
+        frame = x_prologue(b, saved);
     }
     let mark = ng_scope_begin(c);
     let pass = ng(c, NG_PASS);
@@ -3873,7 +4146,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
         return 0;
     }
     let size = ((locals + vlen(saved)) * 8 + 15) / 16 * 16;
-    return x_patch32(b, frame, size);
+    return x_patch32(b, frame, size - 8 * vlen(saved));
 }
 
 const NG_CALLEE_SAVED = 7;
@@ -4085,6 +4358,7 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_ACCBODY, -1);
     ng_set(c, NG_ACCRET, -1);
     ng_set(c, NG_STRLEN, vnew());
+    ng_set(c, NG_CHOIST, vnew());
     ng_set(c, NG_ASSIGNED, -1);
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_PASS, 2);

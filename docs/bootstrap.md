@@ -135,7 +135,8 @@ compiler, assembler or linker runs.
 Every expression leaves its value in `rax` (`rcx`, `rdx` are scratch);
 operands wait on the machine stack; locals and temporaries are
 `rbp`-relative slots, the busiest ones (weighted by loop depth) in
-`rbx`, `r12`-`r15`, `r8`, `r9`, which a function saves when it uses them.
+`rbx`, `r12`-`r15`, `r8`, `r9`, which a function pushes after `rbp` and
+pops before returning when it uses them.
 Functions of at most six parameters take them in `rdi`, `rsi`, `r10`,
 `r11`, `rdx`, `rcx`; with more, the caller pushes the arguments left to
 right, the callee reads argument `i` of `n` at `[rbp + 16 + 8(n-1-i)]` and
@@ -161,7 +162,11 @@ SSE2 scan of aligned 16-byte windows that touches only `rax`, `rcx`,
 assignments, `str_char_at`, `str_len` and calls of functions that qualify)
 the length of each never-reassigned local string it indexes is computed
 once before the loop, and each call is an unsigned bounds test and a byte
-load. `x * (2^k -+ 1) +- y` is a shift and two adds with the `y -+ x`
+load. Likewise, in a loop made only of such code plus collection get, set
+and len, each never-reassigned, never-redeclared local handle has its data
+pointer and length loaded once before the loop, and each access is one
+unsigned bounds compare and a load or store (out of range: a cold stub
+giving 0). `x * (2^k -+ 1) +- y` is a shift and two adds with the `y -+ x`
 side independent of the shift. Indexes of a never-reassigned array literal by `x & C`
 with `C` below its length skip the null and bounds checks. A `while` body that ends in
 an else-less `if` (then only assignments and calls that use none of the
@@ -171,7 +176,9 @@ jumps, so an iteration takes one taken branch whether or not the `if` body
 runs. The failure and slow paths of the inline collection get, set and
 push are stubs after the function that jump back, so the fast path falls
 through. `(x & C) == 0` is one `test`; an in-bounds element store whose
-value is unused needs no temporary; `n % d` by a constant adds the sign
+value is unused needs no temporary; `y + a[i]` (also `-`, `&`, `|`) with an
+in-bounds index and `a`, `i` in registers reads the element as a memory
+operand; `n % d` by a constant adds the sign
 fix-up `s & -d` to `n` beside the quotient multiply instead of after it. `syscall6`, `load64`, `store64`, `load8`,
 `store8` compile to instructions, as do the libc names `elf.trk` uses
 (`open64`, `write`, `fchmod`, `close`, `memset`) so that the Rust
