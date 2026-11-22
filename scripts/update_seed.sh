@@ -3,17 +3,17 @@
 #
 # The seed is the C that trackc emits for compiler/src/main.trk at its fixed
 # point (trackc.c) plus the C runtime it writes beside it (trackc.rt.c).
-# scripts/bootstrap.sh builds it with plain cc, so Track bootstraps with no
-# Rust toolchain.
+# scripts/bootstrap.sh builds it with plain cc, so Track bootstraps from a C
+# compiler alone.
 #
 #   scripts/update_seed.sh          # rewrite bootstrap/seed/
 #   scripts/update_seed.sh --check  # fail if bootstrap/seed/ is out of date
 #
 # The fixed point comes from scripts/bootstrap.sh --no-native (stage3, built
 # from the current seed) unless TRACKC names a working trackc. If a change
-# to compiler/src is beyond what the old seed can compile, use
-# TRACKC=build/bootstrap/stage3/trackc from `scripts/bootstrap.sh
-# --from-rust`, or any other trackc. Scratch goes to $BOOTSTRAP_DIR
+# to compiler/src is beyond what the old seed can compile, build it in steps:
+# point TRACKC at a trackc built from an intermediate compiler/src that the
+# old seed can compile (e.g. an earlier commit's stage3). Scratch goes to $BOOTSTRAP_DIR
 # (default build/bootstrap).
 set -eu
 

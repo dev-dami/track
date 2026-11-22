@@ -1,6 +1,6 @@
 #!/bin/sh
 # Native-race scoreboard: user-mode cycles of each bench/progs program built
-# three ways (trackc --native, trackc via C/gcc -O2, the Rust compiler), with
+# two ways (trackc --native, trackc via C/gcc -O2), with
 # output checked identical, plus native self-compile time. A second table adds wall ms, page faults and
 # user-vs-total (user+kernel) cycles so never-freed heap cost is visible.
 # Usage: bench/native.sh [trackc]   (default $BOOTSTRAP_DIR/stage3/trackc, else build/bootstrap/stage3/trackc)
@@ -9,9 +9,6 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
 T=${1:-${BOOTSTRAP_DIR:-build/bootstrap}/stage3/trackc}
 case "$T" in /*) ;; *) T="$root/$T" ;; esac
-R=${RUST_TRACK:-${CARGO_TARGET_DIR:-$root/target}/release/track}
-# A fresh worktree has no target/: build the Rust compiler like bootstrap.sh does.
-[ -x "$R" ] || [ -n "${RUST_TRACK:-}" ] || (cd "$root" && cargo build --release --quiet)
 runs=${RACE_RUNS:-3}
 o=$(mktemp -d); trap 'rm -rf "$o"' EXIT
 fail=0
@@ -40,19 +37,18 @@ probe() {
             printf "%s%s", x[int((n + 1) / 2)], (k < 4 ? " " : "\n") } }'
 }
 rows=
-printf '%-11s %9s %9s %9s %8s %8s\n' prog native C rust "nat/C" "nat/rust"
+printf '%-11s %9s %9s %8s\n' prog native C "nat/C"
 for f in bench/progs/*.trk; do
   n=$(basename "$f" .trk)
   "$T" build --native "$f" -o "$o/$n.nat" >/dev/null 2>&1 || { echo "$n: native build failed"; fail=1; continue; }
   "$T" build "$f" -o "$o/$n.c" >/dev/null 2>&1 || { echo "$n: C build failed"; fail=1; continue; }
-  (cd "$o" && "$R" build "$root/$f" >/dev/null 2>&1 && mv "$n" "$n.rs") || { echo "$n: rust build failed"; fail=1; continue; }
-  a=$("$o/$n.nat" 2>&1; echo "rc=$?"); b=$("$o/$n.c" 2>&1; echo "rc=$?"); c=$("$o/$n.rs" 2>&1; echo "rc=$?")
-  if [ "$a" != "$b" ] || [ "$a" != "$c" ]; then echo "$n: OUTPUT MISMATCH"; fail=1; continue; fi
-  cn=$(cyc "$o/$n.nat"); cc=$(cyc "$o/$n.c"); cr=$(cyc "$o/$n.rs")
-  printf '%-11s %8sM %8sM %8sM %8s %8s\n' "$n" "$cn" "$cc" "$cr" \
-    "$(awk "BEGIN{printf \"%.2f\", $cn/$cc}")" "$(awk "BEGIN{printf \"%.2f\", $cn/$cr}")"
-  for k in native C rust; do
-    case $k in native) b=nat ;; C) b=c ;; rust) b=rs ;; esac
+  a=$("$o/$n.nat" 2>&1; echo "rc=$?"); b=$("$o/$n.c" 2>&1; echo "rc=$?")
+  if [ "$a" != "$b" ]; then echo "$n: OUTPUT MISMATCH"; fail=1; continue; fi
+  cn=$(cyc "$o/$n.nat"); cc=$(cyc "$o/$n.c")
+  printf '%-11s %8sM %8sM %8s\n' "$n" "$cn" "$cc" \
+    "$(awk "BEGIN{printf \"%.2f\", $cn/$cc}")"
+  for k in native C; do
+    case $k in native) b=nat ;; C) b=c ;; esac
     rows="$rows$(printf '%-11s %-7s %s' "$n" "$k" "$(probe "$o/$n.$b")")
 "
   done
