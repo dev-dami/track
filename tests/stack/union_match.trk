@@ -1,0 +1,28 @@
+// L8: a payload-union literal that is only matched lives in a stack slot;
+// the arms read its payload off the slot.
+union Shape {
+    Circle(i64),
+    Square(i64),
+    Dot(bool),
+}
+
+fn main() -> void {
+    let mut area: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 30 {
+        let s = Shape::Circle(i);
+        match s {
+            Shape::Circle(r) => area = area + 3 * r * r,
+            Shape::Square(w) => area = area + w * w,
+            Shape::Dot(b) => area = area + 1,
+        }
+        let t = Shape::Square(i % 4);
+        match t {
+            Shape::Circle(r) => area = area - r,
+            Shape::Square(w) => area = area + w * w,
+            Shape::Dot(b) => area = area - 1,
+        }
+        i = i + 1;
+    }
+    print(area);
+}

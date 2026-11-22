@@ -2670,13 +2670,20 @@ fn life_warnings(c: i64) -> i64 {
 // The placement plan (docs/lifecycles.md §1.5, §3.1): for every
 // allocation site (tuple, struct, array or payload-union literal, and a
 // call whose result is exactly `fresh`) a PLACE and an ENDS point. Both
-// backends read it; neither re-derives it. Nothing here changes code yet:
-// cgen reads only the tuple decisions, which are K2's rule unchanged.
-//   stack          life ends in this frame. Literals only, by K2's rule: a
-//                  `let x = lit` block statement whose `x` is afterwards
-//                  only indexed, destructured, matched without binding the
-//                  whole value, or reassigned; and `x = (..)` reassigning
-//                  such an `x`.
+// backends read it; neither re-derives it. cgen reads the stack decisions
+// (L8); the other places change no code yet.
+//   stack          life ends in this frame. Literals only, in a `let x =
+//                  lit` block statement with a statement after it. Tuples
+//                  by K2's rule: `x` is afterwards only indexed,
+//                  destructured, matched without binding the whole value,
+//                  or reassigned; and `x = (..)` reassigning such an `x`.
+//                  Struct, array and payload-union literals by the
+//                  heap-autofree rule below plus element reads and writes
+//                  (`x[i]`, `x[i] = v`), when the cell fits the stack cap
+//                  (PL_CELL_MAX words, PL_FRAME_MAX words per function).
+//                  Field writes go through the slot. A return, a store, a
+//                  copy, `&x` kept anywhere, or a call whose parameter
+//                  escapes or returns it keeps `x` off the stack.
 //   ret-slot       the literal is returned directly and the function's
 //                  result origin is exactly `fresh` with a fixed-size type.
 //   heap-autofree  `let x = site` where `x` may also be read through its
@@ -2701,7 +2708,12 @@ const PS_FLAG = 0;  // by name: ENDS pos + 1 when bound to a stack-tuple local, 
 const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
 const PS_FN = 2;    // function being walked (-1 for top-level statements)
 const PS_RET = 3;   // 1 when its literal returns can use the caller's slot
-const PS_WIDTH = 4;
+const PS_WORDS = 4; // words of struct/array/union stack cells planned in this function
+const PS_WIDTH = 5;
+
+// Stack cap (§3.1): at most 32 words per cell and 4 KiB of cells per frame.
+const PL_CELL_MAX = 32;
+const PL_FRAME_MAX = 512;
 
 fn life_place_of(c: i64, n: i64) -> i64 {
     let table = ck(c, CK_LIFE);
@@ -2882,6 +2894,10 @@ fn pl_use_ok(c: i64, n: i64, name: i64, refined: bool) -> bool {
             return true;
         }
         return pl_use_ok(c, na(c, n), name, refined);
+    }
+    if k == K_INDEX && refined && pl_is_name(c, na(c, n), name) {
+        // Element read or (as an assignment target) write: the cell stays put.
+        return pl_use_ok(c, nb(c, n), name, refined);
     }
     if k == K_INDEX || k == K_RANGE { return pl_use_ok(c, na(c, n), name, refined) && pl_use_ok(c, nb(c, n), name, refined); }
     if k == K_SLICE { return pl_use_ok(c, na(c, n), name, refined) && pl_use_opt(c, nb(c, n), name, refined) && pl_use_opt(c, nc(c, n), name, refined); }
@@ -3071,6 +3087,33 @@ fn pl_walk_list(c: i64, p: i64, l: i64, from: i64, step: i64) -> i64 {
     return 0;
 }
 
+// Words of the cell a struct, array or payload-union literal builds, or
+// -1 when cgen cannot size it statically.
+fn pl_cell_words(c: i64, v: i64) -> i64 {
+    let k = nk(c, v);
+    if k == K_SINIT {
+        let decl = struct_def(c, na(c, v));
+        if decl < 0 {
+            return -1;
+        }
+        return 1 + list_len(c, nb(c, decl)) / 2;
+    }
+    if k == K_ARRAY || k == K_TUPLE {
+        return 1 + list_len(c, na(c, v));
+    }
+    if k == K_CALL {
+        return 1 + list_len(c, nb(c, v));
+    }
+    return -1;
+}
+
+// True when the cell of literal `v` fits the stack cap (§3.1) in what is
+// left of this function's frame budget.
+fn pl_cell_fits(c: i64, p: i64, v: i64) -> bool {
+    let words = pl_cell_words(c, v);
+    return words > 0 && words <= PL_CELL_MAX && vget(p, PS_WORDS) + words <= PL_FRAME_MAX;
+}
+
 // Plan for `let name = v`, statement `i` of `body` (body < 0: not a block
 // statement cgen's `gen_block` emits, so never stack). Returns the flag
 // `name` is bound with.
@@ -3081,8 +3124,11 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
         return 0;
     }
     let mut place = PL_HEAP;
-    if body >= 0 && kind != 5 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, false) {
+    if body >= 0 && kind == 1 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, false) {
         place = PL_STACK;
+    } else if body >= 0 && kind >= 2 && kind <= 4 && i + 1 < list_len(c, body) && pl_cell_fits(c, p, v) && pl_rest_ok(c, body, i + 1, name, true) {
+        place = PL_STACK;
+        vset(p, PS_WORDS, vget(p, PS_WORDS) + pl_cell_words(c, v));
     } else if body >= 0 && pl_rest_ok(c, body, i + 1, name, true) {
         place = PL_AUTO;
     }
@@ -3261,6 +3307,7 @@ fn pl_parts(c: i64, p: i64, n: i64) -> i64 {
 fn pl_function(c: i64, p: i64, f: i64, prelude: i64) -> i64 {
     vset(p, PS_FN, f);
     vset(p, PS_RET, 0);
+    vset(p, PS_WORDS, 0);
     let at = life_summary(c, na(c, f));
     if nk(c, f) == K_FN && at >= 0 && pl_fixed_size(c, nd(c, f)) {
         if vget(life_records(c), at + LR_RES) == O_FRESH {

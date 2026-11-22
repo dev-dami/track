@@ -1,7 +1,7 @@
 #!/bin/sh
 # Track builds Track from .trk alone.
 #
-#   seed     any trackc (default: the bootstrap's stage3, built once via
+#   seed     any trackc (default: the bootstrap's stage3 under $BOOTSTRAP_DIR, built once via
 #            scripts/bootstrap.sh) compiles compiler/src/main.trk with
 #            --native -> n1. This is the only step that uses a prior binary.
 #   n1..n4   each native trackc compiles compiler/src/main.trk --native
@@ -14,13 +14,14 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
-seed=${1:-build/bootstrap/stage3/trackc}
+bs=${BOOTSTRAP_DIR:-build/bootstrap}
+seed=${1:-$bs/stage3/trackc}
 out=${SELFHOST_DIR:-"$root/build/selfhost"}
 
 if [ ! -x "$seed" ]; then
     echo "==> no seed trackc at $seed; running scripts/bootstrap.sh once"
     scripts/bootstrap.sh >/dev/null
-    seed=build/bootstrap/stage3/trackc
+    seed=$bs/stage3/trackc
 fi
 
 rm -rf "$out"

@@ -1,0 +1,11 @@
+fn make
+  L8 struct heap ends -
+fn boxed
+  L17 struct heap ends -
+  L18 struct heap ends -
+fn main
+  L26 call heap-autofree ends L31
+  L27 struct heap ends -
+  L29 array stack ends L31
+  L29 struct heap ends -
+  L30 call heap-autofree ends L31

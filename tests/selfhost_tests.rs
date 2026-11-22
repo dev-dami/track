@@ -1410,3 +1410,95 @@ fn life_place_dumps_match_goldens() {
         );
     }
 }
+
+/// Stack cells in the C backend (card L8, docs/lifecycles.md §3.2):
+/// every program in tests/stack/ builds, prints its `<stem>.out`, and
+/// plans as its `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them).
+/// The asserts name the rule each placement line checks, and the emitted
+/// C of the stack programs holds their literals in `tk_w sN[k]` slots.
+#[test]
+fn stack_cells_run_and_plan() {
+    let root = repo();
+    let update = env::var("UPDATE_LIFE").is_ok();
+    let dir = scratch("stack");
+    let mut plans = String::new();
+    for stem in ["escapes", "mutate", "read_only", "union_match"] {
+        let rel = format!("tests/stack/{}.trk", stem);
+        let exe = dir.join(stem);
+        let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
+        assert!(
+            out.status.success(),
+            "{}: build failed: {}",
+            rel,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let want = fs::read_to_string(root.join(format!("tests/stack/{}.out", stem))).unwrap();
+        assert_eq!(run_exe(&exe), (want, Some(0)), "{}: output differs", rel);
+        let c = fs::read_to_string(exe.with_extension("c")).unwrap();
+        if stem != "escapes" {
+            assert!(
+                c.contains("tk_w s0["),
+                "{}: no stack slot in emitted C",
+                rel
+            );
+        }
+        let plan = run_trackc(&["life", "--place", &rel], &root);
+        let got = String::from_utf8_lossy(&plan.stdout).into_owned();
+        let golden = root.join(format!("tests/stack/{}.place", stem));
+        if update {
+            fs::write(&golden, &got).unwrap();
+        }
+        let want = fs::read_to_string(&golden)
+            .unwrap_or_else(|_| panic!("missing golden {}", golden.display()));
+        assert_eq!(got, want, "{}: placement plan differs", rel);
+        plans.push_str(&format!("{}:\n{}", stem, got));
+    }
+    for (line, why) in [
+        (
+            "L23 struct stack ends L25",
+            "a struct only lent to a reading callee is stack",
+        ),
+        (
+            "L24 struct stack ends L25",
+            "a struct only read through its fields is stack",
+        ),
+        (
+            "L29 array stack ends L31",
+            "an array only indexed and lent is stack",
+        ),
+        ("L8 struct heap ends -", "a returned struct is heap"),
+        (
+            "L17 struct heap ends -",
+            "a struct stored into another literal is heap",
+        ),
+        (
+            "L27 struct heap ends -",
+            "a struct passed to a `ret` parameter is heap",
+        ),
+        (
+            "L29 struct heap ends -",
+            "a struct inside an array literal is heap",
+        ),
+        (
+            "L17 struct stack ends L23",
+            "a struct mutated through the slot is stack",
+        ),
+        (
+            "L21 array stack ends L24",
+            "an array written by index is stack",
+        ),
+        (
+            "L13 union stack ends L14",
+            "a payload union only matched is stack",
+        ),
+    ] {
+        assert!(
+            plans.contains(line),
+            "{}: missing `{}` in\n{}",
+            why,
+            line,
+            plans
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
