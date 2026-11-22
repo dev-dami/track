@@ -1,0 +1,7 @@
+# imports resolve as `trackc check` resolves them; errors in an imported file name that file
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}
+{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///nowhere/main.trk","languageId":"track","version":1,"text":"import \"helper\";\nfn main() -> i64 {\n    return helper_value();\n}\n"}}}
+{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///nowhere/main.trk","version":2},"contentChanges":[{"text":"import \"broken_helper\";\nfn main() -> i64 {\n    return 0;\n}\n"}]}}
+{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///nowhere/main.trk","version":3},"contentChanges":[{"text":"import \"missing_module\";\nfn main() -> i64 {\n    return 0;\n}\n"}]}}
+{"jsonrpc":"2.0","id":2,"method":"shutdown"}
+{"jsonrpc":"2.0","method":"exit"}

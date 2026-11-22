@@ -1,0 +1,4 @@
+// imported by imports.in
+fn helper_value() -> i64 {
+    return 7;
+}
