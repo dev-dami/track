@@ -549,6 +549,16 @@ fn const_divrem_traps_are_e0200_in_both_checkers() {
             None,
         ),
         (
+            "div_variant_zero",
+            "enum E { Z, O } const Q = 7 / E::Z;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "div_variant_ok",
+            "enum E { Z, O } const Q = 7 / E::O;".to_string(),
+            None,
+        ),
+        (
             "enum_named_cmp_zero",
             "const Z = 2 < 1; enum E { A = 7 / Z } const Q = 1;".to_string(),
             Some("division by zero"),
