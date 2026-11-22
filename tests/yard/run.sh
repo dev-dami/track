@@ -175,6 +175,72 @@ in_dir "$P" "$Y" build 2>/dev/null | sed -n 's/^  Using dependency: \([a-z]*\) .
 check "alpha middle zebra" test "$(cat "$WORK/ord.out")" = "alpha middle zebra "
 finish
 
+# --- every module is linked, as the Rust yard linked every object ---------
+# main calls a function from another module without importing it.
+begin implicit_module_link
+P="$WORK/imp/app"
+mkdir -p "$WORK/imp"
+check "init" "$Y" init "$P"
+echo 'fn helper(x: i32) -> i32 { return x+1; }' >"$P/src/h.trk"
+echo 'fn main() -> void { print(helper(2)); }' >"$P/src/main.trk"
+check "check" in_dir "$P" "$Y" check
+check "build" in_dir "$P" "$Y" build
+check "executable prints 3" test "$("$P/target/app" 2>/dev/null)" = 3
+check "run prints 3" test "$(in_dir "$P" "$Y" run 2>/dev/null | tail -n 1)" = 3
+finish
+
+# Nested modules, and a module both imported explicitly (by main and by a
+# nested module) and present implicitly: each module is defined once.
+begin nested_and_explicit_imports_link_once
+P="$WORK/nest"
+mkdir -p "$P/src/left" "$P/src/util/deep"
+printf '[package]\nname = "nest"\nversion = "0.1.0"\n' >"$P/Track.toml"
+echo 'fn helper(x: i32) -> i32 { return x+1; }' >"$P/src/h.trk"
+printf 'import "h";\nfn left_value() -> i32 { return helper(10); }\n' >"$P/src/left/a.trk"
+echo 'fn deep_value() -> i32 { return 100; }' >"$P/src/util/deep/d.trk"
+printf 'import "h";\nfn main() -> void { print(helper(2)); print(left_value()); print(deep_value()); }\n' >"$P/src/main.trk"
+check "check" in_dir "$P" "$Y" check
+check "build" in_dir "$P" "$Y" build
+check "prints 3 11 100" test "$("$P/target/nest" 2>/dev/null | tr '\n' ' ')" = "3 11 100 "
+finish
+
+# check and build agree on a call to a function no module defines.
+begin check_and_build_agree_on_undefined
+P="$WORK/undef"
+mkdir -p "$P/src"
+printf '[package]\nname = "undef"\nversion = "0.1.0"\n' >"$P/Track.toml"
+echo 'fn helper(x: i32) -> i32 { return x+1; }' >"$P/src/h.trk"
+echo 'fn main() -> void { print(missing(2)); }' >"$P/src/main.trk"
+check "build fails" bash -c "cd '$P' && ! '$Y' build"
+check "check fails" bash -c "cd '$P' && ! '$Y' check"
+in_dir "$P" "$Y" check >"$WORK/undef.out" 2>&1
+check "check names the function" contains "$WORK/undef.out" "missing"
+echo 'fn missing(x: i32) -> i32 { return x*2; }' >"$P/src/m.trk"
+check "check passes once defined" in_dir "$P" "$Y" check
+check "build passes once defined" in_dir "$P" "$Y" build
+check "prints 4" test "$("$P/target/undef" 2>/dev/null)" = 4
+finish
+
+# The incremental cache: an unchanged project is all cached and keeps its
+# image; editing a module that main does not import rebuilds the image.
+begin linked_image_cache
+P="$WORK/lcache"
+mkdir -p "$P/src"
+printf '[package]\nname = "lcache"\nversion = "0.1.0"\n' >"$P/Track.toml"
+echo 'fn helper(x: i32) -> i32 { return x+1; }' >"$P/src/h.trk"
+echo 'fn main() -> void { print(helper(2)); }' >"$P/src/main.trk"
+check "build" in_dir "$P" "$Y" build
+stat -c '%y' "$P/target/lcache" >"$WORK/lcache.s1" 2>/dev/null
+in_dir "$P" "$Y" build >"$WORK/lcache.out" 2>&1
+check "warm build all cached" contains "$WORK/lcache.out" "(2 files, 2 cached)"
+stat -c '%y' "$P/target/lcache" >"$WORK/lcache.s2" 2>/dev/null
+check "warm build keeps the image" cmp "$WORK/lcache.s1" "$WORK/lcache.s2"
+echo 'fn helper(x: i32) -> i32 { return x+5; }' >"$P/src/h.trk"
+in_dir "$P" "$Y" build >"$WORK/lcache.out" 2>&1
+check "edit rebuilds" contains "$WORK/lcache.out" "(2 files, 0 cached)"
+check "edited module is linked" test "$("$P/target/lcache" 2>/dev/null)" = 7
+finish
+
 # --- CLI cases from docs/yard.md ------------------------------------------
 begin cli_run_test_add_errors
 P="$WORK/cli/cli_app"
