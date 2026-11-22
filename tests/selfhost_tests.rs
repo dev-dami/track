@@ -1397,8 +1397,8 @@ fn life_place_dumps_match_goldens() {
             "a value passed to an esc param is heap",
         ),
         (
-            "L28 call heap-autofree ends L29",
-            "a fresh Str dying locally is auto-freed",
+            "L28 call heap ends -",
+            "a fresh Str is not auto-freed until phase 2 (L13)",
         ),
     ] {
         assert!(
@@ -1501,4 +1501,109 @@ fn stack_cells_run_and_plan() {
         );
     }
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Auto-free of heap cells (card L9, docs/lifecycles.md §3.3): every
+/// program in tests/autofree/ builds, prints its `<stem>.out`, plans as its
+/// `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them) and frees cells in
+/// its emitted C. Where gcc has AddressSanitizer, the programs also run
+/// with no use after free and no double free.
+#[test]
+fn autofree_frees_heap_cells() {
+    let root = repo();
+    let update = env::var("UPDATE_LIFE").is_ok();
+    let dir = scratch("autofree");
+    let stems = ["die_param", "early_return", "moved_field", "nested", "returned"];
+    let mut plans = String::new();
+    for stem in stems {
+        let rel = format!("tests/autofree/{}.trk", stem);
+        let exe = dir.join(stem);
+        let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
+        assert!(
+            out.status.success(),
+            "{}: build failed: {}",
+            rel,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let want = fs::read_to_string(root.join(format!("tests/autofree/{}.out", stem))).unwrap();
+        assert_eq!(run_exe(&exe), (want, Some(0)), "{}: output differs", rel);
+        let c = fs::read_to_string(exe.with_extension("c")).unwrap();
+        assert!(c.contains("dealloc(l"), "{}: no free in emitted C", rel);
+        let plan = run_trackc(&["life", "--place", &rel], &root);
+        let got = String::from_utf8_lossy(&plan.stdout).into_owned();
+        let golden = root.join(format!("tests/autofree/{}.place", stem));
+        if update {
+            fs::write(&golden, &got).unwrap();
+        }
+        let want = fs::read_to_string(&golden)
+            .unwrap_or_else(|_| panic!("missing golden {}", golden.display()));
+        assert_eq!(got, want, "{}: placement plan differs", rel);
+        plans.push_str(&format!("{}:\n{}", stem, got));
+    }
+    for (line, why) in [
+        (
+            "L21 call heap-autofree deep ends L22",
+            "a fresh cell passed to a `die` parameter is freed by the caller",
+        ),
+        (
+            "L19 struct stack ends L20",
+            "a stack cell passed to a `die` parameter stays a stack cell",
+        ),
+        (
+            "L16 call heap-autofree ends L17",
+            "a cell whose child is moved out frees only itself",
+        ),
+        (
+            "L22 struct heap-autofree deep ends L27",
+            "a nested literal reassigned fresh cells runs drop glue",
+        ),
+        (
+            "L7 struct heap ends -",
+            "a returned cell is never freed",
+        ),
+        (
+            "L13 struct heap ends -",
+            "a cell stored into a returned cell is never freed",
+        ),
+    ] {
+        assert!(plans.contains(line), "{}: missing `{}` in\n{}", why, line, plans);
+    }
+    let asan = Command::new("gcc")
+        .args(["-fsanitize=address", "-x", "c", "-", "-o"])
+        .arg(dir.join("probe"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child.stdin.take().unwrap().write_all(b"int main(void){return 0;}")?;
+            child.wait()
+        })
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !asan {
+        return;
+    }
+    for stem in stems {
+        let rel = format!("tests/autofree/{}.trk", stem);
+        let exe = dir.join(format!("{}_asan", stem));
+        let out = Command::new(trackc())
+            .args(["build", &rel, "-o", exe.to_str().unwrap()])
+            .env("CC", "gcc -fsanitize=address -g")
+            .env("TRACKC_CACHE", dir.join("cache"))
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}: ASan build failed", rel);
+        let run = Command::new(&exe)
+            .env("ASAN_OPTIONS", "detect_leaks=0")
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success() && !err.contains("AddressSanitizer"),
+            "{}: ASan reports an error:\n{}",
+            rel,
+            err
+        );
+    }
 }

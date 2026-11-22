@@ -25,6 +25,7 @@ const G_NTEMP = 3;
 const G_NSLOT = 4;    // stack tuple slots declared so far
 const G_INDENT = 5;
 const G_BOUND = 6;    // scope stack: (name, previous binding) pairs
+const G_AUTO = 7;     // current function: (local id, site node) of live heap-autofree locals
 const G_RETVAL = 8;   // current function returns a value
 const G_EXTERNS = 9;  // extern (non-runtime) functions in first-use order
 const G_FUNCS = 10;   // emitted function definitions
@@ -461,17 +462,101 @@ fn gen_call(c: i64, n: i64, args_list: i64) -> i64 {
     return t;
 }
 
-// Generate a block; returns the value text of its last statement.
+// Generate a block; returns the value text of its last statement. The
+// heap-autofree locals it declared are freed when it ends.
 fn gen_block(c: i64, body: i64) -> i64 {
     let mark = scope_begin(c);
+    let auto = g(c, G_AUTO);
+    let amark = vlen(auto);
     let mut last: i64 = "0";
     let mut i: i64 = 0;
     while i < list_len(c, body) {
         last = gen(c, list_at(c, body, i));
         i = i + 1;
     }
+    if vlen(auto) > amark {
+        // The value is read before the frees.
+        last = gen_into_temp(c, last);
+        gen_frees(c, amark);
+        while vlen(auto) > amark {
+            vpop(auto);
+        }
+    }
     scope_end(c, mark);
     return last;
+}
+
+// ------------------------------------------------------- auto-free (L9)
+//
+// A local whose `let` site the plan marks heap-autofree owns its cell
+// until the block ends (or a `return` leaves it); `x = v` frees the old
+// cell first. Sites marked deep also free the child cells their type owns
+// (drop glue, `gen_drop`); the others free only their own cell.
+
+const DROP_DEPTH = 4; // nesting levels drop glue follows; deeper cells leak
+
+// Free, in reverse declaration order, the heap-autofree locals from entry
+// `from` of the G_AUTO stack on.
+fn gen_frees(c: i64, from: i64) -> i64 {
+    let auto = g(c, G_AUTO);
+    let mut i = vlen(auto) - 2;
+    while i >= from {
+        gen_free_local(c, vget(auto, i), vget(auto, i + 1));
+        i = i - 2;
+    }
+    return 0;
+}
+
+fn gen_free_local(c: i64, id: i64, site: i64) -> i64 {
+    if life_auto_deep(c, site) {
+        return gen_drop(c, local_name(c, id), pl_site_type(c, site), 0);
+    }
+    return emit(c, text_cat3("dealloc(", local_name(c, id), ");"));
+}
+
+// The heap-autofree entry of local `id`, or -1.
+fn auto_entry(c: i64, id: i64) -> i64 {
+    let auto = g(c, G_AUTO);
+    let mut i: i64 = 0;
+    while i < vlen(auto) {
+        if vget(auto, i) == id {
+            return i;
+        }
+        i = i + 2;
+    }
+    return -1;
+}
+
+// Drop glue for the cell in `p` of type `t`: free its owned child cells
+// (struct fields and tuple elements `pl_drop_kind` names), then the cell.
+fn gen_drop(c: i64, p: i64, t: i64, depth: i64) -> i64 {
+    let kind = pl_drop_kind(c, t);
+    if depth < DROP_DEPTH && (kind == 1 || kind == 2) {
+        let mut types: i64 = -1;
+        let mut from: i64 = 0;
+        let mut step: i64 = 1;
+        if kind == 1 {
+            types = nb(c, struct_def(c, na(c, t)));
+            from = 1;
+            step = 2;
+        } else {
+            types = na(c, t);
+        }
+        let mut i = from;
+        while i < list_len(c, types) {
+            let ft = list_at(c, types, i);
+            if pl_drop_kind(c, ft) != 0 {
+                let child = gen_into_temp(c, load_text(p, (i - from) / step + kind % 2));
+                emit(c, text_cat3("if (", child, ") {"));
+                indent(c, 1);
+                gen_drop(c, child, ft, depth + 1);
+                indent(c, -1);
+                emit(c, "}");
+            }
+            i = i + step;
+        }
+    }
+    return emit(c, text_cat3("dealloc(", p, ");"));
 }
 
 fn gen_if(c: i64, n: i64) -> i64 {
@@ -531,6 +616,12 @@ fn gen_return(c: i64, n: i64) -> i64 {
     let mut v: i64 = "0";
     if value >= 0 {
         v = gen(c, value);
+    }
+    if vlen(g(c, G_AUTO)) > 0 {
+        if g(c, G_RETVAL) == 1 {
+            v = gen_into_temp(c, v);
+        }
+        gen_frees(c, 0);
     }
     if g(c, G_RETVAL) == 1 {
         emit(c, text_cat3("return ", v, ";"));
@@ -807,6 +898,10 @@ fn gen(c: i64, n: i64) -> i64 {
         let v = gen(c, nd(c, n));
         let id = new_local(c, na(c, n));
         emit(c, text_cat3(local_name(c, id), " = ", text_cat(v, ";")));
+        if life_place_of(c, nd(c, n)) == PL_AUTO {
+            vpush(g(c, G_AUTO), id);
+            vpush(g(c, G_AUTO), nd(c, n));
+        }
         return local_name(c, id);
     }
     if k == K_ASSIGN {
@@ -819,6 +914,12 @@ fn gen(c: i64, n: i64) -> i64 {
         }
         if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
             let id = ni(c, na(c, target), NI_CVAR);
+            let at = auto_entry(c, id);
+            if at >= 0 {
+                // The new cell is built before the old one is freed.
+                v = gen_into_temp(c, v);
+                gen_free_local(c, id, vget(g(c, G_AUTO), at + 1));
+            }
             emit(c, text_cat3(local_name(c, id), " = ", text_cat(v, ";")));
             return local_name(c, id);
         }
@@ -920,6 +1021,7 @@ fn gen_function(c: i64, f: i64, prelude: i64) -> i64 {
         returns = 1;
     }
     g_set(c, G_RETVAL, returns);
+    g_set(c, G_AUTO, vnew());
     let mark = scope_begin(c);
     let params = nc(c, f);
     let mut i: i64 = 0;

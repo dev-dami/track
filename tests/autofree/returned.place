@@ -1,0 +1,12 @@
+fn direct
+  L7 struct heap ends -
+  L7 struct heap ends -
+fn wrapped
+  L13 struct heap ends -
+  L14 struct ret-slot ends L14
+fn field_out
+  L18 call heap-autofree ends L19
+fn main
+  L26 call heap-autofree deep ends L29
+  L27 call heap-autofree deep ends L29
+  L28 call heap-autofree deep ends L29

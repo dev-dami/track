@@ -1,0 +1,26 @@
+// L9: values passed by value to a parameter whose life ends in the callee
+// (`die`). The callee never frees its parameter; the caller ends the
+// value after the call: a stack cell is never freed, a heap-autofree cell
+// is freed at the end of its block.
+struct P { x: i64, y: i64 }
+
+fn sum(p: P) -> i64 {
+    return p.x + p.y;
+}
+
+fn mk(i: i64) -> P {
+    return P { x: i, y: i + 1 };
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 40 {
+        let s = P { x: i, y: 2 };
+        total = total + sum(s);
+        let h = mk(i);
+        total = total + sum(h);
+        i = i + 1;
+    }
+    print(total);
+}
