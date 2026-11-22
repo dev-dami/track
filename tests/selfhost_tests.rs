@@ -540,6 +540,7 @@ fn track_runtime_matches_the_c_runtime() {
         "rt_memlimit_realloc",
         "rt_lcache",
         "rt_memlimit_lcache",
+        "sb_spare",
     ] {
         programs.push(repo().join(format!("tests/native/{}.trk", name)));
     }
