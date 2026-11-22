@@ -153,12 +153,17 @@ fn gen_list_values(c: i64, l: i64) -> i64 {
 
 // Heap cell holding the given words (escaping tuples, union payloads).
 fn gen_cell(c: i64, words: i64) -> i64 {
+    return gen_cell_note(c, words, "");
+}
+
+// `gen_cell` with `note` (a C comment, or "") after the allocation.
+fn gen_cell_note(c: i64, words: i64, note: i64) -> i64 {
     let t = temp(c);
     let mut size = vlen(words);
     if size < 1 {
         size = 1;
     }
-    emit(c, text_cat3(t, " = alloc(", text_cat(text_of_int(size * 8), ");")));
+    emit(c, text_cat3(t, " = alloc(", text_cat3(text_of_int(size * 8), ");", note)));
     let mut i: i64 = 0;
     while i < vlen(words) {
         emit(c, text_cat3("TK_AT(", t, text_cat3(", ", text_of_int(i), text_cat3(") = ", vget(words, i), ";"))));
@@ -552,6 +557,9 @@ fn gen_stack_tuple(c: i64, n: i64) -> i64 {
 fn gen_site_cell(c: i64, n: i64, words: i64) -> i64 {
     if life_place_of(c, n) == PL_STACK {
         return gen_slot(c, words);
+    }
+    if life_place_of(c, n) == PL_AUTO {
+        return gen_cell_note(c, words, " /* heap-autofree */");
     }
     return gen_cell(c, words);
 }
