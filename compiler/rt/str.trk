@@ -14,7 +14,7 @@ fn str_free(s: i64) -> i64 { return 0; }
 // Free a string the compiler proved fresh (docs/lifecycles.md §3.5): a
 // runtime result the caller owns, never a literal. str_free stays a no-op
 // because user code may pass it either.
-fn track_str_free(s: i64) -> i64 { return rt_free_keep(s); }
+fn track_str_free(s: i64) -> i64 { return rt_free(s); }
 
 fn str_len(s: i64) -> i64 {
     if s == 0 {

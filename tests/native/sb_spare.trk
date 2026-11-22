@@ -1,7 +1,7 @@
-// Large builders and their strings, freed every round, come back as spare
-// blocks (compiler/rt/vec.trk rt_free_keep): sizes grow and shrink across
-// rounds so a spare is sometimes too small (grown) and holds stale bytes
-// from a longer string. Every byte of each result is checked.
+// Large builders and their strings, freed every round, come back from the
+// large-block cache (compiler/rt/mem.trk): sizes grow and shrink across
+// rounds so a reused block is sometimes too small (grown) and holds stale
+// bytes from a longer string. Every byte of each result is checked.
 fn check(s: i64, round: i64, n: i64) -> i64 {
     let mut sum: i64 = 0;
     let mut i: i64 = 0;
