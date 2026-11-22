@@ -1,0 +1,38 @@
+// L12a: drop glue. Heap-autofree cells whose child cells are all fresh
+// free the children too, three levels deep, for a fresh call result, a
+// struct literal and every cell a reassignment replaces.
+struct Inner { v: i64 }
+struct Mid { inner: Inner, w: i64 }
+struct Outer { mid: Mid, n: i64 }
+
+fn make(i: i64) -> Outer {
+    return Outer { mid: Mid { inner: Inner { v: i }, w: 2 }, n: 1 };
+}
+
+fn total_of(o: &Outer) -> i64 {
+    return o.n + o.mid.w + o.mid.inner.v;
+}
+
+fn churn(n: i64) -> i64 {
+    let mut total: i64 = 0;
+    let mut acc = make(0);
+    let mut i: i64 = 0;
+    while i < n {
+        let mut o = Outer { mid: Mid { inner: Inner { v: i }, w: 3 }, n: i };
+        let c = make(i);
+        total = (total + total_of(&o) + total_of(&c)) % 1000003;
+        o = Outer { mid: Mid { inner: Inner { v: 1 }, w: i }, n: 2 };
+        total = (total + total_of(&o)) % 1000003;
+        acc = make(i + total % 5);
+        i = i + 1;
+    }
+    return total + total_of(&acc);
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(1000000);
+    let base = sys_get_memory_used();
+    print(churn(300000));
+    print(sys_get_memory_used() - base);
+    return 0;
+}

@@ -1,0 +1,25 @@
+// L12b: `acc = step(&acc)` and `acc = swap(acc)` pass `acc`'s own cell as
+// the result cell; the callee reads every word before it writes any.
+struct Pair { a: i64, b: i64 }
+fn step(p: &Pair) -> Pair { return Pair { a: p.b, b: p.a + p.b }; }
+fn swap(p: Pair) -> Pair { return Pair { a: p.b, b: p.a }; }
+fn mk(i: i64) -> (i64, i64) { return (i, i + 1); }
+fn flip(t: (i64, i64)) -> (i64, i64) { return (t.1, t.0 * 2 % 1000); }
+fn main() -> i64 {
+    sys_set_memory_limit(100000);
+    let mut acc = Pair { a: 0, b: 1 };
+    let mut i: i64 = 0;
+    while i < 50000 {
+        acc = step(&acc);
+        acc = Pair { a: acc.a % 1000003, b: acc.b % 1000003 };
+        acc = swap(acc);
+        i = i + 1;
+    }
+    print(acc.a); print(acc.b);
+    let mut t = mk(3);
+    let mut j: i64 = 0;
+    while j < 50000 { t = flip(t); j = j + 1; }
+    print(t.0); print(t.1);
+    print(sys_get_memory_used());
+    return 0;
+}
