@@ -519,7 +519,7 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "}");
     sb_line(b, "");
     sb_line(b, "tk_w file_read_all(tk_w handle) {");
-    sb_line(b, "    /* Read to end of file, like rt/sys.trk's rt_read_fd: files whose size");
+    sb_line(b, "    /* Read to end of file, as rt/sys.trk's rt_read_fd does: files whose size");
     sb_line(b, "     * is not known up front (/proc, pipes) read whole too. */");
     sb_line(b, "    FILE *f = (FILE *)TK_PTR(handle);");
     sb_line(b, "    if (!f) return TK_WORD(tk_dup(\"\"));");

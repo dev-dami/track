@@ -117,10 +117,10 @@ opened() {
     printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"shutdown"}' '{"jsonrpc":"2.0","method":"exit"}'
 }
 
-# A check the checker needs ~40s for (3000 lets in one fn) times out after
-# TRACKC_LSP_TIMEOUT seconds with one diagnostic, and the hover after it
-# is still answered.
-slow=$(awk 'BEGIN { printf "fn main() -> i64 {\\n"; for (i = 0; i < 3000; i++) printf "    let a: i64 = 1;\\n"; printf "    return 0;\\n}\\n" }')
+# A check the checker needs many seconds for (12000 lets in one fn hit a
+# quadratic in the checker) times out after TRACKC_LSP_TIMEOUT seconds
+# with one diagnostic, and the hover after it is still answered.
+slow=$(awk 'BEGIN { printf "fn main() -> i64 {\\n"; for (i = 0; i < 12000; i++) printf "    let a: i64 = 1;\\n"; printf "    return 0;\\n}\\n" }')
 opened slow.trk "$slow" | frame > "$scratch/slow.framed"
 started=$(date +%s)
 session timeout "$scratch/slow.framed" TRACKC_LSP_TIMEOUT=1

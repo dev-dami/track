@@ -513,7 +513,7 @@ tk_w file_close(tk_w f) {
 }
 
 tk_w file_read_all(tk_w handle) {
-    /* Read to end of file, like rt/sys.trk's rt_read_fd: files whose size
+    /* Read to end of file, as rt/sys.trk's rt_read_fd does: files whose size
      * is not known up front (/proc, pipes) read whole too. */
     FILE *f = (FILE *)TK_PTR(handle);
     if (!f) return TK_WORD(tk_dup(""));
