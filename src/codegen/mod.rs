@@ -62,6 +62,10 @@ pub fn eval_const(consts: &HashMap<String, i64>, expr: &Expr) -> Option<i64> {
             op: UnaryOp::Neg,
             expr,
         } => eval_const(consts, expr).map(|v| v.wrapping_neg()),
+        Expr::UnaryOp {
+            op: UnaryOp::Not,
+            expr,
+        } => eval_const(consts, expr).map(|v| (v == 0) as i64),
         Expr::BinaryOp { op, left, right } => {
             let l = eval_const(consts, left)?;
             let r = eval_const(consts, right)?;
@@ -76,7 +80,15 @@ pub fn eval_const(consts: &HashMap<String, i64>, expr: &Expr) -> Option<i64> {
                 BinOp::BitOr => Some(l | r),
                 BinOp::Shl => Some(l.wrapping_shl((r & 63) as u32)),
                 BinOp::Shr => Some(((l as u64) >> (r & 63)) as i64),
-                _ => None,
+                // Comparisons and logic fold to 0/1, as symbols.trk const_eval.
+                BinOp::Eq => Some((l == r) as i64),
+                BinOp::Neq => Some((l != r) as i64),
+                BinOp::Lt => Some((l < r) as i64),
+                BinOp::Gt => Some((l > r) as i64),
+                BinOp::Lte => Some((l <= r) as i64),
+                BinOp::Gte => Some((l >= r) as i64),
+                BinOp::And => Some((l != 0 && r != 0) as i64),
+                BinOp::Or => Some((l != 0 || r != 0) as i64),
             }
         }
         Expr::Variable(name) => consts.get(name).copied(),
@@ -227,6 +239,8 @@ impl CodeGen {
                 }
                 Expr::EnumDef { name, variants, .. } => {
                     for (vname, disc) in enum_discriminants(&self.consts, variants) {
+                        // A unit variant is a constant to later constants.
+                        self.consts.insert(format!("{}::{}", name, vname), disc);
                         self.info
                             .variants
                             .insert(format!("{}::{}", name, vname), disc);

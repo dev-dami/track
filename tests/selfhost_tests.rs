@@ -559,6 +559,21 @@ fn const_divrem_traps_are_e0200_in_both_checkers() {
             None,
         ),
         (
+            "div_variant_named_cmp_ok",
+            "const ONE = 1 < 2; enum E { A = ONE } const Q = 7 / E::A;".to_string(),
+            None,
+        ),
+        (
+            "div_variant_after_cmp_zero",
+            "const NO = 2 < 1; enum E { A = NO, B } const Q = 7 / E::A;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "div_variant_next_ok",
+            "const NO = 2 < 1; enum E { A = NO, B } const Q = 7 / E::B;".to_string(),
+            None,
+        ),
+        (
             "enum_named_cmp_zero",
             "const Z = 2 < 1; enum E { A = 7 / Z } const Q = 1;".to_string(),
             Some("division by zero"),
