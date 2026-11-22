@@ -54,6 +54,10 @@ fn const_eval(c: i64, n: i64) -> (i64, i64) {
         if (op == OP_DIV || op == OP_MOD) && r == 0 {
             fail_at(c, npos(c, n), "E0200", "division by zero in a constant expression");
         }
+        // INT64_MIN / -1 traps at run time (stage0: checked_div/rem).
+        if (op == OP_DIV || op == OP_MOD) && r == 0 - 1 && l == 0 - 9223372036854775807 - 1 {
+            fail_at(c, npos(c, n), "E0200", "division overflow in a constant expression");
+        }
         if op == OP_ADD { return (1, l + r); }
         if op == OP_SUB { return (1, l - r); }
         if op == OP_MUL { return (1, l * r); }

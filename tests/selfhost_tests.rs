@@ -494,6 +494,66 @@ fn checkers_agree_on_accepted_and_rejected_programs() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A constant `/` or `%` that would trap (zero divisor, INT64_MIN / -1) is
+/// the same E0200 in both checkers; trackc must not fold it (SIGFPE).
+#[test]
+fn const_divrem_traps_are_e0200_in_both_checkers() {
+    let dir = scratch("const_divrem");
+    let min = "const M = 0 - 9223372036854775807 - 1;";
+    let cases = [
+        (
+            "div_min",
+            format!("{} const Q = M / (0 - 1);", min),
+            Some("division overflow"),
+        ),
+        (
+            "mod_min",
+            format!("{} const Q = M % (0 - 1);", min),
+            Some("division overflow"),
+        ),
+        (
+            "div_zero",
+            "const Q = 7 / 0;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "mod_zero",
+            "const Q = 7 % (1 - 1);".to_string(),
+            Some("division by zero"),
+        ),
+        ("div_ok", format!("{} const Q = M / 2 + M % 3;", min), None),
+    ];
+    for (name, consts, err) in cases {
+        let source = format!("{} fn main() -> void {{ print(Q); }}", consts);
+        let want = err.map(|e| format!("error[E0200]: {} in a constant expression", e));
+        let host = track::compile_source(&source);
+        match &want {
+            Some(w) => assert!(
+                host.as_ref().is_err_and(|e| e.contains(w.as_str())),
+                "{}: host: {:?}",
+                name,
+                host.err()
+            ),
+            None => assert!(host.is_ok(), "{}: host: {:?}", name, host.err()),
+        }
+        let file = dir.join(format!("{}.trk", name));
+        fs::write(&file, &source).unwrap();
+        let native = run_trackc(&["check", file.to_str().unwrap()], &dir);
+        let stderr = String::from_utf8_lossy(&native.stderr);
+        match &want {
+            Some(w) => assert!(
+                native.status.code() == Some(1) && stderr.starts_with(w.as_str()),
+                "{}: trackc: {:?}\n{}",
+                name,
+                native.status,
+                stderr
+            ),
+            None => assert!(native.status.success(), "{}: trackc: {}", name, stderr),
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn diagnostics_point_at_the_source() {
     let dir = scratch("diagnostics");
