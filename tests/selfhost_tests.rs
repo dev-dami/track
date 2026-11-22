@@ -1352,14 +1352,14 @@ fn non_escaping_tuples_use_stack_slots() {
     let main_body = &c[c.find("tk_w tk_main(void) {").expect("tk_main")..];
     let main_body = &main_body[..main_body.find("\n}\n").unwrap()];
     assert!(
-        !main_body.contains("alloc("),
+        !main_body.contains("alloc(") && !main_body.contains("alloc_nz("),
         "loop tuple must not allocate:\n{}",
         main_body
     );
     let pair_body = &c[c.find("tk_w tk_pair(tk_w a0) {").expect("tk_pair")..];
     let pair_body = &pair_body[..pair_body.find("\n}\n").unwrap()];
     assert!(
-        pair_body.contains("alloc("),
+        pair_body.contains("alloc(") || pair_body.contains("alloc_nz("),
         "returned tuple must be a heap cell:\n{}",
         pair_body
     );
