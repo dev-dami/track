@@ -506,6 +506,7 @@ impl LinearChecker {
                     for (vname, disc) in
                         crate::codegen::enum_discriminants(&self.const_values, variants)
                     {
+                        folded.insert(format!("{}::{}", name, vname), disc);
                         self.type_info
                             .variants
                             .insert(format!("{}::{}", name, vname), disc);
