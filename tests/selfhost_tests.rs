@@ -1772,3 +1772,117 @@ fn ret_slots_write_caller_cells() {
     }
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// K3a: a user program may define any name a runtime uses internally (the
+/// Track runtime's `sum`, `write`, `O_RDONLY`...; the C prelude's `tk_w`,
+/// `tk_shl`...). Every runtime, and the native backend, runs it unchanged;
+/// the two programs that used to clash with compiler/rt/vec.trk's `sum`
+/// build natively.
+#[test]
+fn user_names_never_clash_with_runtime_names() {
+    let root = repo();
+    let dir = scratch("names");
+    let cases = [
+        ("tests/names/rt_clash", vec!["", "--rt=track", "--native"]),
+        ("tests/stack/read_only", vec!["--native"]),
+        ("tests/autofree/die_param", vec!["--native"]),
+    ];
+    for (stem, modes) in cases {
+        let rel = format!("{}.trk", stem);
+        let want = fs::read_to_string(root.join(format!("{}.out", stem))).unwrap();
+        for mode in modes {
+            let exe = dir.join(format!("{}{}", stem.replace('/', "_"), mode));
+            let mut args = vec!["build"];
+            if !mode.is_empty() {
+                args.push(mode);
+            }
+            args.extend([rel.as_str(), "-o", exe.to_str().unwrap()]);
+            let out = run_trackc(&args, &root);
+            assert!(
+                out.status.success(),
+                "{} {}: build failed: {}",
+                rel,
+                mode,
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(
+                run_exe(&exe),
+                (want.clone(), Some(0)),
+                "{} {}: output differs",
+                rel,
+                mode
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// K3a: two definitions of one function are E0201 (trackc), whether in one
+/// file or across imports.
+#[test]
+fn duplicate_functions_are_rejected() {
+    let dir = scratch("dupfn");
+    fs::write(dir.join("other.trk"), "fn place_root() -> i64 { return 7; }\n").unwrap();
+    fs::write(
+        dir.join("one.trk"),
+        "fn place_root() -> i64 { return 1; }\nfn place_root() -> i64 { return 2; }\nfn main() -> i64 { print(place_root()); return 0; }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("two.trk"),
+        "import \"other\";\nfn place_root() -> i64 { return 2; }\nfn main() -> i64 { print(place_root()); return 0; }\n",
+    )
+    .unwrap();
+    for file in ["one.trk", "two.trk"] {
+        for mode in ["check", "build"] {
+            let out = run_trackc(&[mode, file], &dir);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                !out.status.success() && err.contains("error[E0201]: duplicate definition of function 'place_root'"),
+                "{} {}: duplicate accepted: {}",
+                mode,
+                file,
+                err
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// K3a: strings are pointers (SPEC §11) and concatenation is
+/// `str_concat(&a, &b)` (docs/stdlib.md); `a + b` on two strings would add
+/// the pointers, so trackc rejects it.
+#[test]
+fn string_plus_string_is_a_type_error() {
+    let dir = scratch("strplus");
+    let bad = [
+        "fn main() -> i64 { let a = \"ab\"; let b = \"cd\"; let c = a + b; print(c); return 0; }\n",
+        "fn main() -> i64 { print(\"ab\" + \"cd\"); return 0; }\n",
+        "fn main() -> i64 { let a = \"ab\"; let s = str_concat(&a, &a); let t = s + a; print(t); return 0; }\n",
+    ];
+    for (i, src) in bad.iter().enumerate() {
+        let file = format!("bad{}.trk", i);
+        fs::write(dir.join(&file), src).unwrap();
+        let out = run_trackc(&["check", &file], &dir);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && err.contains("str_concat"),
+            "{}: string + string accepted: {}",
+            src,
+            err
+        );
+    }
+    // Pointer arithmetic (string + integer, string - string) stays legal.
+    fs::write(
+        dir.join("ok.trk"),
+        "fn main() -> i64 { let a = \"abcd\"; let n = 2; let p = a + n; print(p - a); return 0; }\n",
+    )
+    .unwrap();
+    let out = run_trackc(&["check", "ok.trk"], &dir);
+    assert!(
+        out.status.success(),
+        "string + int rejected: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
