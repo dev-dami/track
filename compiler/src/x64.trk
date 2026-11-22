@@ -111,10 +111,16 @@ fn x_mov_rcx_rax(b: i64) -> i64 { return x_bytes3(b, 72, 137, 193); }
 fn x_ret(b: i64) -> i64 { return x_byte(b, 195); }
 fn x_leave_ret(b: i64) -> i64 { return x_bytes2(b, 201, 195); }
 
-// push rbp; mov rbp, rsp; sub rsp, imm32 — returns the imm32 position.
-fn x_prologue(b: i64) -> i64 {
+// push rbp; mov rbp, rsp; push each register of vector `saved` (saved[s]
+// lands at rbp - 8(s + 1)); sub rsp, imm32 — returns the imm32 position.
+fn x_prologue(b: i64, saved: i64) -> i64 {
     x_byte(b, 85);
     x_bytes3(b, 72, 137, 229);
+    let mut s: i64 = 0;
+    while s < vlen(saved) {
+        x_push_r(b, vget(saved, s));
+        s = s + 1;
+    }
     x_bytes3(b, 72, 129, 236);
     let pos = vlen(b);
     x_u32(b, 0);

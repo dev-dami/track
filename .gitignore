@@ -23,3 +23,4 @@ scratch/benchmarks/tuple
 scratch/benchmarks/loop
 scratch/benchmarks/rec
 /build/
+!tests/stack/*.out
