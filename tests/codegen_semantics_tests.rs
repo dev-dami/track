@@ -26,6 +26,21 @@ fn run(name: &str, source: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// K3b: `for x in a` binds the elements of array `a`, not 0, 1, 2, ...
+/// forever; ranges count, empty arrays skip the body, loops nest.
+#[test]
+fn for_in_binds_array_elements() {
+    let source = fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/native/for_in.trk"),
+    )
+    .unwrap();
+    let out = run("for_in", &source, &[]);
+    assert_eq!(
+        out,
+        "10\n20\n30\n3\n2\n3\n4\n10\n20\n30\n110\n120\n130\nab\ncde\n60\n11\n21\n31"
+    );
+}
+
 #[test]
 fn program_arguments_reach_os_args() {
     let out = run(

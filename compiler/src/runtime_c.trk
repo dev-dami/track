@@ -99,9 +99,10 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "    return 0;");
     sb_line(b, "}");
     sb_line(b, "");
-    sb_line(b, "/* Integer division by zero or INT64_MIN / -1: trap like a hardware divide");
-    sb_line(b, " * fault (SIGFPE) without flushing buffered output. */");
+    sb_line(b, "/* Integer division by zero or INT64_MIN / -1: flush what was printed, then");
+    sb_line(b, " * trap like a hardware divide fault (SIGFPE, shell status 136). */");
     sb_line(b, "tk_w track_trap_div(void) {");
+    sb_line(b, "    fflush(stdout);");
     sb_line(b, "    raise(SIGFPE);");
     sb_line(b, "    abort();");
     sb_line(b, "    return 0;");

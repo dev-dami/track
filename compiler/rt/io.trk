@@ -264,8 +264,10 @@ fn track_abort(msg: i64) -> i64 {
     return 0;
 }
 
-// Integer division by zero or INT64_MIN / -1: SIGFPE, without flushing.
+// Integer division by zero or INT64_MIN / -1: flush what was printed, then
+// SIGFPE (shell status 136), as runtime/track_runtime.c does.
 fn track_trap_div() -> i64 {
+    rt_flush();
     let pid = sys0(SYS_GETPID);
     sys2(SYS_KILL, pid, 8);
     sys2(SYS_KILL, pid, 6);

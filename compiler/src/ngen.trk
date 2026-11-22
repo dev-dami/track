@@ -2846,8 +2846,21 @@ fn ng_op_apply(c: i64, op: i64, dst: i64, kind: i64, v: i64) -> i64 {
 }
 
 // rax = rax op rcx for the operators ng_op_direct does not cover.
+// A zero divisor calls track_trap_div (when the program has the runtime),
+// which flushes stdout before raising SIGFPE; the call never returns, so
+// it clobbers nothing that matters.
 fn ng_op_rcx(c: i64, op: i64) -> i64 {
-    return x_binop(ncode(c), op);
+    let b = ncode(c);
+    let trap = intern(c, "track_trap_div");
+    if (op == OP_DIV || op == OP_MOD) && ni(c, trap, NI_FN) >= 0 {
+        x_rr(b, 133, 1, 1);         // test rcx, rcx
+        x_bytes2(b, 117, 5);        // jnz past the call
+        let pos = x_call(b);
+        let fix = ng(c, NG_CALLS);
+        vpush(fix, pos);
+        vpush(fix, trap);
+    }
+    return x_binop(b, op);
 }
 
 // Leave `x` in rax and `y` in rcx (evaluated left to right).
@@ -3535,8 +3548,12 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     } else {
         let text = name_text(c, target);
         builtin = ng_builtin(c, text);
-        if text_eq(text, "abort") {
+        if text_eq(text, "abort") || text_eq(text, "exit") {
+            // exit(code) is sys_exit: flush stdout, then exit_group
             callee = intern(c, "track_abort");
+            if text_eq(text, "exit") {
+                callee = intern(c, "sys_exit");
+            }
             arity = 1;
             if ni(c, callee, NI_FN) < 0 {
                 vpush(ng(c, NG_MISSING), callee);
@@ -4057,15 +4074,20 @@ fn ng_for(c: i64, n: i64) -> i64 {
     let iter = nb(c, n);
     let start = ng_slot(c);
     let end = ng_slot(c);
+    let mut arr: i64 = -1;
     if nk(c, iter) == K_RANGE {
         ng_gen(c, na(c, iter));
         ng_store(c, start);
         ng_gen(c, nb(c, iter));
         ng_store(c, end);
     } else {
-        ng_set_imm(c, start, 0);
+        // An array `[length, elements...]`: bind each element in turn.
+        arr = ng_slot(c);
         ng_gen(c, iter);
+        ng_store(c, arr);
+        x_mov_load(b);
         ng_store(c, end);
+        ng_set_imm(c, start, 0);
     }
     ng_loop_enter(c);
     let enter = x_jmp(b);
@@ -4073,7 +4095,13 @@ fn ng_for(c: i64, n: i64) -> i64 {
     let top = x_here(b);
     let mark = ng_scope_begin(c);
     let var = ng_new_local(c, na(c, n));
-    ng_load(c, start);
+    if arr < 0 {
+        ng_load(c, start);
+    } else {
+        ng_load_to(c, arr, 0);
+        ng_load_to(c, start, 1);
+        x_rmx(b, 0, 139, 0, 0, 1, 3, 8);
+    }
     ng_store(c, var);
     ng_block_v(c, nc(c, n), true);
     ng_scope_end(c, mark);

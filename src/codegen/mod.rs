@@ -987,7 +987,9 @@ impl<'a> FnContext<'a> {
             }
 
             Expr::ForIn { var, iter, body } => {
-                let (start_val, end_val) = match iter.as_ref() {
+                // `a..b` counts; any other iterable is an array
+                // `[length, elements...]` whose elements are bound in turn.
+                let (start_val, end_val, arr) = match iter.as_ref() {
                     Expr::Range { start, end } => {
                         let s = self
                             .compile_expr(builder, module, start)
@@ -995,26 +997,39 @@ impl<'a> FnContext<'a> {
                         let e = self
                             .compile_expr(builder, module, end)
                             .unwrap_or_else(|| builder.ins().iconst(W, 0));
-                        (s, e)
+                        if self.filled {
+                            return None;
+                        }
+                        let s = self.word(builder, s);
+                        let e = self.word(builder, e);
+                        (s, e, None)
                     }
                     _ => {
-                        let s = builder.ins().iconst(W, 0);
-                        let e = self
+                        let a = self
                             .compile_expr(builder, module, iter)
                             .unwrap_or_else(|| builder.ins().iconst(W, 0));
-                        (s, e)
+                        if self.filled {
+                            return None;
+                        }
+                        let a = self.word(builder, a);
+                        let s = builder.ins().iconst(W, 0);
+                        let e = builder.ins().load(W, ir::MemFlags::new(), a, 0);
+                        (s, e, Some(a))
                     }
                 };
-                if self.filled {
-                    return None;
-                }
-                let start_val = self.word(builder, start_val);
-                let end_val = self.word(builder, end_val);
 
                 let loop_scope = self.enter_scope();
-                let loop_var = self.new_var();
-                builder.declare_var(loop_var, W);
-                builder.def_var(loop_var, start_val);
+                let index_var = self.new_var();
+                builder.declare_var(index_var, W);
+                builder.def_var(index_var, start_val);
+                let loop_var = match arr {
+                    None => index_var,
+                    Some(_) => {
+                        let v = self.new_var();
+                        builder.declare_var(v, W);
+                        v
+                    }
+                };
                 self.var_map.insert(var.clone(), loop_var);
 
                 let header_block = builder.create_block();
@@ -1024,7 +1039,7 @@ impl<'a> FnContext<'a> {
                 self.jump(builder, header_block, &[]);
 
                 self.switch_to(builder, header_block);
-                let cur_val = builder.use_var(loop_var);
+                let cur_val = builder.use_var(index_var);
                 let cond_val = builder.ins().icmp(IntCC::SignedLessThan, cur_val, end_val);
                 builder
                     .ins()
@@ -1032,10 +1047,16 @@ impl<'a> FnContext<'a> {
                 self.filled = true;
 
                 self.switch_to(builder, body_block);
+                if let Some(a) = arr {
+                    let off = builder.ins().imul_imm(cur_val, 8);
+                    let addr = builder.ins().iadd(a, off);
+                    let elem = builder.ins().load(W, ir::MemFlags::new(), addr, 8);
+                    builder.def_var(loop_var, elem);
+                }
                 self.compile_block(builder, module, body);
                 if !self.filled {
                     let next_val = builder.ins().iadd_imm(cur_val, 1);
-                    builder.def_var(loop_var, next_val);
+                    builder.def_var(index_var, next_val);
                     self.jump(builder, header_block, &[]);
                 }
 
