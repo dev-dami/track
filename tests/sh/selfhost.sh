@@ -81,7 +81,7 @@ t_bootstrap_reaches_a_fixed_point() {
 # Stage0 behaviour is frozen in tests/cases/examples (captured from the Rust
 # compiler): trackc rejects every _err example and reproduces the rest.
 t_examples_behave_the_same_under_both_compilers() {
-    local p s n=0
+    local p s hb n=0
     for p in $(trk_files "$ROOT/examples"); do
         s=$(stem "$p")
         n=$((n + 1))
@@ -95,7 +95,12 @@ t_examples_behave_the_same_under_both_compilers() {
         rc_ok "$s: trackc build"
         [ -f "$CASES/examples/$s.out" ] || fail "$s: no golden tests/cases/examples/$s.out"
         observe "$T/${s}_native"
-        out_is "$CASES/examples/$s.out" "$s: behaviour differs from stage0"
+        # @HOSTNAME_BYTES@ stands for the size of /etc/hostname (0 if it is
+        # missing), which error_handling prints and which differs per machine.
+        hb=0
+        [ -f /etc/hostname ] && hb=$(wc -c </etc/hostname | tr -d ' ')
+        sed "s/@HOSTNAME_BYTES@/$hb/" "$CASES/examples/$s.out" >"$T/.want_$s"
+        out_is "$T/.want_$s" "$s: behaviour differs from stage0"
         rc_is "$(cat "$CASES/examples/$s.code")" "$s: exit code differs from stage0"
         rm -f "$T/${s}_native"
     done
