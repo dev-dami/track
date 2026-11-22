@@ -141,7 +141,20 @@ tk_w sys_get_memory_used(void) { return (tk_w)g_allocated_bytes; }
 /* Small cells (struct values, tuples) come from 64 KiB zeroed chunks,
  * carved in 16-byte steps; freed ones go on a per-size free list and are
  * re-zeroed on reuse. The header keeps the size, tagged with TK_BUMP_BIT. */
+#if defined(__SANITIZE_ADDRESS__)
+#define TK_SANITIZE 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define TK_SANITIZE 1
+#endif
+#endif
+#ifdef TK_SANITIZE
+/* AddressSanitizer builds: every cell is its own calloc block, so ASan and
+ * LSan see each cell's free, use after free and leak. */
+#define TK_BUMP_MAX 0
+#else
 #define TK_BUMP_MAX 240
+#endif
 #define TK_BUMP_CHUNK (64 * 1024)
 #define TK_BUMP_BIT ((size_t)1 << 63)
 static char *g_bump_cur, *g_bump_end;

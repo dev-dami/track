@@ -2680,15 +2680,21 @@ fn life_warnings(c: i64) -> i64 {
 //                  Struct, array and payload-union literals by the
 //                  heap-autofree rule below plus element reads and writes
 //                  (`x[i]`, `x[i] = v`), when the cell fits the stack cap
-//                  (PL_CELL_MAX words, PL_FRAME_MAX words per function).
+//                  (PL_CELL_MAX words, PL_FRAME_MAX words per function),
+//                  and `x` is never reassigned a fresh cell (L9: such an
+//                  `x` is heap-autofree, so every cell it held is freed).
 //                  Field writes go through the slot. A return, a store, a
 //                  copy, `&x` kept anywhere, or a call whose parameter
 //                  escapes or returns it keeps `x` off the stack.
 //   ret-slot       the literal is returned directly and the function's
 //                  result origin is exactly `fresh` with a fixed-size type.
-//   heap-autofree  `let x = site` where `x` may also be read through its
-//                  fields or lent to calls whose parameter neither escapes
-//                  nor flows into the result: freed at ENDS (card L9).
+//   heap-autofree  `let x = site` (a struct, tuple, array or union cell) where
+//                  `x` may also be read through its fields or lent to
+//                  calls whose parameter neither escapes nor flows into the
+//                  result, and every `x = v` builds a fresh cell. cgen
+//                  (L9) frees the old cell at each `x = v` and the last one
+//                  when the block is left (end, or `return`). `deep` (dump)
+//                  marks sites whose free also runs drop glue.
 //   heap           everything else, including anything uncertain.
 // ENDS is the position of the last mention of `x` (stack and autofree),
 // the `return` (ret-slot), or -1 (heap: no end is planned).
@@ -2703,6 +2709,8 @@ const PL_AUTO = 4;
 
 const LT_PLACE = 13; // by node: PL_*, 0 when not a site
 const LT_SITES = 14; // [fn node, site node, PL_*, ends pos]*, in walk order
+const LT_DEEP = 15;  // by node: 1 when a heap-autofree site's free may run drop glue
+const LT_CURTY = 16; // type of the site whose uses `pl_use_ok` mode 3 is checking
 
 const PS_FLAG = 0;  // by name: ENDS pos + 1 when bound to a stack-tuple local, else 0
 const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
@@ -2725,6 +2733,151 @@ fn life_place_of(c: i64, n: i64) -> i64 {
         return PL_NONE;
     }
     return vget(place, n);
+}
+
+// True when heap-autofree site `n` may free its owned child cells too
+// (drop glue): every child cell is fresh at birth and on every
+// reassignment, and no use can move a child out or swap one in.
+fn life_auto_deep(c: i64, n: i64) -> bool {
+    let table = ck(c, CK_LIFE);
+    if vlen(table) <= LT_DEEP || n < 0 || n >= vlen(vget(table, LT_DEEP)) {
+        return false;
+    }
+    return vget(vget(table, LT_DEEP), n) == 1;
+}
+
+// How drop glue treats a value of type `t` (card L9): 1 struct cell, 2
+// tuple cell (both free their child cells of kind != 0, then the shell),
+// 3 array cell (shell only: elements may be shared with a slice's
+// source), 0 never freed (copy values, Str, references, unions, whose
+// payload-less values are plain words, and generic parameters).
+fn pl_drop_kind(c: i64, t: i64) -> i64 {
+    if t < 0 {
+        return 0;
+    }
+    let k = nk(c, t);
+    if k == T_TUPLE {
+        return 2;
+    }
+    if k == T_ARRAY {
+        return 3;
+    }
+    if k == T_CUSTOM && generic_binding(c, na(c, t)) < 0 && struct_def(c, na(c, t)) >= 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// The type of allocation site `v`.
+fn pl_site_type(c: i64, v: i64) -> i64 {
+    if pl_site_kind(c, v) == 5 {
+        return call_type(c, na(c, v), nb(c, v));
+    }
+    return infer_type(c, v);
+}
+
+// True when `v` builds a fresh cell drop glue may free: a tuple, struct or
+// array literal, or a call whose result is exactly `fresh`.
+fn pl_fresh_site(c: i64, v: i64) -> bool {
+    let kind = pl_site_kind(c, v);
+    return kind != 0 && kind != 4 && pl_drop_kind(c, pl_site_type(c, v)) != 0;
+}
+
+// True when every cell drop glue would free in `v`'s value is fresh: a
+// fresh call result (origins are deep, so `fresh` covers its children),
+// an array literal (its elements are never freed), or a tuple or struct
+// literal whose child cells are all deep-fresh sites.
+fn pl_deep_fresh(c: i64, v: i64) -> bool {
+    if !pl_fresh_site(c, v) {
+        return false;
+    }
+    let k = nk(c, v);
+    let mut l: i64 = -1;
+    let mut from: i64 = 0;
+    let mut step: i64 = 1;
+    if k == K_TUPLE {
+        l = na(c, v);
+    } else if k == K_SINIT {
+        l = nb(c, v);
+        from = 1;
+        step = 2;
+    } else {
+        return true;
+    }
+    let mut decl: i64 = -1;
+    if k == K_SINIT {
+        decl = struct_def(c, na(c, v));
+        if decl < 0 {
+            return false;
+        }
+    }
+    let mut i = from;
+    while i < list_len(c, l) {
+        let e = list_at(c, l, i);
+        if pl_site_kind(c, e) != 0 {
+            if !pl_deep_fresh(c, e) {
+                return false;
+            }
+        } else if decl >= 0 {
+            // Drop glue follows the declared field types.
+            let f = struct_field_index(c, decl, list_at(c, l, i - 1));
+            if f < 0 || pl_drop_kind(c, list_at(c, nb(c, decl), f * 2 + 1)) != 0 {
+                return false;
+            }
+        } else {
+            let k2 = nk(c, e);
+            if k2 != K_INT && k2 != K_BOOL && k2 != K_STR {
+                return false;
+            }
+        }
+        i = i + step;
+    }
+    return true;
+}
+
+// True when `n` is a chain of field and tuple-element reads rooted at
+// variable `name` (`name.a.0.b`).
+fn pl_chain_of(c: i64, n: i64, name: i64) -> bool {
+    let k = nk(c, n);
+    if k == K_FIELD || k == K_TINDEX {
+        return pl_chain_of(c, na(c, n), name);
+    }
+    return pl_is_name(c, n, name);
+}
+
+// The type of read chain `n` from the site being checked (type in
+// LT_CURTY), or -2 when it cannot be followed.
+fn pl_member_type(c: i64, n: i64) -> i64 {
+    let k = nk(c, n);
+    if k != K_FIELD && k != K_TINDEX {
+        return vget(ck(c, CK_LIFE), LT_CURTY);
+    }
+    let t = pl_member_type(c, na(c, n));
+    let kind = pl_drop_kind(c, t);
+    if k == K_FIELD && kind == 1 {
+        let decl = struct_def(c, na(c, t));
+        let f = struct_field_index(c, decl, nb(c, n));
+        if f < 0 {
+            return -2;
+        }
+        return list_at(c, nb(c, decl), f * 2 + 1);
+    }
+    if k == K_TINDEX && kind == 2 {
+        let elems = na(c, t);
+        if nb(c, n) < 0 || nb(c, n) >= list_len(c, elems) {
+            return -2;
+        }
+        return list_at(c, elems, nb(c, n));
+    }
+    return -2;
+}
+
+// True when read chain `n` from the site being checked yields a value
+// drop glue never frees, so the read cannot move a freed child out.
+// Chains that cannot be followed are never kept.
+fn pl_member_kept(c: i64, n: i64) -> bool {
+    let t = pl_member_type(c, n);
+    return t != -2 && pl_drop_kind(c, t) == 0;
 }
 
 fn pl_record(c: i64, p: i64, n: i64, place: i64, ends: i64) -> i64 {
@@ -2821,7 +2974,7 @@ fn pl_place_text(place: i64) -> i64 {
 // without the value outliving this frame: the callee's summary of that
 // parameter neither escapes nor returns it, and a by-value parameter ends
 // it (`die`, so the caller ends it). Unknown callees never qualify.
-fn pl_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
+fn pl_arg_ok(c: i64, n: i64, i: i64, is_addr: bool, read_only: bool) -> bool {
     let name = na(c, n);
     if is_qualified(c, name) && variant_disc(c, name) >= 0 {
         return false;
@@ -2846,13 +2999,16 @@ fn pl_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
     if ((vget(recs, at + LR_RES) >> i) & 1) == 1 {
         return false;
     }
+    if read_only && vget(recs, at + LR_PARAMS + i * 2) > U_READ {
+        return false;
+    }
     return is_addr || pe != 0;
 }
 
-fn pl_uses_ok(c: i64, l: i64, name: i64, refined: bool) -> bool {
+fn pl_uses_ok(c: i64, l: i64, name: i64, mode: i64) -> bool {
     let mut i: i64 = 0;
     while i < list_len(c, l) {
-        if !pl_use_ok(c, list_at(c, l, i), name, refined) {
+        if !pl_use_ok(c, list_at(c, l, i), name, mode) {
             return false;
         }
         i = i + 1;
@@ -2860,11 +3016,11 @@ fn pl_uses_ok(c: i64, l: i64, name: i64, refined: bool) -> bool {
     return true;
 }
 
-fn pl_use_opt(c: i64, n: i64, name: i64, refined: bool) -> bool {
+fn pl_use_opt(c: i64, n: i64, name: i64, mode: i64) -> bool {
     if n < 0 {
         return true;
     }
-    return pl_use_ok(c, n, name, refined);
+    return pl_use_ok(c, n, name, mode);
 }
 
 fn pl_is_name(c: i64, n: i64, name: i64) -> bool {
@@ -2874,95 +3030,118 @@ fn pl_is_name(c: i64, n: i64, name: i64) -> bool {
     return nk(c, n) == K_VAR && na(c, n) == name;
 }
 
-// K2's escape rule (`refined` false) for the statements after `let name`:
+// K2's escape rule (`mode` 0) for the statements after `let name`:
 // `name` stays local when it is only read by tuple indexing (`name.0`),
 // destructured (`let (a, b) = name`), matched against patterns that never
 // bind the whole value, or reassigned. Any other mention (returned,
 // passed, stored, copied, borrowed, lens target, block value) escapes. A
-// shadowing `let name` only makes it stricter. `refined` also accepts
-// field reads and lending to calls `pl_arg_ok` allows (heap-autofree).
-fn pl_use_ok(c: i64, n: i64, name: i64, refined: bool) -> bool {
+// shadowing `let name` only makes it stricter. `mode` 1 (stack) also
+// accepts field reads and lending to calls `pl_arg_ok` allows; mode 2
+// (heap-autofree) also requires every `name = v` to build a fresh cell;
+// mode 3 (drop glue) also rejects any use that may move a child cell out
+// or swap one in: reading a field or element drop glue would free,
+// destructuring, matching, and lending to a parameter that mutates.
+fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     let k = nk(c, n);
     if k == K_INT || k == K_STR || k == K_BOOL { return true; }
     if k == K_VAR { return na(c, n) != name; }
-    if k == K_BIN { return pl_use_ok(c, nb(c, n), name, refined) && pl_use_ok(c, nc(c, n), name, refined); }
-    if k == K_UN { return pl_use_ok(c, nb(c, n), name, refined); }
-    if k == K_ADDR { return pl_use_ok(c, na(c, n), name, refined); }
-    if k == K_ARRAY || k == K_TUPLE { return pl_uses_ok(c, na(c, n), name, refined); }
+    if k == K_BIN { return pl_use_ok(c, nb(c, n), name, mode) && pl_use_ok(c, nc(c, n), name, mode); }
+    if k == K_UN { return pl_use_ok(c, nb(c, n), name, mode); }
+    if k == K_ADDR { return pl_use_ok(c, na(c, n), name, mode); }
+    if k == K_ARRAY || k == K_TUPLE { return pl_uses_ok(c, na(c, n), name, mode); }
+    if mode == 3 && (k == K_FIELD || k == K_TINDEX) && pl_chain_of(c, n, name) {
+        return pl_member_kept(c, n);
+    }
     if k == K_TINDEX {
         if pl_is_name(c, na(c, n), name) {
-            return true;
+            return mode < 3 || pl_member_kept(c, n);
         }
-        return pl_use_ok(c, na(c, n), name, refined);
+        return pl_use_ok(c, na(c, n), name, mode);
     }
-    if k == K_INDEX && refined && pl_is_name(c, na(c, n), name) {
+    if k == K_INDEX && mode > 0 && pl_is_name(c, na(c, n), name) {
         // Element read or (as an assignment target) write: the cell stays put.
-        return pl_use_ok(c, nb(c, n), name, refined);
+        return pl_use_ok(c, nb(c, n), name, mode);
     }
-    if k == K_INDEX || k == K_RANGE { return pl_use_ok(c, na(c, n), name, refined) && pl_use_ok(c, nb(c, n), name, refined); }
-    if k == K_SLICE { return pl_use_ok(c, na(c, n), name, refined) && pl_use_opt(c, nb(c, n), name, refined) && pl_use_opt(c, nc(c, n), name, refined); }
+    if k == K_INDEX || k == K_RANGE { return pl_use_ok(c, na(c, n), name, mode) && pl_use_ok(c, nb(c, n), name, mode); }
+    if k == K_SLICE { return pl_use_ok(c, na(c, n), name, mode) && pl_use_opt(c, nb(c, n), name, mode) && pl_use_opt(c, nc(c, n), name, mode); }
     if k == K_FIELD {
-        if refined && pl_is_name(c, na(c, n), name) {
-            return true;
+        if mode > 0 && pl_is_name(c, na(c, n), name) {
+            return mode < 3 || pl_member_kept(c, n);
         }
-        return pl_use_ok(c, na(c, n), name, refined);
+        return pl_use_ok(c, na(c, n), name, mode);
     }
     if k == K_SINIT {
         let fields = nb(c, n);
         let mut i: i64 = 0;
         while i < list_len(c, fields) {
-            if !pl_use_ok(c, list_at(c, fields, i + 1), name, refined) {
+            if !pl_use_ok(c, list_at(c, fields, i + 1), name, mode) {
                 return false;
             }
             i = i + 2;
         }
         return true;
     }
-    if k == K_LENS { return na(c, n) != name && pl_uses_ok(c, nc(c, n), name, refined); }
+    if k == K_LENS { return na(c, n) != name && pl_uses_ok(c, nc(c, n), name, mode); }
     if k == K_CALL {
-        if !refined {
-            return pl_uses_ok(c, nb(c, n), name, refined);
+        if mode == 0 {
+            return pl_uses_ok(c, nb(c, n), name, mode);
         }
         let args = nb(c, n);
         let mut i: i64 = 0;
         while i < list_len(c, args) {
             let a = list_at(c, args, i);
             if pl_is_name(c, a, name) {
-                if !pl_arg_ok(c, n, i, false) {
+                if !pl_arg_ok(c, n, i, false, mode == 3) {
                     return false;
                 }
             } else if nk(c, a) == K_ADDR && pl_is_name(c, na(c, a), name) {
-                if !pl_arg_ok(c, n, i, true) {
+                if !pl_arg_ok(c, n, i, true, mode == 3) {
                     return false;
                 }
-            } else if !pl_use_ok(c, a, name, refined) {
+            } else if !pl_use_ok(c, a, name, mode) {
                 return false;
             }
             i = i + 1;
         }
         return true;
     }
-    if k == K_MACROCALL { return pl_uses_ok(c, nb(c, n), name, refined) && pl_uses_ok(c, nc(c, n), name, refined); }
-    if k == K_IF { return pl_use_ok(c, na(c, n), name, refined) && pl_uses_ok(c, nb(c, n), name, refined) && pl_uses_ok(c, nc(c, n), name, refined); }
-    if k == K_WHILE { return pl_use_ok(c, na(c, n), name, refined) && pl_uses_ok(c, nb(c, n), name, refined); }
-    if k == K_FOR { return pl_use_ok(c, nb(c, n), name, refined) && pl_uses_ok(c, nc(c, n), name, refined); }
-    if k == K_RETURN { return pl_use_opt(c, na(c, n), name, refined); }
+    if k == K_MACROCALL { return pl_uses_ok(c, nb(c, n), name, mode) && pl_uses_ok(c, nc(c, n), name, mode); }
+    if k == K_IF { return pl_use_ok(c, na(c, n), name, mode) && pl_uses_ok(c, nb(c, n), name, mode) && pl_uses_ok(c, nc(c, n), name, mode); }
+    if k == K_WHILE { return pl_use_ok(c, na(c, n), name, mode) && pl_uses_ok(c, nb(c, n), name, mode); }
+    if k == K_FOR { return pl_use_ok(c, nb(c, n), name, mode) && pl_uses_ok(c, nc(c, n), name, mode); }
+    if k == K_RETURN { return pl_use_opt(c, na(c, n), name, mode); }
     if k == K_ASSIGN {
         if pl_is_name(c, na(c, n), name) {
-            return pl_use_ok(c, nb(c, n), name, refined);
+            // heap-autofree frees the old cell here, so the new one must be
+            // fresh too (deep-fresh for drop glue).
+            if mode == 2 && !pl_fresh_site(c, nb(c, n)) {
+                return false;
+            }
+            // A stack cell reassigned a fresh heap cell could never free
+            // it: heap-autofree frees each one at the next `name = v`.
+            if mode == 1 && pl_fresh_site(c, nb(c, n)) {
+                return false;
+            }
+            if mode == 3 && !pl_deep_fresh(c, nb(c, n)) {
+                return false;
+            }
+            return pl_use_ok(c, nb(c, n), name, mode);
         }
-        return pl_use_ok(c, na(c, n), name, refined) && pl_use_ok(c, nb(c, n), name, refined);
+        return pl_use_ok(c, na(c, n), name, mode) && pl_use_ok(c, nb(c, n), name, mode);
     }
-    if k == K_LET { return pl_use_ok(c, nd(c, n), name, refined); }
+    if k == K_LET { return pl_use_ok(c, nd(c, n), name, mode); }
     if k == K_LETD {
         if pl_is_name(c, nc(c, n), name) && nk(c, na(c, n)) != P_IDENT {
-            return true;
+            return mode < 3;
         }
-        return pl_use_ok(c, nc(c, n), name, refined);
+        return pl_use_ok(c, nc(c, n), name, mode);
     }
     if k == K_MATCH {
         let arms = nb(c, n);
         if pl_is_name(c, na(c, n), name) {
+            if mode == 3 {
+                return false;
+            }
             let mut j: i64 = 0;
             while j < list_len(c, arms) {
                 if nk(c, list_at(c, arms, j)) == P_IDENT {
@@ -2970,12 +3149,12 @@ fn pl_use_ok(c: i64, n: i64, name: i64, refined: bool) -> bool {
                 }
                 j = j + 3;
             }
-        } else if !pl_use_ok(c, na(c, n), name, refined) {
+        } else if !pl_use_ok(c, na(c, n), name, mode) {
             return false;
         }
         let mut i: i64 = 0;
         while i < list_len(c, arms) {
-            if !pl_use_opt(c, list_at(c, arms, i + 1), name, refined) || !pl_use_ok(c, list_at(c, arms, i + 2), name, refined) {
+            if !pl_use_opt(c, list_at(c, arms, i + 1), name, mode) || !pl_use_ok(c, list_at(c, arms, i + 2), name, mode) {
                 return false;
             }
             i = i + 3;
@@ -2988,10 +3167,10 @@ fn pl_use_ok(c: i64, n: i64, name: i64, refined: bool) -> bool {
     return false;
 }
 
-fn pl_rest_ok(c: i64, body: i64, from: i64, name: i64, refined: bool) -> bool {
+fn pl_rest_ok(c: i64, body: i64, from: i64, name: i64, mode: i64) -> bool {
     let mut i = from;
     while i < list_len(c, body) {
-        if !pl_use_ok(c, list_at(c, body, i), name, refined) {
+        if !pl_use_ok(c, list_at(c, body, i), name, mode) {
             return false;
         }
         i = i + 1;
@@ -3124,12 +3303,12 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
         return 0;
     }
     let mut place = PL_HEAP;
-    if body >= 0 && kind == 1 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, false) {
+    if body >= 0 && kind == 1 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, 0) {
         place = PL_STACK;
-    } else if body >= 0 && kind >= 2 && kind <= 4 && i + 1 < list_len(c, body) && pl_cell_fits(c, p, v) && pl_rest_ok(c, body, i + 1, name, true) {
+    } else if body >= 0 && kind >= 2 && kind <= 4 && i + 1 < list_len(c, body) && pl_cell_fits(c, p, v) && pl_rest_ok(c, body, i + 1, name, 1) {
         place = PL_STACK;
         vset(p, PS_WORDS, vget(p, PS_WORDS) + pl_cell_words(c, v));
-    } else if body >= 0 && pl_rest_ok(c, body, i + 1, name, true) {
+    } else if body >= 0 && (kind == 4 || pl_drop_kind(c, pl_site_type(c, v)) != 0) && pl_rest_ok(c, body, i + 1, name, 2) {
         place = PL_AUTO;
     }
     let mut ends: i64 = -1;
@@ -3142,6 +3321,10 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
         }
     }
     pl_record(c, p, v, place, ends);
+    vset(ck(c, CK_LIFE), LT_CURTY, pl_site_type(c, v));
+    if place == PL_AUTO && pl_deep_fresh(c, v) && pl_rest_ok(c, body, i + 1, name, 3) {
+        vset(vget(ck(c, CK_LIFE), LT_DEEP), v, 1);
+    }
     pl_parts(c, p, v);
     if place == PL_STACK && kind == 1 {
         return ends + 1;
@@ -3343,10 +3526,11 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_SITES {
+    while vlen(table) <= LT_CURTY {
         vpush(table, 0);
     }
     vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
+    vset(table, LT_DEEP, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     vset(table, LT_SITES, vnew_cap(256));
     let p = vfill(vnew_cap(PS_WIDTH), PS_WIDTH, 0);
     vset(p, PS_FLAG, vfill(vnew_cap(name_count(c) + 1), name_count(c), 0));
@@ -3420,6 +3604,9 @@ fn life_place_dump(c: i64) -> i64 {
         sb_add(b, pl_kind_text(pl_site_kind(c, n)));
         sb_add(b, " ");
         sb_add(b, pl_place_text(vget(sites, i + 2)));
+        if life_auto_deep(c, n) {
+            sb_add(b, " deep");
+        }
         sb_add(b, " ends ");
         if vget(sites, i + 3) < 0 {
             sb_add(b, "-");

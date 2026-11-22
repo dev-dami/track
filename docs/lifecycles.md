@@ -5,8 +5,13 @@ Status: design, partly implemented. Base: `agent/track-race` at
 L7 landed: `life.trk` builds the placement plan (`PLACE`/`ENDS`, dumped by
 `trackc life --place`) and cgen takes its stack tuples from it.
 L8 landed: cgen puts struct, array and payload-union literals planned
-`stack` in `tk_w sN[k]` slots (C structs: 78k faults, was 109k); other
-places are not acted on yet (L9+).
+`stack` in `tk_w sN[k]` slots (C structs: 78k faults, was 109k).
+L9 landed: cgen frees `heap-autofree` struct, tuple, array and union
+cells when their block ends or a `return` leaves it, and the old cell at
+each fresh reassignment; sites dumped `deep` also run drop glue into
+fresh child cells. Locals reassigned fresh cells are autofree, not stack
+(C structs: 89 faults, wall ~180 ms median on the loaded host). Str and
+handles wait for L13; ret-slot and the native backend are not acted on yet.
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors

@@ -1,0 +1,33 @@
+// L9: a cell that is returned, or that flows into a returned cell, is
+// never freed by the function that built it.
+struct Inner { v: i64 }
+struct Outer { inner: Inner, n: i64 }
+
+fn direct(i: i64) -> Outer {
+    let mut o = Outer { inner: Inner { v: i }, n: 0 };
+    o.n = i * 2;
+    return o;
+}
+
+fn wrapped(i: i64) -> Outer {
+    let a = Inner { v: i + 1 };
+    return Outer { inner: a, n: 1 };
+}
+
+fn field_out(i: i64) -> Inner {
+    let o = direct(i);
+    return o.inner;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 20 {
+        let d = direct(i);
+        let w = wrapped(i);
+        let f = field_out(i);
+        total = total + d.n + d.inner.v + w.n + w.inner.v + f.v;
+        i = i + 1;
+    }
+    print(total);
+}

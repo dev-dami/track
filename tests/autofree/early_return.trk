@@ -1,0 +1,27 @@
+// L9: heap-autofree locals live across an early return. Each return frees
+// every cell declared so far in the enclosing blocks, after its value is
+// read; a block that ends normally frees its own.
+struct Pair { a: i64, b: i64 }
+
+fn mk(a: i64, b: i64) -> Pair {
+    return Pair { a: a, b: b };
+}
+
+fn find(limit: i64) -> i64 {
+    let base = mk(limit, 1);
+    let mut i: i64 = 0;
+    while i < limit {
+        let p = mk(i, i * i);
+        if p.b > base.a {
+            return p.a + base.b;
+        }
+        i = i + 1;
+    }
+    return 0 - base.a;
+}
+
+fn main() -> void {
+    print(find(10));
+    print(find(30));
+    print(find(0));
+}

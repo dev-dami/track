@@ -1,0 +1,32 @@
+// L9: drop glue. A heap-autofree cell whose child cells are all fresh
+// frees them too, nested, for a struct literal and a fresh call result,
+// and for every cell a reassignment replaces. (A stack cell's heap
+// children, like the tuple's here, are not freed yet.)
+struct Inner { v: i64 }
+struct Mid { inner: Inner, w: i64 }
+struct Outer { mid: Mid, n: i64 }
+
+fn make(i: i64) -> Outer {
+    return Outer { mid: Mid { inner: Inner { v: i }, w: 2 }, n: 1 };
+}
+
+fn total_of(o: &Outer) -> i64 {
+    return o.n + o.mid.w + o.mid.inner.v;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut acc = make(0);
+    let mut i: i64 = 0;
+    while i < 25 {
+        let mut o = Outer { mid: Mid { inner: Inner { v: i }, w: 3 }, n: i };
+        let t = (Inner { v: i }, 7);
+        let c = make(i);
+        total = total + total_of(&o) + t.1 + total_of(&c);
+        o = Outer { mid: Mid { inner: Inner { v: 1 }, w: i }, n: 2 };
+        total = total + total_of(&o);
+        acc = make(i + total % 5);
+        i = i + 1;
+    }
+    print(total + total_of(&acc));
+}
