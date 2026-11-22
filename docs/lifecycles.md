@@ -250,6 +250,40 @@ through. E0214 is found at the literal; when the borrowed value is a
 `&` parameter, it is reported at each call site and names the caller's
 value (`'p'` in e5), or at the literal if nothing calls the function.
 
+*As built (L5w):* the four rules are widened; every case below has an
+error test and a look-alike that must check clean in
+`tests/selfhost_tests.rs` (`LIFE_ERRORS`, `LIFE_CLEAN`).
+
+- **E0211** also fires for an owned place read through a `&` variable
+  (`take(r.p)`, `take(*r)`, `r.0`, `r[i]`) passed to a by-value parameter
+  that dies or escapes; the message names the place (`'r.p' is only
+  lent`). A generic parameter `v: T` binds to the argument's own type: a
+  bare `&` variable there is lent (`eat(r)` is fine), but an owned place
+  through a reference is consumed (`eat(r.p)` is E0211). Copy places
+  (`r.n`) and `&r.p` never fire.
+- **E0212** also covers union payload literals
+  (`return U::P(&p)`: "inside the returned payload of 'U::P'"), `&`
+  aliases of a local inside a returned literal (`let b = &p; return (b, 7)`:
+  "..., through 'b'"), and variables bound to a literal that holds `&local`,
+  returned bare or inside a literal (`let t = (&p, 7); let u = t;
+  return u;`: "through 'u'"). Aliases of a parameter, and copies read
+  out of a holder (`return (u.1, 8)`), never fire.
+- **E0213** records targets for `r = q` (q a `&` variable: r gets q's
+  targets) and `r = f(&b)` when `f`'s summary says its result derives
+  from exactly one `&` parameter and nothing else (no FRESH, STATIC or
+  UNKNOWN bit); that argument's targets become r's.
+- **E0214** also checks tuple literals whose *expected* type makes two
+  elements owned: a declared return type (`-> (Point, Point)` with
+  `return (r, r)`), a `let` annotation, a parameter type, or a struct
+  field type. A tuple's inferred type keeps `&` elements as references,
+  so `(r, r)` as `(&Point, &Point)` is fine. The message reads
+  "elements 0 and 1 of the tuple both take ownership of the borrowed 'r'".
+
+Not covered: stores into a holder's field (`t.0 = &p`), `if`/`match`
+values as reference targets (a may-point, not a must-point), and
+owned payloads filled from a borrow (`U::P(r)`: the variant constructor
+has no summary, so its arguments are not checked yet).
+
 ### Warnings (suspicious, never fatal)
 
 | code | example | diagnostic |
