@@ -94,7 +94,7 @@ end
 
 -- ── lsp ─────────────────────────────────────────────────────────────
 M.lsp_config = {
-  cmd = { "track-lsp" },
+  cmd = { "trackc", "lsp" },
   filetypes = { "track" },
   root_dir = function(fname)
     local found = vim.fs.find({ "Track.toml", "yard.toml", ".git" }, { upward = true, path = vim.fs.dirname(fname) })[1]
@@ -115,8 +115,8 @@ M.setup_lsp = function(opts)
     configs.track_lsp = { default_config = M.lsp_config }
   end
   -- only autostart if binary exists
-  if not has("track-lsp") then
-    vim.notify("[track] track-lsp not on PATH — run scripts/install.sh", vim.log.levels.INFO)
+  if not has("trackc") then
+    vim.notify("[track] trackc not on PATH — build compiler/ and put trackc on PATH", vim.log.levels.INFO)
     return
   end
   lspconfig.track_lsp.setup(vim.tbl_deep_extend("force", {
