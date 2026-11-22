@@ -494,9 +494,15 @@ impl LinearChecker {
                     self.type_info.aliases.insert(name.clone(), target.clone());
                 }
                 Expr::EnumDef { name, variants, .. } => {
+                    for value in variants.iter().filter_map(|(_, v)| v.as_ref()) {
+                        const_divrem_ok(&self.const_values, value)?;
+                    }
                     for (vname, disc) in
                         crate::codegen::enum_discriminants(&self.const_values, variants)
                     {
+                        // A unit variant is a constant to later constants.
+                        self.const_values
+                            .insert(format!("{}::{}", name, vname), disc);
                         self.type_info
                             .variants
                             .insert(format!("{}::{}", name, vname), disc);
