@@ -1,0 +1,89 @@
+// resolver.trk — dependency resolution (port of src/yard/resolver.rs).
+//
+// A resolved dependency is a list: [name, version, kind, detail, branch]
+// where kind is RS_LOCAL (detail = path), RS_GIT (detail = url) or
+// RS_REGISTRY (detail = version). Only local paths are checked; git and
+// registry sources are reported and skipped, as in the Rust yard.
+
+import "yutil";
+import "manifest";
+
+const RS_LOCAL = 1;
+const RS_GIT = 2;
+const RS_REGISTRY = 3;
+
+fn resolved(name: i64, version: i64, kind: i64, detail: i64, branch: i64) -> i64 {
+    let r = vnew();
+    vpush(r, name);
+    vpush(r, version);
+    vpush(r, kind);
+    vpush(r, detail);
+    vpush(r, branch);
+    return r;
+}
+
+fn or_zero_version(v: i64) -> i64 {
+    if v == 0 {
+        return "0.0.0";
+    }
+    return v;
+}
+
+fn registry_warning(name: i64, version: i64) -> i64 {
+    return errln(text_cat3(text_cat3("  ⚠ Registry dependency '", name, "@"), version, "' — registry not yet available, skipping"));
+}
+
+// Returns [list|0, error|0].
+fn resolve(m: i64, root: i64) -> i64 {
+    let result = vnew();
+    let list = vnew();
+    vpush(result, list);
+    vpush(result, 0);
+    let deps = sorted_deps(m);
+    let mut i: i64 = 0;
+    while i < vlen(deps) {
+        let d = vget(deps, i);
+        let name = vget(d, D_NAME);
+        if vget(d, D_DETAILED) == 0 {
+            registry_warning(name, vget(d, D_VERSION));
+            vpush(list, resolved(name, vget(d, D_VERSION), RS_REGISTRY, vget(d, D_VERSION), 0));
+        } else if vget(d, D_PATH) != 0 {
+            let dep_path = join(root, vget(d, D_PATH));
+            if !exists(dep_path) {
+                vset(result, 0, 0);
+                vset(result, 1, text_cat3(text_cat3("Path dependency '", name, "' not found: "), dep_path, ""));
+                return result;
+            }
+            vpush(list, resolved(name, or_zero_version(vget(d, D_VERSION)), RS_LOCAL, dep_path, 0));
+        } else if vget(d, D_GIT) != 0 {
+            errln(text_cat3(text_cat3("  ⚠ Git dependency '", name, "' ("), vget(d, D_GIT), ") — git fetch not yet available, skipping"));
+            vpush(list, resolved(name, or_zero_version(vget(d, D_VERSION)), RS_GIT, vget(d, D_GIT), vget(d, D_BRANCH)));
+        } else if vget(d, D_VERSION) != 0 {
+            registry_warning(name, vget(d, D_VERSION));
+            vpush(list, resolved(name, vget(d, D_VERSION), RS_REGISTRY, vget(d, D_VERSION), 0));
+        } else {
+            vset(result, 0, 0);
+            vset(result, 1, text_cat3("Dependency '", name, "' must specify version, path, or git"));
+            return result;
+        }
+        i = i + 1;
+    }
+    return result;
+}
+
+// The "Using dependency" line the builder prints for `r`.
+fn describe_dep(r: i64) -> i64 {
+    let head = text_cat3(text_cat3("  Using dependency: ", vget(r, 0), " v"), vget(r, 1), " (");
+    let kind = vget(r, 2);
+    if kind == RS_LOCAL {
+        return text_cat3(head, text_cat("local path: ", vget(r, 3)), ")");
+    }
+    if kind == RS_GIT {
+        let mut branch: i64 = "None";
+        if vget(r, 4) != 0 {
+            branch = text_cat3("Some(\"", vget(r, 4), "\")");
+        }
+        return text_cat3(head, text_cat3(text_cat("git: ", vget(r, 3)), ", branch: ", branch), ")");
+    }
+    return text_cat3(head, text_cat("registry version: ", vget(r, 3)), ")");
+}

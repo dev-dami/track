@@ -1,0 +1,140 @@
+// cache.trk — target/.cache_meta.json (port of src/yard/cache.rs).
+//
+// The cache maps a project-relative source path to the hash its object was
+// built from. A cache is a list [keys, values]; it is written sorted by key
+// in the same pretty JSON the Rust yard wrote, so warm and clean builds of
+// the same sources produce byte-identical metadata.
+
+import "yutil";
+
+fn cache_new() -> i64 {
+    let c = vnew();
+    vpush(c, vnew());
+    vpush(c, vnew());
+    return c;
+}
+
+fn cache_file(target_dir: i64) -> i64 { return join(target_dir, ".cache_meta.json"); }
+
+fn cache_get(c: i64, key: i64) -> i64 {
+    let keys = vget(c, 0);
+    let mut i: i64 = 0;
+    while i < vlen(keys) {
+        if text_eq(vget(keys, i), key) {
+            return vget(vget(c, 1), i);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn cache_update(c: i64, key: i64, hash: i64) -> i64 {
+    let keys = vget(c, 0);
+    let mut i: i64 = 0;
+    while i < vlen(keys) {
+        if text_eq(vget(keys, i), key) {
+            vset(vget(c, 1), i, hash);
+            return 0;
+        }
+        i = i + 1;
+    }
+    vpush(keys, key);
+    vpush(vget(c, 1), hash);
+    return 0;
+}
+
+fn cache_is_cached(c: i64, key: i64, hash: i64, obj_path: i64) -> bool {
+    if !exists(obj_path) {
+        return false;
+    }
+    let cached = cache_get(c, key);
+    return cached != 0 && text_eq(cached, hash);
+}
+
+// The text between the quote at `start` and the next unescaped quote.
+fn json_string_at(s: i64, start: i64) -> i64 {
+    let b = sb_new();
+    let mut i = start + 1;
+    while i < text_len(s) && text_at(s, i) != 34 {
+        if text_at(s, i) == 92 && i + 1 < text_len(s) {
+            i = i + 1;
+        }
+        sb_byte(b, text_at(s, i));
+        i = i + 1;
+    }
+    return sb_text(b);
+}
+
+// Read entries written by `cache_save` ("key": "value" lines). A missing or
+// unreadable file is an empty cache, as in the Rust yard.
+fn cache_load(target_dir: i64) -> i64 {
+    let c = cache_new();
+    let path = cache_file(target_dir);
+    if !exists(path) {
+        return c;
+    }
+    let lines = split_lines(read_text(path));
+    let mut i: i64 = 0;
+    while i < vlen(lines) {
+        let line = text_trim(vget(lines, i));
+        if text_starts(line, "\"") && !text_starts(line, "\"entries\"") {
+            let key = json_string_at(line, 0);
+            let colon = str_find(line, "\": \"");
+            if colon > 0 {
+                cache_update(c, key, json_string_at(line, colon + 3));
+            }
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn json_str(s: i64) -> i64 {
+    let b = sb_new();
+    sb_byte(b, 34);
+    let n = text_len(s);
+    let mut i: i64 = 0;
+    while i < n {
+        let ch = text_at(s, i);
+        if ch == 34 || ch == 92 {
+            sb_byte(b, 92);
+        }
+        sb_byte(b, ch);
+        i = i + 1;
+    }
+    sb_byte(b, 34);
+    return sb_text(b);
+}
+
+// Returns "" on success, else the error message.
+fn cache_save(c: i64, target_dir: i64) -> i64 {
+    let keys = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(vget(c, 0)) {
+        vpush(keys, vget(vget(c, 0), i));
+        i = i + 1;
+    }
+    sort_texts(keys);
+    let b = sb_new();
+    if vlen(keys) == 0 {
+        sb_add(b, "{\n  \"entries\": {}\n}");
+    } else {
+        sb_add(b, "{\n  \"entries\": {\n");
+        i = 0;
+        while i < vlen(keys) {
+            let k = vget(keys, i);
+            sb_add(b, text_cat3("    ", json_str(k), ": "));
+            sb_add(b, json_str(cache_get(c, k)));
+            if i + 1 < vlen(keys) {
+                sb_add(b, ",");
+            }
+            sb_add(b, "\n");
+            i = i + 1;
+        }
+        sb_add(b, "  }\n}");
+    }
+    if write_text(cache_file(target_dir), sb_text(b)) != 0 {
+        return "Failed to write build cache";
+    }
+    return "";
+}

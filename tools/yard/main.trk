@@ -1,0 +1,254 @@
+// main.trk — yard, the Track package manager and build tool, in Track.
+//
+//   trackc build --native tools/yard/main.trk -o yard
+//
+// Port of the Rust yard (src/yard/*.rs, src/yard_bin.rs); see docs/yard.md.
+// Module layout:
+//   yutil.trk     text, list, shell and FNV-1a helpers
+//   manifest.trk  Track.toml reader and writer
+//   cache.trk     target/.cache_meta.json
+//   resolver.trk  dependency resolution
+//   builder.trk   build / check / test, driving trackc
+//   main.trk      command dispatch and the remaining commands
+
+import "yutil";
+import "manifest";
+import "cache";
+import "resolver";
+import "builder";
+
+fn usage() -> i64 {
+    errln("Yard - Track Package Manager");
+    errln("");
+    errln("USAGE:");
+    errln("    yard <command> [options]");
+    errln("");
+    errln("COMMANDS:");
+    errln("    init <name>     Create a new Track project");
+    errln("    build           Build the current project");
+    errln("    run             Build and run the current project");
+    errln("    add <pkg>       Add a dependency");
+    errln("    check           Check the project for errors");
+    errln("    lint            Lint the project without building");
+    errln("    clean           Clean target build directory");
+    errln("    test            Run native Track tests (src/*_test.trk, tests/**/*.trk)");
+    errln("    help            Show this help");
+    return 0;
+}
+
+// Arguments after the command: a list of texts.
+fn command_args() -> i64 {
+    let v = vnew();
+    let mut i: i64 = 2;
+    while i < arg_count() {
+        vpush(v, arg_text(i));
+        i = i + 1;
+    }
+    return v;
+}
+
+// Nearest directory at or above the current one holding Track.toml, or 0.
+fn find_project_root() -> i64 {
+    let mut dir = cwd();
+    let mut going = true;
+    while going {
+        if exists(join(dir, "Track.toml")) {
+            return dir;
+        }
+        if text_eq(dir, "/") || text_eq(dir, ".") || text_len(dir) == 0 {
+            going = false;
+        } else {
+            dir = dir_name(dir);
+        }
+    }
+    return 0;
+}
+
+fn no_root() -> i64 {
+    return "No Track.toml found in current directory or any parent. Run 'yard init <name>' to create a project.";
+}
+
+// Load <root>/Track.toml; on failure returns 0 and stores the error in `slot`.
+fn load_root_manifest(root: i64, slot: i64) -> i64 {
+    let m = manifest_load(join(root, "Track.toml"));
+    if vget(m, M_ERROR) != 0 {
+        vset(slot, 0, vget(m, M_ERROR));
+        return 0;
+    }
+    return m;
+}
+
+fn cmd_init(args: i64) -> i64 {
+    if vlen(args) == 0 {
+        return "Usage: track yard init <project_name>";
+    }
+    let name = vget(args, 0);
+    if exists(name) {
+        return text_cat3("Directory '", name, "' already exists");
+    }
+    if make_dirs(join(name, "src")) != 0 {
+        return "Failed to create directory";
+    }
+    let saved = manifest_save(manifest_new(base_name(name)), join(name, "Track.toml"));
+    if text_len(saved) > 0 {
+        return saved;
+    }
+    if write_text(join(name, "src/main.trk"), "fn main() -> void {\n    print(42);\n}\n") != 0 {
+        return "Failed to write main.trk";
+    }
+    if write_text(join(name, ".gitignore"), "/target\n/yard.lock\n") != 0 {
+        return "Failed to write .gitignore";
+    }
+    outln(text_cat3("✓ Created project '", name, "'"));
+    outln(text_cat3("  ", name, "/Track.toml"));
+    outln(text_cat3("  ", name, "/src/main.trk"));
+    outln("\nGet started:");
+    outln(text_cat("  cd ", name));
+    outln("  yard build");
+    outln("  yard run");
+    return "";
+}
+
+fn cmd_add(root: i64, args: i64) -> i64 {
+    if vlen(args) == 0 {
+        return "Usage: yard add <package> [--version <ver>] [--path <path>] [--git <url>]";
+    }
+    let pkg = vget(args, 0);
+    let path = join(root, "Track.toml");
+    let m = manifest_load(path);
+    if vget(m, M_ERROR) != 0 {
+        return vget(m, M_ERROR);
+    }
+    let mut version: i64 = 0;
+    let mut dep_path: i64 = 0;
+    let mut git: i64 = 0;
+    let mut i: i64 = 1;
+    while i < vlen(args) {
+        let a = vget(args, i);
+        let mut value: i64 = 0;
+        if i + 1 < vlen(args) {
+            value = vget(args, i + 1);
+        }
+        if text_eq(a, "--version") || text_eq(a, "-v") {
+            version = value;
+            i = i + 1;
+        } else if text_eq(a, "--path") || text_eq(a, "-p") {
+            dep_path = value;
+            i = i + 1;
+        } else if text_eq(a, "--git") || text_eq(a, "-g") {
+            git = value;
+            i = i + 1;
+        }
+        i = i + 1;
+    }
+    if dep_path != 0 || git != 0 {
+        manifest_put_dep(m, dep_new(pkg, 1, version, git, dep_path, 0));
+    } else {
+        if version == 0 {
+            version = "0.1.0";
+        }
+        manifest_put_dep(m, dep_new(pkg, 0, version, 0, 0, 0));
+    }
+    let saved = manifest_save(m, path);
+    if text_len(saved) > 0 {
+        return saved;
+    }
+    outln(text_cat3("✓ Added dependency '", pkg, "'"));
+    return "";
+}
+
+fn cmd_run(root: i64, m: i64) -> i64 {
+    let built = build(root, m);
+    if text_len(built) > 0 {
+        return built;
+    }
+    let exe = join(join(root, "target"), vget(m, M_NAME));
+    let status = shell(sq(exe));
+    if status != 0 {
+        return text_cat3("Process exited with code: Some(", text_of_int(status), ")");
+    }
+    return "";
+}
+
+fn cmd_clean(root: i64) -> i64 {
+    let target = join(root, "target");
+    if exists(target) {
+        if remove_tree(target) != 0 || exists(target) {
+            return "Failed to clean target directory";
+        }
+    }
+    outln("✓ Cleaned build target directory");
+    return "";
+}
+
+// Commands that work on the enclosing project.
+fn project_command(command: i64, args: i64) -> i64 {
+    let root = find_project_root();
+    if root == 0 {
+        return no_root();
+    }
+    if text_eq(command, "add") {
+        return cmd_add(root, args);
+    }
+    if text_eq(command, "clean") {
+        return cmd_clean(root);
+    }
+    let slot = vnew();
+    vpush(slot, 0);
+    let m = load_root_manifest(root, slot);
+    if m == 0 {
+        return vget(slot, 0);
+    }
+    if text_eq(command, "build") {
+        return build(root, m);
+    }
+    if text_eq(command, "run") {
+        return cmd_run(root, m);
+    }
+    if text_eq(command, "check") {
+        return check(root, m);
+    }
+    if text_eq(command, "test") {
+        return test(root, m);
+    }
+    // lint
+    let checked = check(root, m);
+    if text_len(checked) > 0 {
+        return checked;
+    }
+    outln("✓ No issues found");
+    return "";
+}
+
+fn dispatch() -> i64 {
+    if arg_count() < 2 {
+        usage();
+        return "";
+    }
+    let command = arg_text(1);
+    if text_eq(command, "init") {
+        return cmd_init(command_args());
+    }
+    if text_eq(command, "build") || text_eq(command, "run") || text_eq(command, "add") || text_eq(command, "check") || text_eq(command, "lint") || text_eq(command, "clean") || text_eq(command, "test") {
+        return project_command(command, command_args());
+    }
+    if text_eq(command, "--version") || text_eq(command, "-v") || text_eq(command, "version") {
+        outln(text_cat("yard ", yard_version()));
+        return "";
+    }
+    if text_eq(command, "--help") || text_eq(command, "-h") || text_eq(command, "help") {
+        usage();
+        return "";
+    }
+    return text_cat3("Unknown yard command: '", command, "'");
+}
+
+fn main() -> i64 {
+    let e = dispatch();
+    if text_len(e) > 0 {
+        errln(text_cat("yard error: ", e));
+        quit(1);
+    }
+    quit(0);
+    return 0;
+}

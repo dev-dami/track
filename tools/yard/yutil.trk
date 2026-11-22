@@ -1,0 +1,271 @@
+// yutil.trk — text, list and file helpers for yard.
+//
+// Strings and lists are i64 handles, as in the compiler (compiler/src/base.trk).
+// Every OS operation yard needs beyond the runtime builtins (mkdir -p,
+// rm -rf, directory walks, cp, cksum) goes through `sys_exec` and /bin/sh,
+// so yard adds no runtime primitive.
+
+fn vnew() -> i64 { return track_i64_collection_new(16); }
+fn vlen(v: i64) -> i64 { return track_i64_collection_len(v); }
+fn vpush(v: i64, x: i64) -> i64 { return track_i64_collection_push(v, x); }
+fn vget(v: i64, i: i64) -> i64 { return track_i64_collection_get(v, i); }
+fn vset(v: i64, i: i64, x: i64) -> i64 { return track_i64_collection_set(v, i, x); }
+
+fn sb_new() -> i64 { return track_sb_new(); }
+fn sb_add(b: i64, s: i64) -> i64 { return track_sb_push(b, s); }
+fn sb_byte(b: i64, x: i64) -> i64 { return track_sb_push_byte(b, x); }
+fn sb_text(b: i64) -> i64 { return track_sb_str(b); }
+
+fn text_eq(a: i64, b: i64) -> bool { return str_eq(a, b); }
+fn text_len(s: i64) -> i64 { return str_len(s); }
+fn text_cat(a: i64, b: i64) -> i64 { return str_concat(a, b); }
+fn text_cat3(a: i64, b: i64, c: i64) -> i64 { return text_cat(text_cat(a, b), c); }
+fn text_of_int(n: i64) -> i64 { return int_to_str(n); }
+fn text_ends(s: i64, suffix: i64) -> bool { return str_ends_with(s, suffix); }
+fn text_starts(s: i64, prefix: i64) -> bool { return str_starts_with(s, prefix); }
+fn text_has(s: i64, sub: i64) -> bool { return str_find(s, sub) >= 0; }
+fn text_sub(s: i64, start: i64, len: i64) -> i64 { return str_substr(s, start, len); }
+fn text_from(s: i64, start: i64) -> i64 { return str_substr(s, start, text_len(s) - start); }
+fn text_trim(s: i64) -> i64 { return str_trim(s); }
+fn text_at(s: i64, i: i64) -> i64 { return str_char_at(s, i); }
+
+// Byte-wise ordering: negative, zero or positive (Rust `String` order).
+fn text_cmp(a: i64, b: i64) -> i64 {
+    let na = text_len(a);
+    let nb = text_len(b);
+    let mut i: i64 = 0;
+    while i < na && i < nb {
+        let x = text_at(a, i);
+        let y = text_at(b, i);
+        if x != y {
+            return x - y;
+        }
+        i = i + 1;
+    }
+    return na - nb;
+}
+
+// Sort a list of texts in place (insertion sort; lists are short).
+fn sort_texts(v: i64) -> i64 {
+    let mut i: i64 = 1;
+    while i < vlen(v) {
+        let x = vget(v, i);
+        let mut j = i - 1;
+        let mut moving = true;
+        while moving {
+            if j < 0 {
+                moving = false;
+            } else if text_cmp(vget(v, j), x) > 0 {
+                vset(v, j + 1, vget(v, j));
+                j = j - 1;
+            } else {
+                moving = false;
+            }
+        }
+        vset(v, j + 1, x);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Split on '\n', dropping empty lines.
+fn split_lines(s: i64) -> i64 {
+    let v = vnew();
+    let n = text_len(s);
+    let mut start: i64 = 0;
+    let mut i: i64 = 0;
+    while i <= n {
+        if i == n || text_at(s, i) == 10 {
+            if i > start {
+                vpush(v, text_sub(s, start, i - start));
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn out(s: i64) -> i64 { return track_out(s); }
+fn outln(s: i64) -> i64 { return track_out(text_cat(s, "\n")); }
+fn errln(s: i64) -> i64 { return track_err(text_cat(s, "\n")); }
+fn quit(code: i64) -> i64 { return sys_exit(code); }
+fn shell(cmd: i64) -> i64 { return sys_exec(cmd); }
+fn read_text(path: i64) -> i64 { return track_file_read(path); }
+fn write_text(path: i64, s: i64) -> i64 { return track_file_write_all(path, s); }
+fn exists(path: i64) -> bool { return file_exists(path) != 0; }
+fn is_dir(path: i64) -> bool { return dir_exists(path); }
+fn arg_count() -> i64 { return os_args_count(); }
+fn arg_text(i: i64) -> i64 { return os_arg(i); }
+
+fn env_or_empty(name: i64) -> i64 {
+    if env_exists(name) != 0 {
+        return env_get(name);
+    }
+    return "";
+}
+
+// Wrap in single quotes for /bin/sh.
+fn sq(s: i64) -> i64 {
+    let b = sb_new();
+    sb_byte(b, 39);
+    let n = text_len(s);
+    let mut i: i64 = 0;
+    while i < n {
+        let ch = text_at(s, i);
+        if ch == 39 {
+            sb_add(b, "'\\''");
+        } else {
+            sb_byte(b, ch);
+        }
+        i = i + 1;
+    }
+    sb_byte(b, 39);
+    return sb_text(b);
+}
+
+fn last_slash(s: i64) -> i64 {
+    let mut i = text_len(s) - 1;
+    while i >= 0 {
+        if text_at(s, i) == 47 {
+            return i;
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
+// Final path component ("a/b/c" -> "c"; trailing slashes ignored).
+fn base_name(path: i64) -> i64 {
+    let mut p = path;
+    while text_len(p) > 1 && text_ends(p, "/") {
+        p = text_sub(p, 0, text_len(p) - 1);
+    }
+    let k = last_slash(p);
+    if k < 0 {
+        return p;
+    }
+    return text_from(p, k + 1);
+}
+
+// Directory part ("a/b/c" -> "a/b", "c" -> ".", "/c" -> "/").
+fn dir_name(path: i64) -> i64 {
+    let k = last_slash(path);
+    if k < 0 {
+        return ".";
+    }
+    if k == 0 {
+        return "/";
+    }
+    return text_sub(path, 0, k);
+}
+
+fn join(a: i64, b: i64) -> i64 {
+    if text_starts(b, "/") {
+        return b;
+    }
+    if text_ends(a, "/") {
+        return text_cat(a, b);
+    }
+    return text_cat3(a, "/", b);
+}
+
+// Strip "<prefix>/" from `path`, or return `path` unchanged.
+fn strip_dir(path: i64, prefix: i64) -> i64 {
+    let p = text_cat(prefix, "/");
+    if text_starts(path, p) {
+        return text_from(path, text_len(p));
+    }
+    return path;
+}
+
+fn cwd() -> i64 {
+    let pwd = env_or_empty("PWD");
+    if text_len(pwd) > 0 {
+        return pwd;
+    }
+    return ".";
+}
+
+fn absolute(path: i64) -> i64 {
+    if text_starts(path, "/") {
+        return path;
+    }
+    return join(cwd(), path);
+}
+
+fn make_dirs(dir: i64) -> i64 {
+    if is_dir(dir) {
+        return 0;
+    }
+    return shell(text_cat3("mkdir -p ", sq(dir), " 2>/dev/null"));
+}
+
+fn remove_tree(dir: i64) -> i64 {
+    return shell(text_cat3("rm -rf ", sq(dir), " 2>/dev/null"));
+}
+
+// A fresh scratch path under $TMPDIR (default /tmp).
+fn scratch_path(tag: i64) -> i64 {
+    let mut tmp = env_or_empty("TMPDIR");
+    if text_len(tmp) == 0 {
+        tmp = "/tmp";
+    }
+    let r = math_random() & 1048575;
+    let name = text_cat3(text_cat("yard_", tag), "_", text_cat3(text_of_int(clock_ms()), "_", text_of_int(r)));
+    return join(tmp, name);
+}
+
+// Run `cmd` and return its stdout, or "" when it fails.
+fn capture(cmd: i64) -> i64 {
+    let f = scratch_path("out");
+    let status = shell(text_cat3(cmd, " > ", sq(f)));
+    let text = read_text(f);
+    file_remove(f);
+    if status != 0 {
+        return "";
+    }
+    return text;
+}
+
+// Every `.trk` file under `dir`, recursively, sorted.
+fn find_trk(dir: i64) -> i64 {
+    let files = split_lines(capture(text_cat3("find -L ", sq(dir), " -type f -name '*.trk' 2>/dev/null")));
+    sort_texts(files);
+    return files;
+}
+
+// ---------------------------------------------------------------- FNV-1a 64
+
+fn fnv_start() -> i64 { return 0 - 3750763034362895579; } // 0xcbf29ce484222325
+
+fn fnv_byte(h: i64, b: i64) -> i64 {
+    let x = (h | b) - (h & b); // xor
+    return x * 1099511628211; // 0x100000001b3, wrapping
+}
+
+fn fnv_text(h: i64, s: i64) -> i64 {
+    let mut x = h;
+    let n = text_len(s);
+    let mut i: i64 = 0;
+    while i < n {
+        x = fnv_byte(x, text_at(s, i));
+        i = i + 1;
+    }
+    return x;
+}
+
+// 16 lowercase hex digits, as Rust's `format!("{:016x}", hash)`.
+fn hex16(h: i64) -> i64 {
+    let digits: i64 = "0123456789abcdef";
+    let b = sb_new();
+    let mut i: i64 = 0;
+    while i < 16 {
+        let nib = (h >> (60 - 4 * i)) & 15;
+        sb_byte(b, text_at(digits, nib));
+        i = i + 1;
+    }
+    return sb_text(b);
+}
+
+fn compute_hash(s: i64) -> i64 { return hex16(fnv_text(fnv_start(), s)); }
