@@ -104,7 +104,11 @@ fn test_cli_duplicate_function_is_a_diagnostic() {
 fn test_cli_duplicate_function_through_import_is_a_diagnostic() {
     let td = env::temp_dir().join(format!("track_cli_dupimp_{}", std::process::id()));
     let _ = fs::create_dir_all(&td);
-    fs::write(td.join("other.trk"), "fn place_root() -> i64 { return 1; }\n").unwrap();
+    fs::write(
+        td.join("other.trk"),
+        "fn place_root() -> i64 { return 1; }\n",
+    )
+    .unwrap();
     let f = td.join("main.trk");
     fs::write(
         &f,
