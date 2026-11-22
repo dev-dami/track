@@ -463,6 +463,7 @@ impl LinearChecker {
             }
         } // end if !barebones — std package (import "std") still works via Use handling
 
+        let mut defined = std::collections::HashSet::new();
         for stmt in program {
             match stmt {
                 Expr::ConstDef { name, value } => {
@@ -531,6 +532,12 @@ impl LinearChecker {
                     return_type,
                     ..
                 } => {
+                    if !defined.insert(name.clone()) {
+                        return Err(format!(
+                            "error[E0201]: duplicate definition of function '{}'",
+                            name
+                        ));
+                    }
                     if !generics.is_empty() {
                         // Generic templates are checked via their instances.
                         continue;
@@ -986,7 +993,11 @@ impl LinearChecker {
 
             Expr::ForIn { var, iter, body } => {
                 self.check_expr(iter)?;
-                let elem_ty = self.infer_type(iter).map_or(TrackType::I32, |ty| match ty {
+                let iter_ty = self.infer_type(iter).map(|ty| match ty {
+                    TrackType::Ref(inner) => *inner,
+                    other => other,
+                });
+                let elem_ty = iter_ty.map_or(TrackType::I32, |ty| match ty {
                     TrackType::Slice(inner) => *inner,
                     TrackType::Array(inner, _) => *inner,
                     _ => TrackType::I32,

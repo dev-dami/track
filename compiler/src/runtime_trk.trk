@@ -759,8 +759,10 @@ fn rt_module_source_1(b: i64) -> i64 {
     sb_line(b, "    return 0;");
     sb_line(b, "}");
     sb_line(b, "");
-    sb_line(b, "// Integer division by zero or INT64_MIN / -1: SIGFPE, without flushing.");
+    sb_line(b, "// Integer division by zero or INT64_MIN / -1: flush what was printed, then");
+    sb_line(b, "// SIGFPE (shell status 136), as runtime/track_runtime.c does.");
     sb_line(b, "fn track_trap_div() -> i64 {");
+    sb_line(b, "    rt_flush();");
     sb_line(b, "    let pid = sys0(SYS_GETPID);");
     sb_line(b, "    sys2(SYS_KILL, pid, 8);");
     sb_line(b, "    sys2(SYS_KILL, pid, 6);");

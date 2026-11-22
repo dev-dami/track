@@ -1,0 +1,7 @@
+// exit(code) flushes buffered stdout and ends the process with `code`.
+
+fn main() -> i64 {
+    print(1);
+    exit(3);
+    return 0;
+}

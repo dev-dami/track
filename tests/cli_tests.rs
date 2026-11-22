@@ -69,6 +69,36 @@ fn test_cli_version_reports_0_6() {
     );
 }
 
+/// K3b: a duplicate fn is a diagnostic matching trackc's, not a codegen panic.
+#[test]
+fn test_cli_duplicate_function_is_a_diagnostic() {
+    let td = env::temp_dir().join(format!("track_cli_dupfn_{}", std::process::id()));
+    let _ = fs::create_dir_all(&td);
+    let f = td.join("dup.trk");
+    fs::write(
+        &f,
+        "fn place_root() -> i64 { return 1; }\nfn place_root() -> i64 { return 2; }\nfn main() -> i64 { print(place_root()); return 0; }\n",
+    )
+    .unwrap();
+    for mode in ["check", "build"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_track"))
+            .args([mode, f.to_str().unwrap()])
+            .current_dir(&td)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{}: {}", mode, err);
+        assert!(
+            err.contains("error[E0201]: duplicate definition of function 'place_root'")
+                && !err.contains("panicked"),
+            "{}: {}",
+            mode,
+            err
+        );
+    }
+    let _ = fs::remove_dir_all(&td);
+}
+
 #[test]
 fn test_cli_check_generics_valid() {
     let td = env::temp_dir().join(format!("track_cli_gen_ok_{}", std::process::id()));

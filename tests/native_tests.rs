@@ -386,3 +386,55 @@ fn native_executables_have_a_non_executable_stack() {
     assert_eq!(u32_at(stack + 4), 6, "PT_GNU_STACK flags must be RW");
     let _ = fs::remove_dir_all(&dir);
 }
+
+// K3b: programs both backends once got wrong the same way, so parity alone
+// missed them. Each must print `stdout` and end with `code` (or be killed
+// by signal `sig`) under the C backend and natively.
+const K3B_PROGRAMS: [(&str, &str, Option<i32>, Option<i32>); 3] = [
+    (
+        "for_in",
+        "10\n20\n30\n3\n2\n3\n4\n10\n20\n30\n110\n120\n130\nab\ncde\n60\n11\n21\n31\n",
+        Some(0),
+        None,
+    ),
+    ("exit_flush", "1\n", Some(3), None),
+    ("divzero_flush", "1\n", None, Some(8)),
+];
+
+#[test]
+fn native_and_c_print_the_expected_output() {
+    use std::os::unix::process::ExitStatusExt;
+    let dir = scratch("k3b");
+    for (stem, stdout, code, sig) in K3B_PROGRAMS {
+        let src = format!("tests/native/{}.trk", stem);
+        for mode in ["c", "native"] {
+            let exe = dir.join(format!("{}_{}", stem, mode));
+            let mut args = vec!["build"];
+            if mode == "native" {
+                args.push("--native");
+            }
+            args.extend([src.as_str(), "-o", exe.to_str().unwrap()]);
+            let out = run(trackc(), &args, None);
+            assert!(
+                out.status.success(),
+                "{} {}: build failed: {}",
+                stem,
+                mode,
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let out = Command::new(&exe).output().unwrap();
+            assert_eq!(
+                (
+                    String::from_utf8_lossy(&out.stdout).to_string(),
+                    out.status.code(),
+                    out.status.signal()
+                ),
+                (stdout.to_string(), code, sig),
+                "{} {}: wrong behaviour",
+                stem,
+                mode
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}

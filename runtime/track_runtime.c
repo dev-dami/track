@@ -93,9 +93,10 @@ tk_w track_abort(tk_w msg) {
     return 0;
 }
 
-/* Integer division by zero or INT64_MIN / -1: trap like a hardware divide
- * fault (SIGFPE) without flushing buffered output. */
+/* Integer division by zero or INT64_MIN / -1: flush what was printed, then
+ * trap like a hardware divide fault (SIGFPE, shell status 136). */
 tk_w track_trap_div(void) {
+    fflush(stdout);
     raise(SIGFPE);
     abort();
     return 0;
