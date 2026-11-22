@@ -11,7 +11,9 @@ cells when their block ends or a `return` leaves it, and the old cell at
 each fresh reassignment; sites dumped `deep` also run drop glue into
 fresh child cells. Locals reassigned fresh cells are autofree, not stack
 (C structs: 89 faults, wall ~180 ms median on the loaded host). Str and
-handles wait for L13; ret-slot and the native backend are not acted on yet.
+handles wait for L13; ret-slot is not acted on yet.
+L11 landed: ngen puts the same `stack` literals in contiguous frame slots
+(`ng_site_cell`; native structs 0.88 of C in `bench/native.sh`).
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors
