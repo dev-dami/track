@@ -6,88 +6,12 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   build:
+    # Track from the committed C seed: cc and POSIX tools only.
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install LLVM
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 22
-          sudo apt-get install -y libpolly-22-dev zlib1g-dev libzstd-dev || true
-
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build
-        run: cargo build --release
-
-      - name: Run tests
-        run: cargo test
-
-      - name: Check examples
-        run: |
-          for f in examples/*.trk; do
-            echo "Checking $f..."
-            if [[ "$f" == *"_err.trk" ]]; then
-              if ./target/release/track check "$f" 2>/dev/null; then
-                echo "Error: Expected rejection for $f but check succeeded!"
-                exit 1
-              else
-                echo "✓ Rejection test passed for $f"
-              fi
-            else
-              ./target/release/track check "$f"
-            fi
-          done
-
-      - name: Native compiler package (yard)
-        run: |
-          scripts/embed_runtime.sh --check
-          (cd compiler && ../target/release/yard check)
-          (cd compiler && ../target/release/yard build)
-          (cd compiler && ../target/release/yard test)
-          for f in compiler/src/*.trk; do
-            echo "Checking $f..."
-            ./target/release/track check "$f"
-          done
-
-      - name: Bootstrap fixed point from Rust (stage0 -> stage3, then native)
-        run: YARD=./target/release/yard scripts/bootstrap.sh --from-rust
-
-      - name: Compiler sources are warning-clean
-        run: ./build/bootstrap/stage3/trackc check --deny-warnings compiler/src/main.trk
-
-      - name: Self-hosting from .trk alone (native, no C toolchain)
-        run: scripts/selfhost.sh
-
-      - name: Verify versions
-        run: |
-          ./target/release/track --version | grep -q "1.0.0"
-          ./target/release/yard --version | grep -q "1.0.0"
-          ./build/bootstrap/stage3/trackc --version | grep -q "1.0.0"
-          echo "✓ versions ok"
-
-
-  seed-bootstrap:
-    # Track from the committed C seed: cc and POSIX tools only, no Rust.
-    runs-on: ubuntu-latest
+    env:
+      TRACKC: ${{ github.workspace }}/build/bootstrap/stage3/trackc
     steps:
       - uses: actions/checkout@v4
 
@@ -104,36 +28,41 @@ jobs:
       - name: Seed is up to date
         run: env PATH=/usr/bin:/bin scripts/update_seed.sh --check
 
-      - name: Compiler sources are warning-clean
-        run: ./build/bootstrap/stage3/trackc check --deny-warnings compiler/src/main.trk
-
-      - name: yard (written in Track) passes its suite
+      - name: Compiler and yard sources are warning-clean
         run: |
-          ./build/bootstrap/stage3/trackc check --deny-warnings tools/yard/main.trk
-          env PATH=/usr/bin:/bin TRACKC="$PWD/build/bootstrap/stage3/trackc" tests/yard/run.sh
-      - name: Test suite without cargo (tests/run.sh)
+          env PATH=/usr/bin:/bin "$TRACKC" check --deny-warnings compiler/src/main.trk
+          env PATH=/usr/bin:/bin "$TRACKC" check --deny-warnings tools/yard/main.trk
+
+      - name: Test suite (tests/run.sh)
         run: env PATH=/usr/bin:/bin tests/run.sh -j "$(nproc)" -K
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: yard (written in Track) passes its suite
+        run: env PATH=/usr/bin:/bin tests/yard/run.sh
 
-      - name: Install LLVM
+      - name: trackc lsp passes its recorded sessions
+        run: env PATH=/usr/bin:/bin tests/lsp/run.sh "$TRACKC"
+
+      - name: Self-hosting from .trk alone (native, no C toolchain)
+        run: env PATH=/usr/bin:/bin scripts/selfhost.sh "$TRACKC"
+
+      - name: Check examples
         run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 22
-          sudo apt-get install -y libpolly-22-dev zlib1g-dev libzstd-dev || true
+          for f in examples/*.trk; do
+            if [[ "$f" == *"_err.trk" ]]; then
+              if env PATH=/usr/bin:/bin "$TRACKC" check "$f" >/dev/null 2>&1; then
+                echo "Error: expected rejection for $f but check succeeded"
+                exit 1
+              fi
+              echo "✓ rejected $f"
+            else
+              env PATH=/usr/bin:/bin "$TRACKC" check "$f"
+            fi
+          done
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
-
+      - name: Verify versions
+        run: |
+          mkdir -p build
+          env PATH=/usr/bin:/bin "$TRACKC" build --native tools/yard/main.trk -o build/yard >/dev/null
+          "$TRACKC" --version | grep -q "1.0.0"
+          build/yard --version | grep -q "1.0.0"
+          echo "✓ versions ok"

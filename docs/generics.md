@@ -56,4 +56,4 @@ identity(y)   // error: cannot infer T — annotate y first
 ## See Also
 
 - `examples/generics.trk` — working demo (`identity`, `pair`, nested calls)
-- `src/mono.rs` — the monomorphization pass (template table → per-site mangled instances)
+- `src/mono.rs` (deleted with the Rust compiler) — the Rust monomorphization pass; `trackc` emits one C function per template instead (see SPEC.md)

@@ -1,7 +1,9 @@
 # Porting the cargo test suites to tests/run.sh
 
 Card S2. Every `#[test]` (and `#[tokio::test]`) in `tests/*.rs`, its class,
-and where it lives now. The `.rs` suites stay until card S5 deletes them.
+and where it lives now. Card S5 deleted the `.rs` suites, the Rust stage0,
+yard and LSP, and `Cargo.toml`; the table is the record of where each test
+went.
 
 Classes:
 

@@ -8,8 +8,8 @@ trackc lsp
 
 It speaks JSON-RPC 2.0 over stdin/stdout with `Content-Length` framing
 (the LSP base protocol) and is written in Track (`compiler/src/lsp.trk`).
-The Rust `track-lsp` binary still builds but is deprecated; it will be
-removed with the rest of the Rust code.
+It replaced the Rust `track-lsp` binary, which has been deleted with the
+rest of the Rust code.
 
 ## Features
 
@@ -80,7 +80,7 @@ Any LSP client: run the command `trackc` with the argument `lsp`, for
 tests/lsp/run.sh path/to/trackc
 ```
 
-replays the recorded sessions in `tests/lsp/cases/` (no cargo needed).
+replays the recorded sessions in `tests/lsp/cases/`.
 `--update` re-records them.
 
 ## Syntax Highlighting

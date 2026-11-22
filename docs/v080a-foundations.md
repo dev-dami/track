@@ -107,7 +107,7 @@ Yard's build-order and artifact-naming milestone is complete:
   Existing JSON cache files remain readable; the new object paths force a
   rebuild when migrating from the old flat artifact layout.
 
-The regression gate is `cargo test --test yard_tests`. It covers colliding
+The regression gate was `cargo test --test yard_tests` and is now `tests/yard/run.sh`. It covers colliding
 basenames, a user module named `_track_runtime.trk`, warm-cache reuse, stable
 metadata after a clean build, and execution of the linked binary. These
 guarantees concern build ordering and artifact identity; byte-for-byte native

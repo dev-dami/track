@@ -150,7 +150,7 @@ Generic functions are **templates** monomorphized at call sites.
 - **Syntax**: `fn name<T, U>(x: T, y: U) -> T { ... }`.
 - **Inference**: Type parameters are inferred from argument types (variable bindings, literals). Annotate `let x: i64 = ...` when inference is ambiguous.
 - **Monomorphization**: Each distinct instantiation (`identity<i32>`, `identity<i64>`) produces a mangled concrete function (`identity__Ti32`). Call sites are rewritten; only instances are checked and emitted. No boxing, no runtime cost.
-- **Self-hosted backend**: because every value is a machine word (§11), `trackc` emits one C function per generic template; it behaves exactly like the per-instance functions of the Rust compiler.
+- **Self-hosted backend**: because every value is a machine word (§11), `trackc` emits one C function per generic template; it behaves exactly like the per-instance functions the former Rust compiler emitted.
 - **Limitations (v0.6.0)**: Generic functions are fully supported. Generic structs (`struct Stack<T>`) header-parsing is reserved for a follow-on; `Stack<T>` as a type argument is not yet monomorphized.
 
 ---
