@@ -197,6 +197,106 @@ fn collect_symbols_from(c: i64, from: i64) -> i64 {
     return 0;
 }
 
+// Runtime isolation (card K3a). The Track runtime (compiler/rt/) is loaded
+// after the user program, as items `from` on and nodes `node_from` on.
+// A runtime function or constant whose name the program already defines
+// is renamed to a fresh `__rt_<name>`, together with every call (or, for
+// a constant, every use) inside the runtime: the program's calls keep
+// reaching its own definition and the runtime's keep reaching the
+// runtime's. Names the code generators call directly (`alloc`, `str_eq`,
+// `track_*`...) cannot be split this way and stay E0201.
+fn isolate_runtime(c: i64, from: i64, node_from: i64) -> i64 {
+    let items = cx(c, CX_ITEMS);
+    let olds = vnew();
+    let news = vnew();
+    let kinds = vnew();
+    let mut i: i64 = from;
+    while i < vlen(items) {
+        let n = vget(items, i);
+        let k = nk(c, n);
+        let name = na(c, n);
+        let mut taken = false;
+        if k == K_FN || k == K_MACRODEF {
+            taken = ni(c, name, NI_FN) >= 0;
+        } else if k == K_CONST {
+            taken = ni(c, name, NI_CONST) >= 0;
+        }
+        if taken && k == K_CONST && emitter_entry(name_text(c, name)) {
+            // A reserved runtime constant (ngen reads it by name) cannot be
+            // split; constants are not otherwise checked for duplicates.
+            let user = ni(c, name, NI_CONST);
+            fail_at(c, npos(c, user), "E0201", text_cat3("duplicate definition of constant '", name_text(c, name), "' (reserved by the runtime)"));
+        }
+        if taken && !emitter_entry(name_text(c, name)) {
+            let fresh = fresh_runtime_name(c, name);
+            vpush(olds, name);
+            vpush(news, fresh);
+            vpush(kinds, k);
+            node_set_a(c, n, fresh);
+        }
+        i = i + 1;
+    }
+    if vlen(olds) == 0 {
+        return 0;
+    }
+    let mut m: i64 = node_from;
+    while m < node_count(c) {
+        let k = nk(c, m);
+        if k == K_CALL || k == K_VAR || k == K_MACROCALL {
+            let j = index_of(olds, na(c, m));
+            // A constant is read as a variable; a function is called.
+            if j >= 0 && (vget(kinds, j) == K_CONST) == (k == K_VAR) {
+                node_set_a(c, m, vget(news, j));
+            }
+        }
+        m = m + 1;
+    }
+    return 0;
+}
+
+fn node_set_a(c: i64, n: i64, v: i64) -> i64 {
+    return vset(cx(c, CX_NODES), n * N_WIDTH + 1, v);
+}
+
+fn index_of(v: i64, x: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(v) {
+        if vget(v, i) == x {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// `__rt_<name>`, lengthened with `_` until nothing uses it.
+fn fresh_runtime_name(c: i64, name: i64) -> i64 {
+    let mut text = text_cat("__rt_", name_text(c, name));
+    let mut id = intern(c, text);
+    while ni(c, id, NI_FN) >= 0 || ni(c, id, NI_CONST) >= 0 {
+        text = text_cat(text, "_");
+        id = intern(c, text);
+    }
+    return id;
+}
+
+// Runtime names cgen/ngen call by name (allocation, string compare, array
+// access, the entry point); a program defining one would capture those
+// calls, so it stays a duplicate definition.
+fn emitter_entry(n: i64) -> bool {
+    return text_eq(n, "alloc") || text_eq(n, "dealloc") || text_eq(n, "str_eq")
+        || text_eq(n, "str_len") || text_eq(n, "str_char_at") || text_eq(n, "array_len")
+        || text_eq(n, "sys_exit") || text_eq(n, "rt_start") || text_eq(n, "memset")
+        || text_eq(n, "main") || text_starts(n, "track_") || ng_layout_const(n);
+}
+
+// Runtime-state layout constants that ngen's inline alloc/free read by name
+// (`ng_rt_const`); a user const of the same name must stay an E0201 clash.
+fn ng_layout_const(n: i64) -> bool {
+    return text_eq(n, "RT_BASE") || text_eq(n, "RS_USED") || text_eq(n, "RS_HEAP")
+        || text_eq(n, "RS_LIMIT") || text_eq(n, "RS_HEAP_END") || text_eq(n, "RS_FREE");
+}
+
 // Discriminant of `Type::Variant`, or -1 when it is not a known variant.
 fn variant_disc(c: i64, name: i64) -> i64 {
     if ni(c, name, NI_OWNER) < 0 {

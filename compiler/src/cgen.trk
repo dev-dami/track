@@ -462,7 +462,7 @@ fn gen_call_rs(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
             emit(c, text_cat3(t, " = ", text_cat(call_text(rs_symbol(c, target), full, arity + 1), ";")));
             return t;
         }
-        emit(c, text_cat3(t, " = ", text_cat(call_text(text_cat("tk_", name_text(c, target)), args, arity), ";")));
+        emit(c, text_cat3(t, " = ", text_cat(call_text(fn_symbol(c, target), args, arity), ";")));
         return t;
     }
     if gen_raw_builtin(c, name_text(c, target), args, t) {
@@ -747,7 +747,7 @@ fn gen_new_slot(c: i64, words: i64) -> i64 {
 // calls `tk_<f>__rs`; callers whose result must be heap use it.
 
 fn rs_symbol(c: i64, name: i64) -> i64 {
-    return text_cat3("tk_", name_text(c, name), "__rs");
+    return text_cat(fn_symbol(c, name), "__rs");
 }
 
 // The call `v` of a ret-slot function writing its result into `cell`.
@@ -1087,8 +1087,23 @@ fn gen(c: i64, n: i64) -> i64 {
 
 // ------------------------------------------------------------ functions
 
+// C symbol of the Track function `name`: `tk_<name>`, or `tku_<name>`
+// when `tk_<name>` is a symbol of the C prelude or runtime (`tk_w`,
+// `tk_shl`, ...), so a user function may take any name. The two prefixes
+// never meet: `tku_x` is never `tk_` followed by a name.
 fn fn_symbol(c: i64, name: i64) -> i64 {
-    return text_cat("tk_", name_text(c, name));
+    let text = name_text(c, name);
+    if c_reserved(text) {
+        return text_cat("tku_", text);
+    }
+    return text_cat("tk_", text);
+}
+
+// Names `n` whose `tk_<n>` the C prelude or runtime defines.
+fn c_reserved(n: i64) -> bool {
+    return text_eq(n, "w") || text_eq(n, "shl") || text_eq(n, "shr") || text_eq(n, "div")
+        || text_eq(n, "mod") || text_eq(n, "dup") || text_eq(n, "dup_n") || text_eq(n, "bounds")
+        || text_starts(n, "bump_") || text_eq(n, "coll") || text_starts(n, "coll_");
 }
 
 fn fn_signature(c: i64, f: i64) -> i64 {
@@ -1356,8 +1371,8 @@ fn track_runtime_entry(c: i64, out: i64) -> i64 {
                 sb_add(b, "tk_w");
                 a = a + 1;
             }
-            sb_add(b, ") __attribute__((alias(\"tk_");
-            sb_add(b, name_text(c, id));
+            sb_add(b, ") __attribute__((alias(\"");
+            sb_add(b, fn_symbol(c, id));
             sb_add(b, "\")));");
             sb_line(out, sb_text(b));
         }
