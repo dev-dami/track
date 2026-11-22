@@ -17,13 +17,11 @@ import "checker";
 import "life";
 
 // ------------------------------------------------------------------ JSON
-// A value is a word vector [kind, x]: x is 0/1 (bool), the raw text
-// (number), the text (string), a vector of values (array), or a vector of
-// alternating key, value (object).
+// A value is a word vector [kind, x]: x is the raw text (number, true,
+// false, null), the text (string), a vector of values (array), or a vector
+// of alternating key, value (object).
 
-const LJ_NULL = 0;
-const LJ_BOOL = 1;
-const LJ_NUM = 2;
+const LJ_RAW = 2;
 const LJ_STR = 3;
 const LJ_ARR = 4;
 const LJ_OBJ = 5;
@@ -61,19 +59,17 @@ fn lj_ws(st: i64) -> i64 {
     return b;
 }
 
+fn lsp_hexdigit(b: i64) -> i64 {
+    if b >= 97 { return b - 87; }
+    if b >= 65 { return b - 55; }
+    return b - 48;
+}
+
 fn lj_hex(st: i64) -> i64 {
     let mut v: i64 = 0;
     let mut i: i64 = 0;
     while i < 4 {
-        let b = lj_peek(st);
-        let mut d: i64 = -1;
-        if b >= 48 && b <= 57 { d = b - 48; }
-        if b >= 97 && b <= 102 { d = b - 87; }
-        if b >= 65 && b <= 70 { d = b - 55; }
-        if d < 0 {
-            return lj_bad(st) - 1;
-        }
-        v = v * 16 + d;
+        v = v * 16 + lsp_hexdigit(lj_peek(st));
         lj_skip(st, 1);
         i = i + 1;
     }
@@ -81,21 +77,24 @@ fn lj_hex(st: i64) -> i64 {
 }
 
 fn lj_utf8(sb: i64, cp: i64) -> i64 {
-    if cp <= 0 { return 0; }
-    if cp < 128 { return sb_byte(sb, cp); }
-    if cp < 2048 {
-        sb_byte(sb, 192 + cp / 64);
-        return sb_byte(sb, 128 + cp % 64);
+    if cp < 128 {
+        if cp > 0 { sb_byte(sb, cp); }
+        return 0;
     }
-    if cp < 65536 {
-        sb_byte(sb, 224 + cp / 4096);
-        sb_byte(sb, 128 + (cp / 64) % 64);
-        return sb_byte(sb, 128 + cp % 64);
+    let mut shift: i64 = 64;
+    let mut room: i64 = 32;
+    let mut lead: i64 = 192;
+    while cp >= shift * room {
+        shift = shift * 64;
+        room = room / 2;
+        lead = lead / 2 + 128;
     }
-    sb_byte(sb, 240 + cp / 262144);
-    sb_byte(sb, 128 + (cp / 4096) % 64);
-    sb_byte(sb, 128 + (cp / 64) % 64);
-    return sb_byte(sb, 128 + cp % 64);
+    sb_byte(sb, lead + cp / shift);
+    while shift > 1 {
+        shift = shift / 64;
+        sb_byte(sb, 128 + (cp / shift) % 64);
+    }
+    return 0;
 }
 
 // At the opening quote; returns the unescaped text.
@@ -134,22 +133,6 @@ fn lj_string(st: i64) -> i64 {
     return sb_text(sb);
 }
 
-// Match the literal `word` at the cursor.
-fn lj_word(st: i64, word: i64) -> bool {
-    let w = text_bytes(word);
-    let bytes = vget(st, 0);
-    let pos = vget(st, 1);
-    let mut i: i64 = 0;
-    while i < vlen(w) {
-        if pos + i >= vlen(bytes) || vget(bytes, pos + i) != vget(w, i) {
-            return false;
-        }
-        i = i + 1;
-    }
-    lj_skip(st, vlen(w));
-    return true;
-}
-
 fn lj_value(st: i64) -> i64 {
     let b = lj_ws(st);
     if b == 34 { return lj_node(LJ_STR, lj_string(st)); }
@@ -185,19 +168,16 @@ fn lj_value(st: i64) -> i64 {
         }
         return lj_node(LJ_ARR, items);
     }
-    if lj_word(st, "true") { return lj_node(LJ_BOOL, 1); }
-    if lj_word(st, "false") { return lj_node(LJ_BOOL, 0); }
-    if lj_word(st, "null") { return lj_node(LJ_NULL, 0); }
     let start = vget(st, 1);
     let mut c = lj_peek(st);
-    while (c >= 48 && c <= 57) || c == 45 || c == 43 || c == 46 || c == 101 || c == 69 {
+    while (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || c == 45 || c == 43 || c == 46 || c == 69 {
         lj_skip(st, 1);
         c = lj_peek(st);
     }
     if vget(st, 1) == start {
         return lj_bad(st);
     }
-    return lj_node(LJ_NUM, str_substr(vget(st, 3), start, vget(st, 1) - start));
+    return lj_node(LJ_RAW, str_substr(vget(st, 3), start, vget(st, 1) - start));
 }
 
 // The value `text` holds, or 0 when it is not valid JSON.
@@ -252,12 +232,16 @@ fn lj_text(v: i64, path: i64) -> i64 {
     return 0;
 }
 
-fn lj_int(v: i64, path: i64) -> i64 {
-    let x = lj_at(v, path);
-    if x != 0 && vget(x, 0) == LJ_NUM {
-        return str_to_int(vget(x, 1));
+// Raw text of a number or literal value, else `other`.
+fn lj_text_or(v: i64, other: i64) -> i64 {
+    if v != 0 && vget(v, 0) == LJ_RAW {
+        return vget(v, 1);
     }
-    return 0;
+    return other;
+}
+
+fn lj_int(v: i64, path: i64) -> i64 {
+    return str_to_int(lj_text_or(lj_at(v, path), "0"));
 }
 
 fn lj_quote(b: i64, s: i64) -> i64 {
@@ -283,35 +267,6 @@ fn lj_quote(b: i64, s: i64) -> i64 {
     return sb_byte(b, 34);
 }
 
-fn lj_write(b: i64, v: i64) -> i64 {
-    let k = vget(v, 0);
-    if k == LJ_STR { return lj_quote(b, vget(v, 1)); }
-    if k == LJ_NUM { return sb_add(b, vget(v, 1)); }
-    if k == LJ_BOOL && vget(v, 1) == 1 { return sb_add(b, "true"); }
-    if k == LJ_BOOL { return sb_add(b, "false"); }
-    if k == LJ_NULL { return sb_add(b, "null"); }
-    let items = vget(v, 1);
-    let mut step: i64 = 1;
-    if k == LJ_OBJ {
-        step = 2;
-        sb_add(b, "{");
-    } else {
-        sb_add(b, "[");
-    }
-    let mut i: i64 = 0;
-    while i < vlen(items) {
-        if i > 0 { sb_add(b, ","); }
-        if k == LJ_OBJ {
-            lj_quote(b, vget(items, i));
-            sb_add(b, ":");
-        }
-        lj_write(b, vget(items, i + step - 1));
-        i = i + step;
-    }
-    if k == LJ_OBJ { return sb_add(b, "}"); }
-    return sb_add(b, "]");
-}
-
 // ------------------------------------------------------------- transport
 
 fn lsp_send(body: i64) -> i64 {
@@ -319,63 +274,51 @@ fn lsp_send(body: i64) -> i64 {
     return out(body);
 }
 
-// `{"jsonrpc":"2.0","id":<id>,` + rest
-fn lsp_head(id: i64) -> i64 {
-    let b = sb_new();
-    sb_add(b, "{\"jsonrpc\":\"2.0\",\"id\":");
-    if id == 0 {
-        sb_add(b, "null");
-    } else {
-        lj_write(b, id);
-    }
-    return b;
-}
 
-fn lsp_result(id: i64, result: i64) -> i64 {
-    let b = lsp_head(id);
-    sb_add(b, ",\"result\":");
-    sb_add(b, result);
-    sb_add(b, "}");
-    return lsp_send(sb_text(b));
-}
 
-fn lsp_error(id: i64, code: i64, message: i64) -> i64 {
-    let b = lsp_head(id);
-    sb_add(b, ",\"error\":{\"code\":");
-    sb_int(b, code);
-    sb_add(b, ",\"message\":");
-    lj_quote(b, message);
-    sb_add(b, "}}");
-    return lsp_send(sb_text(b));
-}
 
 fn lsp_notify(method: i64, params: i64) -> i64 {
     return lsp_send(text_cat3(text_cat3("{\"jsonrpc\":\"2.0\",\"method\":\"", method, "\",\"params\":"), params, "}"));
 }
 
-// The next message body, or 0 at end of input. Header lines are read a
-// byte at a time; track_stdin_read flushes pending replies first.
+// Reply to request `id` (0 for none) with `,"result":...` or `,"error":...`.
+fn lsp_reply(id: i64, rest: i64) -> i64 {
+    let b = sb_new();
+    sb_add(b, "{\"jsonrpc\":\"2.0\",\"id\":");
+    if id != 0 && vget(id, 0) == LJ_STR {
+        lj_quote(b, vget(id, 1));
+    } else {
+        sb_add(b, lj_text_or(id, "null"));
+    }
+    sb_add(b, rest);
+    sb_add(b, "}");
+    return lsp_send(sb_text(b));
+}
+
+fn lsp_result(id: i64, result: i64) -> i64 { return lsp_reply(id, text_cat(",\"result\":", result)); }
+
+fn lsp_error(id: i64, code: i64, message: i64) -> i64 {
+    return lsp_reply(id, text_cat3(",\"error\":{\"code\":", text_of_int(code), text_cat3(",\"message\":\"", message, "\"}")));
+}
+
+
+// The next message body, or 0 at end of input. Headers are read a byte
+// at a time; track_stdin_read flushes pending replies first.
 fn lsp_read() -> i64 {
-    let mut length: i64 = -1;
-    let line = sb_new();
-    let mut going = true;
-    while going {
+    let head = sb_new();
+    while !text_ends(sb_text(head), "\n\n") && !text_ends(sb_text(head), "\n\r\n") {
         let ch: i64 = track_stdin_read(1);
         if text_len(ch) == 0 {
             return 0;
         }
-        if text_eq(ch, "\n") {
-            let h: i64 = str_trim(sb_text(line));
-            if text_len(h) == 0 {
-                going = length < 0;
-            } else if text_starts(h, "Content-Length:") || text_starts(h, "content-length:") {
-                length = str_to_int(str_trim(str_substr(h, 15, text_len(h))));
-            }
-            sb_reset(line);
-        } else {
-            sb_add(line, ch);
-        }
+        sb_add(head, ch);
     }
+    let h: i64 = sb_text(head);
+    let at = str_find(h, "ontent-Length:");
+    if at < 0 {
+        return lsp_read();
+    }
+    let length = math_max(str_to_int(str_substr(h, at + 14, text_len(h))), 0);
     let body: i64 = track_stdin_read(length);
     if text_len(body) < length {
         return 0;
@@ -407,12 +350,6 @@ fn lsp_doc(s: i64, uri: i64) -> i64 {
     return i;
 }
 
-fn lsp_hexdigit(b: i64) -> i64 {
-    if b >= 97 { return b - 87; }
-    if b >= 65 { return b - 55; }
-    return b - 48;
-}
-
 // file:///a%20b.trk -> /a b.trk
 fn lsp_uri_path(uri: i64) -> i64 {
     if !text_starts(uri, "file://") {
@@ -437,84 +374,79 @@ fn lsp_uri_path(uri: i64) -> i64 {
 // Lines as `str::lines` splits them: on \n, without \r and without an
 // empty last line.
 fn lsp_lines(text: i64) -> i64 {
-    let lines = vnew();
-    let bytes = text_bytes(text);
-    let mut start: i64 = 0;
+    let lines = lsp_split(text, 10);
     let mut i: i64 = 0;
-    while i <= vlen(bytes) {
-        if i == vlen(bytes) || vget(bytes, i) == 10 {
-            let mut end = i;
-            if end > start && vget(bytes, end - 1) == 13 {
-                end = end - 1;
-            }
-            if i < vlen(bytes) || start < i {
-                vpush(lines, str_substr(text, start, end - start));
-            }
-            start = i + 1;
+    while i < vlen(lines) {
+        let l = vget(lines, i);
+        if text_ends(l, "\r") {
+            vset(lines, i, str_substr(l, 0, text_len(l) - 1));
         }
         i = i + 1;
+    }
+    if text_len(vlast(lines)) == 0 {
+        vpop(lines);
     }
     return lines;
 }
 
-fn lsp_quote(s: i64) -> i64 {
-    let bytes = text_bytes(s);
-    let b = sb_new();
-    sb_byte(b, 39);
-    let mut i: i64 = 0;
-    while i < vlen(bytes) {
-        if vget(bytes, i) == 39 {
-            sb_add(b, "'\\''");
-        } else {
-            sb_byte(b, vget(bytes, i));
-        }
-        i = i + 1;
-    }
-    sb_byte(b, 39);
-    return sb_text(b);
-}
 
-// A fresh private directory for the buffer and the child's output.
-fn lsp_dir(s: i64) -> i64 {
-    if vget(s, LS_DIR) != 0 {
-        return vget(s, LS_DIR);
-    }
+
+
+// The scratch directory for the buffer and the child's output is
+// $TMPDIR/trackc-lsp-<tag> (/tmp without $TMPDIR). Commands name it
+// through the shell's own ${TMPDIR:-/tmp}, so nothing needs quoting:
+// the tag is digits and the document path travels in a file.
+fn lsp_dir(tag: i64, file: i64) -> i64 {
     let mut base: i64 = "/tmp";
     if env_exists("TMPDIR") != 0 && text_len(env_get("TMPDIR")) > 0 {
         base = env_get("TMPDIR");
     }
-    let stamp: i64 = text_cat3(base, "/trackc-lsp-", text_of_int(clock_ms()));
-    let mut n: i64 = 0;
-    let mut dir: i64 = text_cat3(stamp, "-", text_of_int(n));
-    while n < 100 && shell(text_cat3("mkdir -m 700 ", lsp_quote(dir), " 2>/dev/null")) != 0 {
-        n = n + 1;
-        dir = text_cat3(stamp, "-", text_of_int(n));
+    return text_cat3(base, text_cat("/trackc-lsp-", tag), file);
+}
+
+fn lsp_sh(tag: i64, file: i64) -> i64 {
+    return text_cat3("\"${TMPDIR:-/tmp}/trackc-lsp-", tag, text_cat(file, "\""));
+}
+
+// This server's tag, making the directory on first use.
+fn lsp_tag(s: i64) -> i64 {
+    if vget(s, LS_DIR) == 0 {
+        vset(s, LS_DIR, text_cat3(text_of_int(clock_ms()), "-", text_of_int(math_random() & 16777215)));
+        shell(text_cat("mkdir -m 700 ", lsp_sh(vget(s, LS_DIR), "")));
     }
-    vset(s, LS_DIR, dir);
-    return dir;
+    return vget(s, LS_DIR);
 }
 
 // ----------------------------------------------------------- diagnostics
+
+// Append one diagnostic (severity 1 error, 2 warning) to the array body.
+fn lsp_diag(diags: i64, line: i64, col: i64, severity: i64, code: i64, msg: i64) -> i64 {
+    if !text_ends(sb_text(diags), "[") { sb_add(diags, ","); }
+    let pos: i64 = text_cat3(text_of_int(line), ",\"character\":", text_of_int(col));
+    sb_add(diags, text_cat3("{\"range\":{\"start\":{\"line\":", pos, "},\"end\":{\"line\":"));
+    sb_add(diags, text_cat3(text_of_int(line), ",\"character\":", text_of_int(col + 1)));
+    sb_add(diags, text_cat3("}},\"severity\":", text_of_int(severity), ",\"code\":"));
+    lj_quote(diags, code);
+    sb_add(diags, ",\"source\":\"trackc\",\"message\":");
+    lj_quote(diags, msg);
+    return sb_add(diags, "}");
+}
 
 // Run the checker child on `text` as file `path` and append its
 // diagnostics to `diags` (a builder holding a JSON array body), lines
 // shifted by `line0`. With `doc` >= 0 the doc's completion symbols are
 // replaced when the child got past parsing.
 fn lsp_check(s: i64, diags: i64, path: i64, text: i64, line0: i64, doc: i64) -> i64 {
-    let dir = lsp_dir(s);
-    let src: i64 = text_cat(dir, "/buffer.trk");
-    write_text(src, text);
-    let cmd = sb_new();
-    sb_add(cmd, "\"/proc/$PPID/exe\" lsp --check ");
-    sb_add(cmd, text_cat3(lsp_quote(src), " ", lsp_quote(path)));
-    sb_add(cmd, text_cat3(" </dev/null >", lsp_quote(text_cat(dir, "/out")), " 2>"));
-    sb_add(cmd, lsp_quote(text_cat(dir, "/err")));
-    let status = shell(sb_text(cmd));
-    let syms = lsp_lines(read_text(text_cat(dir, "/out")));
+    let tag = lsp_tag(s);
+    write_text(lsp_dir(tag, "/buffer.trk"), text);
+    write_text(lsp_dir(tag, "/path"), path);
+    let cmd: i64 = text_cat3("\"/proc/$PPID/exe\" lsp --check ", tag, " </dev/null >");
+    let status = shell(text_cat3(cmd, lsp_sh(tag, "/out"), text_cat(" 2>", lsp_sh(tag, "/err"))));
+    let syms = lsp_lines(read_text(lsp_dir(tag, "/out")));
     if doc >= 0 && vlen(syms) > 0 && text_eq(vget(syms, 0), "#syms") {
         vset(vget(s, LS_DOCS), doc + 2, syms);
     }
-    let lines = lsp_lines(read_text(text_cat(dir, "/err")));
+    let lines = lsp_lines(read_text(lsp_dir(tag, "/err")));
     let before = sb_size(diags);
     let mut i: i64 = 0;
     while i < vlen(lines) {
@@ -527,45 +459,21 @@ fn lsp_check(s: i64, diags: i64, path: i64, text: i64, line0: i64, doc: i64) -> 
             let mut col: i64 = 0;
             if i + 1 < vlen(lines) && text_starts(vget(lines, i + 1), " --> ") {
                 let loc: i64 = str_substr(vget(lines, i + 1), 5, text_len(vget(lines, i + 1)));
-                let bytes = text_bytes(loc);
-                let mut c2 = vlen(bytes) - 1;
-                while c2 > 0 && vget(bytes, c2) != 58 { c2 = c2 - 1; }
-                let mut c1 = c2 - 1;
-                while c1 > 0 && vget(bytes, c1) != 58 { c1 = c1 - 1; }
-                if c1 > 0 && text_eq(str_substr(loc, 0, c1), path) {
-                    line = line0 + str_to_int(str_substr(loc, c1 + 1, c2 - c1 - 1)) - 1;
-                    col = str_to_int(str_substr(loc, c2 + 1, text_len(loc))) - 1;
+                // `path:line:col`; str_to_int stops at the ':'
+                let rest: i64 = str_substr(loc, text_len(path) + 1, text_len(loc));
+                if text_starts(loc, text_cat(path, ":")) {
+                    line = line0 + str_to_int(rest) - 1;
+                    col = str_to_int(str_substr(rest, str_find(rest, ":") + 1, text_len(rest))) - 1;
                 } else {
                     msg = text_cat3(loc, ": ", msg);
                 }
             }
-            let mut severity: i64 = 1;
-            if open == 7 {
-                severity = 2;
-            }
-            if sb_size(diags) > 1 { sb_add(diags, ","); }
-            sb_add(diags, "{\"range\":{\"start\":{\"line\":");
-            sb_int(diags, line);
-            sb_add(diags, ",\"character\":");
-            sb_int(diags, col);
-            sb_add(diags, "},\"end\":{\"line\":");
-            sb_int(diags, line);
-            sb_add(diags, ",\"character\":");
-            sb_int(diags, col + 1);
-            sb_add(diags, "}},\"severity\":");
-            sb_int(diags, severity);
-            sb_add(diags, ",\"code\":");
-            lj_quote(diags, str_substr(l, open + 1, close - open - 1));
-            sb_add(diags, ",\"source\":\"trackc\",\"message\":");
-            lj_quote(diags, msg);
-            sb_add(diags, "}");
+            lsp_diag(diags, line, col, open / 6 + 1, str_substr(l, open + 1, close - open - 1), msg);
         }
         i = i + 1;
     }
     if status != 0 && sb_size(diags) == before {
-        if sb_size(diags) > 1 { sb_add(diags, ","); }
-        sb_add(diags, "{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},");
-        sb_add(diags, text_cat3("\"severity\":1,\"source\":\"trackc\",\"message\":\"checker exited with status ", text_of_int(status), "\"}"));
+        lsp_diag(diags, line0, 0, 1, "E0000", text_cat("checker exited with status ", text_of_int(status)));
     }
     return 0;
 }
@@ -577,7 +485,9 @@ fn lsp_update(s: i64, uri: i64, text: i64) -> i64 {
     vset(vget(s, LS_DOCS), doc + 1, text);
     let path = lsp_uri_path(uri);
     let diags = sb_new();
-    sb_add(diags, "[");
+    sb_add(diags, "{\"uri\":");
+    lj_quote(diags, uri);
+    sb_add(diags, ",\"diagnostics\":[");
     if text_ends(path, ".trk") {
         lsp_check(s, diags, path, text, 0, doc);
     } else if text_ends(path, ".md") || text_ends(path, ".markdown") {
@@ -600,58 +510,46 @@ fn lsp_update(s: i64, uri: i64, text: i64) -> i64 {
             i = i + 1;
         }
     }
-    sb_add(diags, "]");
-    let params = sb_new();
-    sb_add(params, "{\"uri\":");
-    lj_quote(params, uri);
-    sb_add(params, ",\"diagnostics\":");
-    sb_add(params, sb_text(diags));
-    sb_add(params, "}");
-    return lsp_notify("textDocument/publishDiagnostics", sb_text(params));
+    sb_add(diags, "]}");
+    return lsp_notify("textDocument/publishDiagnostics", sb_text(diags));
 }
 
 // `trackc lsp --check <buffer-file> <path>`: the front end of `trackc check`
 // on the buffer, loaded as `path`. Prints `#syms` and the root module's
 // completion symbols to stdout once it parses, diagnostics to stderr.
-fn lsp_check_child(buffer: i64, path: i64) -> i64 {
+fn lsp_check_child(tag: i64) -> i64 {
     let c = cx_new();
     lex_init(c);
+    let path = read_text(lsp_dir(tag, "/path"));
     vpush(cx(c, CX_MODS), module_key(path));
-    let f = load_source(c, path, read_text(buffer));
+    let f = load_source(c, path, read_text(lsp_dir(tag, "/buffer.trk")));
     vset(c, CX_MAINFILE, f);
-    let b = sb_new();
-    sb_line(b, "#syms");
+    out("#syms\n");
     let items = cx(c, CX_ITEMS);
     let mut i: i64 = 0;
     while i < vlen(items) {
         let item = vget(items, i);
         let k = nk(c, item);
-        let mut name: i64 = "";
-        if k == K_FN || k == K_ENUM || k == K_UNION {
-            name = name_text(c, na(c, item));
+        let mine = vget(cx(c, CX_ITEMFILE), i) == f;
+        if mine && k == K_FN {
+            out(text_cat3("3\t", name_text(c, na(c, item)), "\tUser-defined function\n"));
         }
-        if vget(cx(c, CX_ITEMFILE), i) != f {
-            // imported
-        } else if k == K_FN {
-            sb_line(b, text_cat3("3\t", name, "\tUser-defined function"));
-        } else if k == K_ENUM || k == K_UNION {
+        if mine && (k == K_ENUM || k == K_UNION) {
+            let name: i64 = name_text(c, na(c, item));
             let mut vs = nb(c, item);
-            let mut kind: i64 = "Union";
+            let mut kind: i64 = "\tUnion variant of ";
             if k == K_ENUM {
                 vs = nc(c, item);
-                kind = "Enum";
+                kind = "\tEnum variant of ";
             }
             let mut j: i64 = 0;
             while j < list_len(c, vs) {
-                sb_add(b, text_cat3("20\t", name, "::"));
-                sb_add(b, name_text(c, list_at(c, vs, j)));
-                sb_line(b, text_cat3("\t", kind, text_cat(" variant of ", name)));
+                out(text_cat3(text_cat3("20\t", name, "::"), name_text(c, list_at(c, vs, j)), text_cat3(kind, name, "\n")));
                 j = j + 2;
             }
         }
         i = i + 1;
     }
-    out(sb_text(b));
     collect_symbols(c);
     check_program(c);
     life_program(c);
@@ -683,28 +581,6 @@ fn lsp_word_byte(x: i64) -> bool {
     return (x >= 48 && x <= 57) || (x >= 65 && x <= 90) || (x >= 97 && x <= 122) || x == 95 || x >= 128;
 }
 
-// The line of the request's position and the cursor byte in it, or 0.
-fn lsp_cursor(s: i64, msg: i64) -> i64 {
-    let uri = lj_text(msg, "params.textDocument.uri");
-    let docs = vget(s, LS_DOCS);
-    let mut i: i64 = 0;
-    while i < vlen(docs) {
-        if uri != 0 && text_eq(vget(docs, i), uri) {
-            let lines = lsp_lines(vget(docs, i + 1));
-            let line = lj_int(msg, "params.position.line");
-            if line >= vlen(lines) {
-                return 0;
-            }
-            let at = vnew_cap(3);
-            vpush(at, vget(lines, line));
-            vpush(at, math_min(lj_int(msg, "params.position.character"), text_len(vget(lines, line))));
-            vpush(at, i);
-            return at;
-        }
-        i = i + 3;
-    }
-    return 0;
-}
 
 fn lsp_item(b: i64, label: i64, kind: i64, detail: i64) -> i64 {
     if sb_size(b) > 1 { sb_add(b, ","); }
@@ -731,32 +607,59 @@ fn lsp_items(b: i64, word: i64, words: i64, prefix: i64, kind: i64, detail: i64)
     return 0;
 }
 
-fn lsp_completion(s: i64, msg: i64) -> i64 {
-    let at = lsp_cursor(s, msg);
-    if at == 0 {
-        return "null";
+
+// The word at the request's position as [word, doc index], or 0. A hover
+// word also extends right of the cursor and keeps a leading '@'.
+fn lsp_word(s: i64, msg: i64, hover: bool) -> i64 {
+    let uri = lj_text(msg, "params.textDocument.uri");
+    let docs = vget(s, LS_DOCS);
+    let mut i: i64 = 0;
+    while uri != 0 && i < vlen(docs) && !text_eq(vget(docs, i), uri) {
+        i = i + 3;
     }
-    let line = text_bytes(vget(at, 0));
-    let end = vget(at, 1);
-    let mut start = end;
+    let n = lj_int(msg, "params.position.line");
+    if uri == 0 || i >= vlen(docs) || n >= vlen(lsp_lines(vget(docs, i + 1))) {
+        return 0;
+    }
+    let text = vget(lsp_lines(vget(docs, i + 1)), n);
+    let line = text_bytes(text);
+    let mut start = math_min(lj_int(msg, "params.position.character"), vlen(line));
+    let mut end = start;
     while start > 0 && lsp_word_byte(vget(line, start - 1)) {
         start = start - 1;
     }
+    while hover && end < vlen(line) && lsp_word_byte(vget(line, end)) {
+        end = end + 1;
+    }
+    if hover && start > 0 && vget(line, start - 1) == 64 {
+        start = start - 1;
+    }
     if start == end {
+        return 0;
+    }
+    let w = vnew_cap(2);
+    vpush(w, str_substr(text, start, end - start));
+    vpush(w, i);
+    return w;
+}
+
+fn lsp_completion(s: i64, msg: i64) -> i64 {
+    let w = lsp_word(s, msg, false);
+    if w == 0 {
         return "null";
     }
-    let word: i64 = str_substr(vget(at, 0), start, end - start);
+    let word = vget(w, 0);
     let b = sb_new();
     sb_add(b, "[");
     lsp_items(b, word, "import use let mut fn return if else while for in struct enum union match with const type true false as", "", 0, "Keyword");
     lsp_items(b, word, "i8 u8 i32 u32 i64 u64 bool void ptr", "", 25, "Type");
     lsp_items(b, word, "print println eprint read file_open file_close file_exists dir_exists file_copy clock_ms exit alloc dealloc env_get os_args_count os_arg process_spawn sys_exec sys_set_memory_limit sys_get_memory_used str_starts_with str_ends_with str_contains str_is_int env_exists abort", "", 3, "Built-in function");
     lsp_items(b, word, "macro now compile_error", "@", 3, "Macro");
-    let syms = vget(vget(s, LS_DOCS), vget(at, 2) + 2);
+    let syms = vget(vget(s, LS_DOCS), vget(w, 1) + 2);
     let mut i: i64 = 1;
     while i < vlen(syms) {
         let f = lsp_split(vget(syms, i), 9);
-        if vlen(f) == 3 && text_starts(vget(f, 1), word) {
+        if text_starts(vget(f, 1), word) {
             lsp_item(b, vget(f, 1), str_to_int(vget(f, 0)), vget(f, 2));
         }
         i = i + 1;
@@ -769,30 +672,15 @@ fn lsp_hover_docs() -> i64 {
     return "let:Declare a variable\n\n```track\nlet x = 42;\n```$mut:Declare a mutable variable\n\n```track\nlet mut x = 42;\n```$fn:Define a function\n\n```track\nfn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n```$return:Return from function$if:Conditional expression$else:Else branch$while:Loop$for:For-in loop\n\n```track\nfor i in 0..10 {\n    print(i);\n}\n```$in:Iteration in a for-in loop$use:Import items from a module (synonym for `import`)$type:Define a type alias\n\n```track\ntype Matrix = [i32; 16];\n```$struct:Define a struct$enum:Define an enum\n\n```track\nenum Color {\n    Red,\n    Green,\n    Blue,\n}\n```$union:Define a tagged union\n\n```track\nunion Value {\n    Int(i32),\n    Float(f64),\n}\n```$match:Pattern matching$with:Lexical lens block$const:Compile-time constant$true:Boolean true$false:Boolean false$as:Alias import$i8:8-bit signed integer (copy type)$u8:8-bit unsigned integer (copy type)$i32:32-bit signed integer (copy type)$u32:32-bit unsigned integer (copy type)$i64:64-bit signed integer (copy type)$u64:64-bit unsigned integer (copy type)$bool:Boolean (copy type)$void:Unit type (copy type)$ptr:Raw pointer (copy type)\n\n```track\nlet p: ptr<i32>;\n```$print:Print a value to stdout\n\n```track\nprint(42);\nprint(\"hello\");\n```$read:Read input\n\n```track\nlet value = read();\n```$@macro:Define a compile-time macro\n\n```track\n@macro double(n: i32) -> i32 {\n    return n * 2;\n}\n```$@compile_error:Trigger a compile-time error$@now:Get current timestamp";
 }
 
+
 fn lsp_hover(s: i64, msg: i64) -> i64 {
-    let at = lsp_cursor(s, msg);
-    if at == 0 {
-        return "null";
-    }
-    let line = text_bytes(vget(at, 0));
-    let mut start = vget(at, 1);
-    let mut end = start;
-    while start > 0 && lsp_word_byte(vget(line, start - 1)) {
-        start = start - 1;
-    }
-    while end < vlen(line) && lsp_word_byte(vget(line, end)) {
-        end = end + 1;
-    }
-    if start > 0 && vget(line, start - 1) == 64 {
-        start = start - 1;
-    }
-    let word: i64 = str_substr(vget(at, 0), start, end - start);
+    let w = lsp_word(s, msg, true);
     let docs = lsp_split(lsp_hover_docs(), 36);
     let mut i: i64 = 0;
-    while i < vlen(docs) {
+    while w != 0 && i < vlen(docs) {
         let d = vget(docs, i);
         let colon = str_find(d, ":");
-        if end > start && text_eq(str_substr(d, 0, colon), word) {
+        if text_eq(str_substr(d, 0, colon), vget(w, 0)) {
             let b = sb_new();
             sb_add(b, "{\"contents\":{\"kind\":\"markdown\",\"value\":");
             lj_quote(b, str_substr(d, colon + 1, text_len(d)));
@@ -808,7 +696,7 @@ fn lsp_hover(s: i64, msg: i64) -> i64 {
 
 fn lsp_quit(s: i64, code: i64) -> i64 {
     if vget(s, LS_DIR) != 0 {
-        shell(text_cat("rm -rf ", lsp_quote(vget(s, LS_DIR))));
+        shell(text_cat("rm -rf ", lsp_sh(vget(s, LS_DIR), "")));
     }
     return quit(code);
 }
@@ -820,60 +708,57 @@ fn lsp_handle(s: i64, body: i64) -> i64 {
     }
     let id = lj_at(msg, "id");
     let method = lj_text(msg, "method");
+    let ready = vget(s, LS_INIT) == 1 && vget(s, LS_DOWN) == 0;
     if method == 0 {
         return 0; // a response to a request the server never sends
     }
     if text_eq(method, "exit") {
         return lsp_quit(s, 1 - vget(s, LS_DOWN));
     }
-    if id == 0 {
-        if vget(s, LS_INIT) == 0 || vget(s, LS_DOWN) == 1 {
-            return 0;
-        }
-        if text_eq(method, "initialized") {
-            return lsp_notify("window/logMessage", "{\"type\":3,\"message\":\"Track LSP server initialized\"}");
-        }
-        let uri = lj_text(msg, "params.textDocument.uri");
-        let mut text = lj_text(msg, "params.textDocument.text");
-        if text_eq(method, "textDocument/didChange") {
-            text = lj_text(msg, "params.contentChanges.0.text");
-        } else if text_eq(method, "textDocument/didSave") {
-            text = lj_text(msg, "params.text");
-        } else if !text_eq(method, "textDocument/didOpen") {
-            return 0;
-        }
-        if uri != 0 && text != 0 {
-            lsp_update(s, uri, text);
-        }
-        return 0;
-    }
-    if text_eq(method, "initialize") {
+    if id != 0 && text_eq(method, "initialize") {
         vset(s, LS_INIT, 1);
         return lsp_result(id, "{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\".\",\":\"]},\"hoverProvider\":true},\"serverInfo\":{\"name\":\"trackc\",\"version\":\"1.0.0\"}}");
     }
-    if vget(s, LS_INIT) == 0 {
+    if id != 0 && vget(s, LS_INIT) == 0 {
         return lsp_error(id, -32002, "Server not initialized");
     }
-    if vget(s, LS_DOWN) == 1 {
+    if id != 0 && !ready {
         return lsp_error(id, -32600, "Invalid request");
     }
-    if text_eq(method, "shutdown") {
+    if id != 0 && text_eq(method, "shutdown") {
         vset(s, LS_DOWN, 1);
         return lsp_result(id, "null");
     }
-    if text_eq(method, "textDocument/completion") {
+    if id != 0 && text_eq(method, "textDocument/completion") {
         return lsp_result(id, lsp_completion(s, msg));
     }
-    if text_eq(method, "textDocument/hover") {
+    if id != 0 && text_eq(method, "textDocument/hover") {
         return lsp_result(id, lsp_hover(s, msg));
     }
-    return lsp_error(id, -32601, "Method not found");
+    if id != 0 {
+        return lsp_error(id, -32601, "Method not found");
+    }
+    let uri = lj_text(msg, "params.textDocument.uri");
+    let mut text = lj_text(msg, "params.textDocument.text");
+    if text_eq(method, "textDocument/didChange") {
+        text = lj_text(msg, "params.contentChanges.0.text");
+    }
+    if text_eq(method, "textDocument/didSave") {
+        text = lj_text(msg, "params.text");
+    }
+    if ready && text_eq(method, "initialized") {
+        lsp_notify("window/logMessage", "{\"type\":3,\"message\":\"Track LSP server initialized\"}");
+    }
+    if ready && uri != 0 && text != 0 && text_starts(method, "textDocument/did") {
+        lsp_update(s, uri, text);
+    }
+    return 0;
 }
 
 // `trackc lsp`: serve until `exit` or end of input.
 fn lsp_main() -> i64 {
-    if arg_count() == 5 && text_eq(arg_text(2), "--check") {
-        return lsp_check_child(arg_text(3), arg_text(4));
+    if arg_count() == 4 && text_eq(arg_text(2), "--check") {
+        return lsp_check_child(arg_text(3));
     }
     let s = vnew_cap(4);
     vpush(s, vnew());

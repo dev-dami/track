@@ -332,18 +332,15 @@ tk_w read_line(void) {
     return TK_WORD(buf);
 }
 
-/* Read n bytes from stdin; fewer only at end of input. stdout is flushed
- * first, so a reply written before the read is never left buffered (the
- * framed JSON-RPC loop of `trackc lsp` relies on this). */
+/* Read n >= 0 bytes of stdin (fewer at end of input), flushing stdout first
+ * so a reply is never left buffered (`trackc lsp` relies on this). */
 tk_w track_stdin_read(tk_w n) {
-    size_t want = n > 0 ? (size_t)n : 0, got = 0, r;
-    char *buf;
+    char *buf = (char *)malloc((size_t)n + 1);
+    size_t got = 0, r = 1;
     fflush(stdout);
-    buf = (char *)malloc(want + 1);
-    if (!buf) return TK_WORD(tk_dup(""));
-    while (got < want && (r = fread(buf + got, 1, want - got, stdin)) > 0) got += r;
-    buf[got] = '\0';
-    return TK_WORD(buf);
+    while (buf && got < (size_t)n && r > 0) got += (r = fread(buf + got, 1, (size_t)n - got, stdin));
+    if (buf) buf[got] = '\0';
+    return TK_WORD(buf ? buf : tk_dup(""));
 }
 
 /* ---------------------------------------------------------------- strings */
