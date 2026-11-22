@@ -103,7 +103,9 @@ Track is self-hosting: `compiler/` is the Track compiler written in Track
 to a verified fixed point, through C or natively. A clean checkout
 bootstraps with only `cc`. `scripts/bootstrap.sh` builds the committed C
 seed (`bootstrap/seed/`), and Rust is not needed. The Rust compiler in
-`src/` remains an optional stage 0 (`--from-rust`).
+`src/` remains an optional stage 0 (`--from-rust`). The native stages of
+the default run need an x86-64 Linux host; elsewhere, use
+`scripts/bootstrap.sh --no-native`.
 
 ```bash
 # cc builds bootstrap/seed/ -> stage1; stage1 -> stage2 -> stage3; check the

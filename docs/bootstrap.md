@@ -4,7 +4,10 @@ Track 1.0 is self-hosting: `trackc`, the compiler in `compiler/src/`, is
 written entirely in Track and compiles itself to a fixed point.
 
 A clean checkout builds `trackc` with only a C compiler (`cc`) and POSIX
-tools. Rust is not needed.
+tools. Rust is not needed. The default run then also checks the native
+fixed point (`scripts/selfhost.sh`), which runs x86-64 Linux executables
+and uses `sha256sum`; on other hosts (macOS, ARM) use
+`scripts/bootstrap.sh --no-native` for the C-only bootstrap.
 
 ```sh
 scripts/bootstrap.sh

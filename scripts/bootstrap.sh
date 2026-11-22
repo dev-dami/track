@@ -76,7 +76,8 @@ if [ "$from" = seed ]; then
     for f in trackc.c trackc.rt.c; do
         [ -f "$seed/$f" ] || { echo "bootstrap: missing bootstrap/seed/$f" >&2; exit 1; }
     done
-    command -v "$cc" >/dev/null 2>&1 || { echo "bootstrap: C compiler '$cc' not found" >&2; exit 1; }
+    # CC may be a launcher command (`ccache cc`): check its first word only.
+    command -v "${cc%% *}" >/dev/null 2>&1 || { echo "bootstrap: C compiler '$cc' not found" >&2; exit 1; }
     echo "==> stage 0: $cc builds the C seed (bootstrap/seed/, $(wc -l < "$seed/trackc.c") lines)"
     cp "$seed/trackc.c" "$seed/trackc.rt.c" "$out/stage1/"
     # Compile inside the stage directory with trackc's own base names, the
