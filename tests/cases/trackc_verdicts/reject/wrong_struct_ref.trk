@@ -1,0 +1,1 @@
+struct A { x: i64, y: i64 } struct B { y: i64, z: i64, x: i64 } fn gx(p: &A) -> i64 { return p.x; } fn main() -> void { let b = B { y: 20, z: 30, x: 10 }; print(gx(&b)); }

@@ -1,0 +1,1 @@
+fn main() -> void { let mut keep = (0, 0); for i in 0..3 { let t = (i, i + 1); if i == 1 { keep = t; } else { let (a, b) = t; } } print(keep.0); print(keep.1); }

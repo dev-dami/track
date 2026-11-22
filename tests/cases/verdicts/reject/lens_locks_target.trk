@@ -1,0 +1,1 @@
+fn main() -> void { let mut v = vec_init(4); with v -> l { let w = v; } }

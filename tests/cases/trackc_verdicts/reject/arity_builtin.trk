@@ -1,0 +1,1 @@
+fn main() -> void { print(str_concat("a")); }

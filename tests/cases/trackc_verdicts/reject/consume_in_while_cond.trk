@@ -1,0 +1,1 @@
+fn eat(s: Str) -> bool { return true; } fn main() -> void { let s = str_concat("a", "b"); while eat(s) { print(1); return; } }

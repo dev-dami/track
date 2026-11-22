@@ -1,0 +1,1 @@
+fn main() -> void { for i in 0..3 { match i { 0 => print(10), _ => print(i), } } }

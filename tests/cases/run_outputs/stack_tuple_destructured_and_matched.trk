@@ -1,0 +1,1 @@
+fn main() -> void { let mut s = 0; for i in 0..4 { let t = (i, i * 2); let u = (i, 1); let (a, b) = t; match u { (0, _) => s = s + 100, (x, y) => s = s + x + y, } s = s + a + b; } print(s); }

@@ -1,0 +1,1 @@
+const Q = 7 % (1 - 1); fn main() -> void { print(Q); }

@@ -1,0 +1,3 @@
+struct Point { x: i64, y: i64 }
+fn pair() -> (i64, i64) { let p = Point { x: 1, y: 2 }; let t = (&p, 7); let u = t; return (u.1, 8); }
+fn main() -> void { let t = pair(); print(t.1); }

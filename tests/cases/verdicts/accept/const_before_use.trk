@@ -1,0 +1,1 @@
+fn main() -> void { print(LIMIT); } const LIMIT = 10;

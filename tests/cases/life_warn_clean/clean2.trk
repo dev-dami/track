@@ -1,0 +1,3 @@
+struct V { x: i64 }
+fn mk(a: &V) -> V { return V { x: a.x }; }
+fn main() -> void { let a = V { x: 1 }; let b = mk(&a); print(b.x); }

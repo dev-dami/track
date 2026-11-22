@@ -1,0 +1,4 @@
+struct Point { x: i64, y: i64 }
+fn eat<T>(v: T) -> i64 { return 1; }
+fn peek(r: &Point) -> i64 { return eat(r); }
+fn main() -> void { let p = Point { x: 1, y: 2 }; print(peek(&p)); }

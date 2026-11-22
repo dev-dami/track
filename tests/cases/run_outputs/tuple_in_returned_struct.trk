@@ -1,0 +1,1 @@
+struct H { t: (i64, i64) } fn mk(n: i64) -> H { return H { t: (n, n + 1) }; } fn clobber(n: i64) -> i64 { let z = (n, n, n, n); return z.0 + z.3; } fn main() -> void { let h = mk(7); print(clobber(100)); let t = h.t; print(t.1); }
