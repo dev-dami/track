@@ -33,7 +33,7 @@ Track answers this with three foundational principles:
 - **No Garbage Collector, No Hidden Runtime**: Resource lifecycles are statically verified at compile time. Destruction code (\`vec_free\`, \`str_free\`) is automatically emitted at deterministically computed spend points.
 - **Linear Ownership State Machine**: Resources have exactly one active owner. Every variable transitions strictly between 4 states: \`Active\`, \`Borrowed\`, \`Locked\`, and \`Spent\`.
 - **Lexical Lenses (\`with\` blocks)**: Scoped, non-escaping mutable views that eliminate lifetime annotations altogether.
-- **Native Backend**: \`trackc build --native\` writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker. The default path goes through generated C.
+- **Native Backend**: \`trackc build\` writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker. Track targets x86-64 Linux only.
 - **Explicit Stack-Based Error Handling**: No monadic wrappers (\`Option\` / \`Result\`), no \`?\` hidden control flow, no stack unwinding. Errors are first-class stack values.
     `,
     codeSnippets: [
@@ -58,7 +58,7 @@ Track ships as a self-hosted toolchain: the compiler (\`trackc\`, written in Tra
 
 ### Quick Installation via Shell Script
 
-The installer bootstraps \`trackc\` from the committed C seed and builds \`yard\`. It needs a C compiler (\`cc\`), \`git\` and POSIX tools:
+The installer bootstraps \`trackc\` from the committed native seed binary and builds \`yard\`. It needs an x86-64 Linux host, \`git\` and POSIX tools; no C compiler:
 
 \`\`\`bash
 curl -fsSL https://raw.githubusercontent.com/dev-dami/track/main/scripts/install.sh | bash
@@ -68,21 +68,21 @@ The binaries are installed into \`~/.track/bin\` by default (override with \`--d
 
 ### Building from Source
 
-Track is self-hosting: \`trackc\` is written in Track and compiles itself to a verified fixed point. A clean checkout needs only a C compiler (\`cc\`) and POSIX tools; there is no Rust toolchain involved.
+Track is self-hosting: \`trackc\` is written in Track and compiles itself to a verified fixed point. A clean checkout needs only an x86-64 Linux host and POSIX tools: it bootstraps from \`bootstrap/seed/trackc\`, a committed static trackc binary. There is no C or Rust toolchain involved.
 
 \`\`\`bash
 # Clone the repository
 git clone https://github.com/dev-dami/track.git
 cd track
-# cc -> stage1..3 -> native; trackc is build/bootstrap/stage3/trackc
+# seed -> stage1..3; trackc is build/bootstrap/stage3/trackc
 scripts/bootstrap.sh
 # yard, written in Track
-build/bootstrap/stage3/trackc build --native tools/yard/main.trk -o yard
+build/bootstrap/stage3/trackc build tools/yard/main.trk -o yard
 # Or bootstrap and install trackc + yard in one step
 ./scripts/install.sh
 \`\`\`
 
-On hosts other than x86-64 Linux (macOS, ARM) use \`scripts/bootstrap.sh --no-native\` for the C-only bootstrap.
+Track runs on x86-64 Linux only; there is no bootstrap for other hosts.
 
 ### Verifying Toolchain Installation
 
@@ -566,14 +566,13 @@ Track 1.0 is self-hosting: \`trackc\`, the compiler in \`compiler/src/\`, is wri
 
 ### The Bootstrap
 
-A clean checkout builds \`trackc\` with only a C compiler (\`cc\`) and POSIX tools. \`scripts/bootstrap.sh\` starts from a committed C seed (\`bootstrap/seed/\`, the C that \`trackc\` emits for its own sources):
+Track targets x86-64 Linux only. A clean checkout builds \`trackc\` with POSIX tools and nothing else: \`scripts/bootstrap.sh\` starts from a committed native seed (\`bootstrap/seed/trackc\`, the static trackc binary at its fixed point). No C compiler, assembler or linker runs.
 
-1. **Stage 0**: \`cc\` builds the C seed into \`stage1/trackc\`.
+1. **Seed**: \`bootstrap/seed/trackc\` compiles \`compiler/src/main.trk\` → \`stage1/trackc\`.
 2. **Stage 1**: \`stage1/trackc\` compiles \`compiler/src/main.trk\` → \`stage2/trackc\`.
 3. **Stage 2**: \`stage2/trackc\` compiles \`compiler/src/main.trk\` → \`stage3/trackc\`.
-4. **Native**: \`scripts/selfhost.sh\` rebuilds \`trackc\` natively (\`--native\`, no C toolchain) until the native stages \`n2\`, \`n3\` and \`n4\` are byte-identical.
 
-The gate checks that stage 1 and stage 2 emit identical C, that the stage 2 and stage 3 executables are byte-identical, and that the native stages reproduce themselves. After any change to \`compiler/src/\`, run \`scripts/update_seed.sh\` to regenerate the seed. See \`docs/bootstrap.md\` in the repository for the full pipeline.
+Every stage runs with nothing on PATH, and the gate checks that the stage 2 and stage 3 executables are byte-identical. After any change to \`compiler/src/\`, run \`scripts/update_seed.sh\` to regenerate the seed. See \`docs/bootstrap.md\` in the repository for the full pipeline.
     `,
     codeSnippets: [
       {

@@ -129,7 +129,7 @@ values that live on the call stack and are passed around explicitly.
 - **Backend contract** ✅: the self-hosted compiler emits portable C as its first
   backend and invokes the platform C compiler through the existing explicit OS
   process API. Cranelift remains the bootstrap compiler backend, not a library
-  to reimplement in Track. See [bootstrap.md](bootstrap.md#c-backend-contract).
+  to reimplement in Track. (Retired after v1.0.0: the native backend is now the only one.)
 - **Bootstrap build ordering and artifacts** ✅: Yard sorts module discovery,
   dependency resolution, build failures, link inputs, and cache metadata.
   Source-relative object paths prevent duplicate module basenames from racing
@@ -166,15 +166,16 @@ values that live on the call stack and are passed around explicitly.
   with slicing now have runtime representations in both compilers.
 
 ### After v1.0.0 (unreleased) ✅
-- Runtime written in Track (`compiler/rt/`), linked with `--rt=track` or
-  `--native`; no libc.
-- Native x86-64 backend (`trackc build --native`): static ELF written
+- Runtime written in Track (`compiler/rt/`), linked into every program; no libc.
+- Native x86-64 backend (`trackc build`): static ELF written
   directly, optional symbol table (`-g`). `scripts/selfhost.sh` rebuilds
   trackc natively with no C toolchain reachable (n2 = n3 = n4).
 - Inferred lifecycles (`life.trk`, [lifecycles.md](lifecycles.md)): new
   errors E0211-E0214 and warnings W0301-W0305, and a placement for every
-  allocation (stack, caller return slot, or freed where its life ends) in
-  both trackc backends.
+  allocation (stack, caller return slot, or freed where its life ends).
+- C removed (card NOC): the C backend (`cgen.trk`, `emit-c`), the C runtime
+  and the C seed are gone. Track is `.trk` only, targets x86-64 Linux only,
+  and bootstraps from a committed native seed binary (`bootstrap/seed/trackc`).
 
 ### Next
 - Generic structs (`struct Stack<T>`), and retiring the Rust compiler once

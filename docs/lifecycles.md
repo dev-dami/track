@@ -1,5 +1,10 @@
 # Event lifecycles and stack-first memory (design, card L0)
 
+> Since card NOC the C backend (`cgen.trk`), the C runtime and every
+> C-side check (emitted-C greps, ASan, `bench/race.sh`) are gone; the
+> native backend is the only consumer of the placement plan. Mentions of
+> them below are the design record.
+
 Status: implemented. Cards L1 to L15 have landed, on top of K2; the
 sections below are the design, with *as built* notes where the code went
 further. `life.trk` infers a summary for every function and a placement
