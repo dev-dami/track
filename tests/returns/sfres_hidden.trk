@@ -1,0 +1,66 @@
+// F1: a function whose result owns its Str field (LT_SFRES) with a
+// `return` of a static field hidden inside an expression: a call argument,
+// a while condition, a match target, a binary operand, a struct literal
+// field and an assignment value. Freeing the temporary's fields would
+// free the literal.
+struct Named { name: Str, n: i64 }
+struct P { a: i64, b: i64 }
+
+fn id(x: i64) -> i64 {
+    return x;
+}
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn in_arg(n: i64) -> Named {
+    print(id(if n > 0 { return Named { name: "arg", n: n }; } else { n }));
+    return Named { name: int_to_str(n), n: n };
+}
+
+fn in_while(n: i64) -> Named {
+    while (if n > 0 { return Named { name: "while", n: n }; } else { false }) {
+        print(9);
+    }
+    return Named { name: int_to_str(n), n: n };
+}
+
+fn in_match(n: i64) -> Named {
+    match (if n > 0 { return Named { name: "match", n: n }; } else { n }) {
+        0 => print(0),
+        _ => print(1),
+    }
+    return Named { name: int_to_str(n), n: n };
+}
+
+fn in_binary(n: i64) -> Named {
+    let mut z: i64 = 0;
+    z = n + (if n > 0 { return Named { name: "binary", n: n }; } else { 1 });
+    return Named { name: int_to_str(z), n: z };
+}
+
+fn in_struct(n: i64) -> Named {
+    let p = P { a: if n > 0 { return Named { name: "struct", n: n }; } else { n }, b: 2 };
+    return Named { name: int_to_str(p.a), n: p.b };
+}
+
+fn in_assign(n: i64) -> Named {
+    let mut z: i64 = 0;
+    z = n * (if n > 0 { return Named { name: "assign", n: n }; } else { 2 });
+    return Named { name: int_to_str(z), n: z };
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    while i < 2 {
+        let n = 1 - i * 8;
+        print(weight(&in_arg(n)));
+        print(weight(&in_while(n)));
+        print(weight(&in_match(n)));
+        print(weight(&in_binary(n)));
+        print(weight(&in_struct(n)));
+        print(weight(&in_assign(n)));
+        i = i + 1;
+    }
+}

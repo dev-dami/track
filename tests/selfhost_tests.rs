@@ -494,6 +494,132 @@ fn checkers_agree_on_accepted_and_rejected_programs() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A constant `/` or `%` that would trap (zero divisor, INT64_MIN / -1) is
+/// the same E0200 in both checkers; trackc must not fold it (SIGFPE).
+#[test]
+fn const_divrem_traps_are_e0200_in_both_checkers() {
+    let dir = scratch("const_divrem");
+    let min = "const M = 0 - 9223372036854775807 - 1;";
+    let cases = [
+        (
+            "div_min",
+            format!("{} const Q = M / (0 - 1);", min),
+            Some("division overflow"),
+        ),
+        (
+            "mod_min",
+            format!("{} const Q = M % (0 - 1);", min),
+            Some("division overflow"),
+        ),
+        (
+            "div_zero",
+            "const Q = 7 / 0;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "mod_zero",
+            "const Q = 7 % (1 - 1);".to_string(),
+            Some("division by zero"),
+        ),
+        ("div_ok", format!("{} const Q = M / 2 + M % 3;", min), None),
+        (
+            "div_cmp_zero",
+            "const Q = 7 / (1 == 2);".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "mod_not_zero",
+            "const Q = 7 % !1;".to_string(),
+            Some("division by zero"),
+        ),
+        ("div_cmp_ok", "const Q = 7 / (1 < 2);".to_string(), None),
+        (
+            "div_named_cmp_zero",
+            "const Z = 1 == 2; const Q = 7 / Z;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "mod_named_not_zero",
+            "const Z = !(3 > 2); const Q = 7 % (Z + Z);".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "div_named_cmp_ok",
+            "const Z = 1 != 2; const Q = 7 / Z;".to_string(),
+            None,
+        ),
+        (
+            "div_variant_zero",
+            "enum E { Z, O } const Q = 7 / E::Z;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "div_variant_ok",
+            "enum E { Z, O } const Q = 7 / E::O;".to_string(),
+            None,
+        ),
+        (
+            "div_variant_named_cmp_ok",
+            "const ONE = 1 < 2; enum E { A = ONE } const Q = 7 / E::A;".to_string(),
+            None,
+        ),
+        (
+            "div_variant_after_cmp_zero",
+            "const NO = 2 < 1; enum E { A = NO, B } const Q = 7 / E::A;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "div_variant_next_ok",
+            "const NO = 2 < 1; enum E { A = NO, B } const Q = 7 / E::B;".to_string(),
+            None,
+        ),
+        (
+            "enum_named_cmp_zero",
+            "const Z = 2 < 1; enum E { A = 7 / Z } const Q = 1;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "enum_div_zero",
+            "enum E { A, B = 7 / 0, C } const Q = 1;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "enum_div_min",
+            format!("{} enum E {{ A = M / (0 - 1) }} const Q = 1;", min),
+            Some("division overflow"),
+        ),
+    ];
+    for (name, consts, err) in cases {
+        let source = format!("{} fn main() -> void {{ print(Q); }}", consts);
+        let want = err.map(|e| format!("error[E0200]: {} in a constant expression", e));
+        let host = track::compile_source(&source);
+        match &want {
+            Some(w) => assert!(
+                host.as_ref().is_err_and(|e| e.contains(w.as_str())),
+                "{}: host: {:?}",
+                name,
+                host.err()
+            ),
+            None => assert!(host.is_ok(), "{}: host: {:?}", name, host.err()),
+        }
+        let file = dir.join(format!("{}.trk", name));
+        fs::write(&file, &source).unwrap();
+        let native = run_trackc(&["check", file.to_str().unwrap()], &dir);
+        let stderr = String::from_utf8_lossy(&native.stderr);
+        match &want {
+            Some(w) => assert!(
+                native.status.code() == Some(1) && stderr.starts_with(w.as_str()),
+                "{}: trackc: {:?}\n{}",
+                name,
+                native.status,
+                stderr
+            ),
+            None => assert!(native.status.success(), "{}: trackc: {}", name, stderr),
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn diagnostics_point_at_the_source() {
     let dir = scratch("diagnostics");
@@ -2159,12 +2285,15 @@ fn temps_free_fresh_temporaries() {
 /// cells whose Str fields are static or borrowed (only the shell is
 /// freed), discarded cell statements, and native inlining (a self tail
 /// call's copy, a branch condition) that must still free the temporary.
+/// accret: a native accumulator return (`x + f(&fresh)`) keeps its call so
+/// the temporary is freed.
 #[test]
 fn temps_free_fresh_cell_temporaries() {
     let root = repo();
     let update = env::var("UPDATE_LIFE").is_ok();
     let dir = scratch("temps_cell");
     let stems = [
+        "accret",
         "alias",
         "branch",
         "discard",
@@ -2275,7 +2404,7 @@ fn temps_free_fresh_cell_temporaries() {
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(
             stem,
-            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr"
+            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr" | "accret"
         );
         // str_alias keeps `keep.name` alive to the end of main and drop glue never
         // frees Str, so LSan may report that one string depending on what the C
@@ -2419,6 +2548,101 @@ fn strfield_frees_owned_str_fields() {
             rel,
             err
         );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Returns hidden inside expressions (card F1): `if` and `match` are
+/// expressions, so a `return` can sit in a `let` or assignment value, a
+/// call argument, a condition, a match target, an operand or a literal
+/// field. The walkers deciding that every return of a function is fresh
+/// (LT_HFN, LT_SFRES, LT_GFN, LT_RSFN) must see each one, or the plan
+/// frees a static Str or field. Every program in tests/returns/ prints its
+/// `<stem>.out` with both backends, never gets the plan its hidden return
+/// rules out, and, where gcc has AddressSanitizer, runs clean.
+#[test]
+fn returns_hidden_in_expressions_are_seen() {
+    let root = repo();
+    let dir = scratch("returns");
+    let cases = [
+        ("str_let", "str temp-autofree"),
+        ("str_hidden", "str temp-autofree"),
+        ("sfres_cond", "deep strs"),
+        ("sfres_hidden", "deep strs"),
+        ("glue_hidden", "temp-autofree"),
+        ("retslot_hidden", "ret-slot"),
+    ];
+    for (stem, banned) in cases {
+        let rel = format!("tests/returns/{}.trk", stem);
+        let want = fs::read_to_string(root.join(format!("tests/returns/{}.out", stem))).unwrap();
+        let exe = dir.join(stem);
+        let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
+        assert!(out.status.success(), "{}: build failed", rel);
+        assert_eq!(run_exe(&exe), (want.clone(), Some(0)), "{}: C output", rel);
+        let nat = dir.join(format!("{}_nat", stem));
+        let out = run_trackc(
+            &["build", "--native", &rel, "-o", nat.to_str().unwrap()],
+            &root,
+        );
+        assert!(out.status.success(), "{}: native build failed", rel);
+        assert_eq!(run_exe(&nat), (want, Some(0)), "{}: native output", rel);
+        let plan = run_trackc(&["life", "--place", &rel], &root);
+        assert!(
+            plan.status.success() && !plan.stdout.is_empty(),
+            "{}: life --place failed: {:?}\n{}",
+            rel,
+            plan.status,
+            String::from_utf8_lossy(&plan.stderr)
+        );
+        let got = String::from_utf8_lossy(&plan.stdout).into_owned();
+        assert!(
+            !got.contains(banned),
+            "{}: a hidden return rules out `{}`:\n{}",
+            rel,
+            banned,
+            got
+        );
+    }
+    let asan = Command::new("gcc")
+        .args(["-fsanitize=address", "-x", "c", "-", "-o"])
+        .arg(dir.join("probe"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"int main(void){return 0;}")?;
+            child.wait()
+        })
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if asan {
+        for (stem, _) in cases {
+            let rel = format!("tests/returns/{}.trk", stem);
+            let exe = dir.join(format!("{}_asan", stem));
+            let out = Command::new(trackc())
+                .args(["build", &rel, "-o", exe.to_str().unwrap()])
+                .env("CC", "gcc -fsanitize=address -g")
+                .env("TRACKC_CACHE", dir.join("cache"))
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}: ASan build failed", rel);
+            let run = Command::new(&exe)
+                .env("ASAN_OPTIONS", "detect_leaks=0")
+                .output()
+                .unwrap();
+            let err = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                run.status.success() && !err.contains("Sanitizer"),
+                "{}: ASan reports an error:\n{}",
+                rel,
+                err
+            );
+        }
     }
     let _ = fs::remove_dir_all(&dir);
 }

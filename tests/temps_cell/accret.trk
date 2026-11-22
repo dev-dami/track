@@ -1,0 +1,7 @@
+// `return x + f(args)` with a fresh cell argument: the native accumulator
+// loop must not skip the temporary's free (it keeps the plain call).
+struct In { v: i64 }
+struct Box { r: In, n: i64 }
+fn mk(i: i64) -> Box { return Box { r: In { v: i }, n: 1 }; }
+fn acc(n: i64, b: &Box) -> i64 { if n == 0 { return b.n; } return b.r.v + acc(n - 1, &mk(n)); }
+fn main() -> void { let before = sys_get_memory_used(); print(acc(20000, &mk(5))); print(sys_get_memory_used() - before); }

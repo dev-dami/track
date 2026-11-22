@@ -1,0 +1,60 @@
+// F1: a fresh-Str function (LT_HFN) with a `return` of a static Str hidden
+// inside an expression: a call argument, a while condition, a match
+// target, a binary operand, a struct literal field and an assignment
+// value. None may be planned as a Str temporary.
+struct P { a: i64, b: i64 }
+
+fn id(x: i64) -> i64 {
+    return x;
+}
+
+fn in_arg(n: i64) -> Str {
+    print(id(if n > 0 { return "arg"; } else { n }));
+    return int_to_str(n);
+}
+
+fn in_while(n: i64) -> Str {
+    while (if n > 0 { return "while"; } else { false }) {
+        print(9);
+    }
+    return int_to_str(n);
+}
+
+fn in_match(n: i64) -> Str {
+    match (if n > 0 { return "match"; } else { n }) {
+        0 => print(0),
+        _ => print(1),
+    }
+    return int_to_str(n);
+}
+
+fn in_binary(n: i64) -> Str {
+    let mut z: i64 = 0;
+    z = n + (if n > 0 { return "binary"; } else { 1 });
+    return int_to_str(z);
+}
+
+fn in_struct(n: i64) -> Str {
+    let p = P { a: if n > 0 { return "struct"; } else { n }, b: 2 };
+    return int_to_str(p.a + p.b);
+}
+
+fn in_assign(n: i64) -> Str {
+    let mut z: i64 = 0;
+    z = if n > 0 { return "assign"; } else { n * 2 };
+    return int_to_str(z);
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    while i < 2 {
+        let n = 1 - i * 8;
+        print(str_len(in_arg(n)));
+        print(str_len(in_while(n)));
+        print(str_len(in_match(n)));
+        print(str_len(in_binary(n)));
+        print(str_len(in_struct(n)));
+        print(str_len(in_assign(n)));
+        i = i + 1;
+    }
+}
