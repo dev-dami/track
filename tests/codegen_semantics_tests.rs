@@ -241,6 +241,27 @@ fn union_payloads_and_enum_discriminants() {
     assert_eq!(out, "42\n1001\n0\n5\n6\n10");
 }
 
+/// Stage0 folds constants like symbols.trk const_eval: comparisons, `!`,
+/// `&&` and `||` give 0/1, and a unit variant is a constant to later ones.
+#[test]
+fn constants_fold_comparisons_and_variants() {
+    let out = run(
+        "constfold",
+        r#"
+        const ONE = 1 < 2;
+        enum E { A = ONE, B }
+        const Q = E::B + 10;
+        const N = !ONE || (3 >= 3);
+        fn main() -> void {
+            print(ONE); print(E::A); print(E::B); print(Q); print(N);
+            print(7 / (1 < 2));
+        }
+        "#,
+        &[],
+    );
+    assert_eq!(out, "1\n1\n2\n12\n1\n7");
+}
+
 #[test]
 fn negative_runtime_results_keep_their_sign() {
     let out = run(
@@ -361,6 +382,12 @@ fn division_by_zero_flushes_and_raises_sigfpe() {
             "constz",
             "fn main()->i64{ print(2); print(9 / 0); return 0; }",
             "2\n",
+        ),
+        (
+            // A parameter shadowing a constant is the run-time divisor.
+            "shadowz",
+            "const TWO = 2; const ONE = 1 < 2; fn d(TWO: i64) -> i64 { return 7 / TWO; } fn e(ONE: i64) -> i64 { return 7 % (ONE + 1); } fn main()->i64{ print(3); print(e(1)); print(d(0)); return 0; }",
+            "3\n1\n",
         ),
     ];
     for (name, src, want) in cases {

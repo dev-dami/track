@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinOp, Expr, TrackType, UnaryOp};
+use crate::ast::{BinOp, Expr, TrackType};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VariableState {
@@ -467,16 +467,10 @@ impl LinearChecker {
             }
         } // end if !barebones — std package (import "std") still works via Use handling
 
-        // Constant values as the self-hosted checker folds them (comparisons
-        // too), for the E0200 division check only; codegen keeps const_values.
-        let mut folded = self.const_values.clone();
         for stmt in program {
             match stmt {
                 Expr::ConstDef { name, value } => {
-                    const_divrem_ok(&folded, value)?;
-                    if let Some(v) = const_value(&folded, value) {
-                        folded.insert(name.clone(), v);
-                    }
+                    const_divrem_ok(&self.const_values, value)?;
                     if let Some(v) = crate::codegen::eval_const(&self.const_values, value) {
                         self.const_values.insert(name.clone(), v);
                         self.type_info.consts.insert(name.clone(), v);
@@ -501,12 +495,14 @@ impl LinearChecker {
                 }
                 Expr::EnumDef { name, variants, .. } => {
                     for value in variants.iter().filter_map(|(_, v)| v.as_ref()) {
-                        const_divrem_ok(&folded, value)?;
+                        const_divrem_ok(&self.const_values, value)?;
                     }
                     for (vname, disc) in
                         crate::codegen::enum_discriminants(&self.const_values, variants)
                     {
-                        folded.insert(format!("{}::{}", name, vname), disc);
+                        // A unit variant is a constant to later constants.
+                        self.const_values
+                            .insert(format!("{}::{}", name, vname), disc);
                         self.type_info
                             .variants
                             .insert(format!("{}::{}", name, vname), disc);
@@ -1857,46 +1853,6 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 
 /// A constant whose `/` or `%` has known operands that trap at run time
 /// (a zero divisor, INT64_MIN / -1) is E0200, with trackc's text.
-/// Constant value as the self-hosted checker's `const_eval` sees it: the
-/// codegen folder plus comparisons, `!`, `&&` and `||`, so both checkers
-/// report the same E0200 divisions.
-fn const_value(consts: &HashMap<String, i64>, expr: &Expr) -> Option<i64> {
-    match expr {
-        Expr::UnaryOp {
-            op: UnaryOp::Not,
-            expr,
-        } => const_value(consts, expr).map(|v| (v == 0) as i64),
-        Expr::UnaryOp {
-            op: UnaryOp::Neg,
-            expr,
-        } => const_value(consts, expr).map(|v| v.wrapping_neg()),
-        Expr::BinaryOp { op, left, right } => {
-            let (l, r) = (const_value(consts, left)?, const_value(consts, right)?);
-            let b = |x: bool| Some(x as i64);
-            match op {
-                BinOp::Eq => b(l == r),
-                BinOp::Neq => b(l != r),
-                BinOp::Lt => b(l < r),
-                BinOp::Gt => b(l > r),
-                BinOp::Lte => b(l <= r),
-                BinOp::Gte => b(l >= r),
-                BinOp::And => b(l != 0 && r != 0),
-                BinOp::Or => b(l != 0 || r != 0),
-                BinOp::Add => Some(l.wrapping_add(r)),
-                BinOp::Sub => Some(l.wrapping_sub(r)),
-                BinOp::Mul => Some(l.wrapping_mul(r)),
-                BinOp::Div => l.checked_div(r),
-                BinOp::Mod => l.checked_rem(r),
-                BinOp::BitAnd => Some(l & r),
-                BinOp::BitOr => Some(l | r),
-                BinOp::Shl => Some(l.wrapping_shl((r & 63) as u32)),
-                BinOp::Shr => Some(((l as u64) >> (r & 63)) as i64),
-            }
-        }
-        _ => crate::codegen::eval_const(consts, expr),
-    }
-}
-
 fn const_divrem_ok(consts: &HashMap<String, i64>, expr: &Expr) -> Result<(), String> {
     match expr {
         Expr::UnaryOp { expr, .. } => const_divrem_ok(consts, expr),
@@ -1906,7 +1862,8 @@ fn const_divrem_ok(consts: &HashMap<String, i64>, expr: &Expr) -> Result<(), Str
             if !matches!(op, BinOp::Div | BinOp::Mod) {
                 return Ok(());
             }
-            match (const_value(consts, left), const_value(consts, right)) {
+            let eval = crate::codegen::eval_const;
+            match (eval(consts, left), eval(consts, right)) {
                 (Some(_), Some(0)) => {
                     Err("error[E0200]: division by zero in a constant expression".to_string())
                 }
