@@ -81,7 +81,12 @@ const NG_RSMODE = 54;  // function being generated: 0 as written, 1 its `<f>__rs
 const NG_TEMPS = 55;   // (consumer node, slot, HK_*) of live temporaries (L13b)
 const NG_SYMS = 56;    // (name text, start, end) code range of each generated function, for the ELF .symtab
 const NG_CODELEN = 57; // bytes of code before the data (the ELF .text size)
-const NG_SLOTS = 58;
+const NG_COLLECT = 58; // 0, or a vector ng_free_ok / ng_names_ok push the names they would check against NI_CVAR to
+const NG_FREEV = 59;   // name id -> 0 unknown, else ng_free_ok's names for the function's inline body
+const NG_NAMESV = 60;  // name id -> 0 unknown, else ng_list_names_ok's names for the function's whole body
+const NG_BARS = 61;    // ng_stack_bars of the function ng_function is generating, for both passes
+const NG_BINDSTK = 62; // (kind, value) pairs of the arguments ng_bind_args is binding, nested calls above
+const NG_SLOTS = 63;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -342,88 +347,89 @@ fn ng_site_cell(c: i64, n: i64, count: i64) -> i64 {
 // the frame down before the callee runs, and an accumulator loop reruns
 // the body over the same slots, so a local handed to any call inside a
 // `return` value (`return f(&p)`, `return x + f(p)`) must not be a frame
-// cell. Mode 0 collects those names into `names`; mode 1 records in
-// `sites` the literal of every `let`/assignment that binds one of them.
-fn ng_bar_walk(c: i64, n: i64, names: i64, sites: i64, mode: i64, in_ret: bool) -> i64 {
+// cell. One walk collects those names into `names` and, in walk order,
+// (name, literal) of every `let` and assignment of a variable into
+// `binds`; ng_stack_bars keeps the literals that bind one of the names.
+fn ng_bar_walk(c: i64, n: i64, names: i64, binds: i64, in_ret: bool) -> i64 {
     if n < 0 {
         return 0;
     }
     let k = nk(c, n);
-    if k == K_RETURN { return ng_bar_walk(c, na(c, n), names, sites, mode, true); }
+    if k == K_RETURN { return ng_bar_walk(c, na(c, n), names, binds, true); }
     if k == K_CALL || k == K_MACROCALL {
         let args = nb(c, n);
         let mut i: i64 = 0;
         while i < list_len(c, args) {
             let a = list_at(c, args, i);
-            if mode == 0 && in_ret {
+            if in_ret {
                 if nk(c, a) == K_VAR {
                     vpush(names, na(c, a));
                 } else if nk(c, a) == K_ADDR && nk(c, na(c, a)) == K_VAR {
                     vpush(names, na(c, na(c, a)));
                 }
             }
-            ng_bar_walk(c, a, names, sites, mode, in_ret);
+            ng_bar_walk(c, a, names, binds, in_ret);
             i = i + 1;
         }
         return 0;
     }
     if k == K_LET {
-        if mode == 1 && ng_vhas(names, na(c, n)) {
-            vpush(sites, nd(c, n));
-        }
-        return ng_bar_walk(c, nd(c, n), names, sites, mode, in_ret);
+        vpush(binds, na(c, n));
+        vpush(binds, nd(c, n));
+        return ng_bar_walk(c, nd(c, n), names, binds, in_ret);
     }
     if k == K_ASSIGN {
         let t = na(c, n);
-        if mode == 1 && nk(c, t) == K_VAR && ng_vhas(names, na(c, t)) {
-            vpush(sites, nb(c, n));
+        if nk(c, t) == K_VAR {
+            vpush(binds, na(c, t));
+            vpush(binds, nb(c, n));
         }
-        ng_bar_walk(c, t, names, sites, mode, in_ret);
-        return ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret);
+        ng_bar_walk(c, t, names, binds, in_ret);
+        return ng_bar_walk(c, nb(c, n), names, binds, in_ret);
     }
-    if k == K_BIN { ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret); return ng_bar_walk(c, nc(c, n), names, sites, mode, in_ret); }
-    if k == K_UN { return ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret); }
-    if k == K_ADDR || k == K_TINDEX || k == K_FIELD { return ng_bar_walk(c, na(c, n), names, sites, mode, in_ret); }
-    if k == K_TUPLE || k == K_ARRAY { return ng_bar_list(c, na(c, n), names, sites, mode, in_ret, 0, 1); }
-    if k == K_SINIT { return ng_bar_list(c, nb(c, n), names, sites, mode, in_ret, 1, 2); }
-    if k == K_INDEX || k == K_RANGE { ng_bar_walk(c, na(c, n), names, sites, mode, in_ret); return ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret); }
+    if k == K_BIN { ng_bar_walk(c, nb(c, n), names, binds, in_ret); return ng_bar_walk(c, nc(c, n), names, binds, in_ret); }
+    if k == K_UN { return ng_bar_walk(c, nb(c, n), names, binds, in_ret); }
+    if k == K_ADDR || k == K_TINDEX || k == K_FIELD { return ng_bar_walk(c, na(c, n), names, binds, in_ret); }
+    if k == K_TUPLE || k == K_ARRAY { return ng_bar_list(c, na(c, n), names, binds, in_ret, 0, 1); }
+    if k == K_SINIT { return ng_bar_list(c, nb(c, n), names, binds, in_ret, 1, 2); }
+    if k == K_INDEX || k == K_RANGE { ng_bar_walk(c, na(c, n), names, binds, in_ret); return ng_bar_walk(c, nb(c, n), names, binds, in_ret); }
     if k == K_SLICE {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
-        ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret);
-        return ng_bar_walk(c, nc(c, n), names, sites, mode, in_ret);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
+        ng_bar_walk(c, nb(c, n), names, binds, in_ret);
+        return ng_bar_walk(c, nc(c, n), names, binds, in_ret);
     }
     if k == K_IF {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
-        ng_bar_list(c, nb(c, n), names, sites, mode, in_ret, 0, 1);
-        return ng_bar_list(c, nc(c, n), names, sites, mode, in_ret, 0, 1);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
+        ng_bar_list(c, nb(c, n), names, binds, in_ret, 0, 1);
+        return ng_bar_list(c, nc(c, n), names, binds, in_ret, 0, 1);
     }
     if k == K_WHILE {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
-        return ng_bar_list(c, nb(c, n), names, sites, mode, in_ret, 0, 1);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
+        return ng_bar_list(c, nb(c, n), names, binds, in_ret, 0, 1);
     }
     if k == K_FOR {
-        ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret);
-        return ng_bar_list(c, nc(c, n), names, sites, mode, in_ret, 0, 1);
+        ng_bar_walk(c, nb(c, n), names, binds, in_ret);
+        return ng_bar_list(c, nc(c, n), names, binds, in_ret, 0, 1);
     }
-    if k == K_LETD { return ng_bar_walk(c, nc(c, n), names, sites, mode, in_ret); }
-    if k == K_LENS { return ng_bar_list(c, nc(c, n), names, sites, mode, in_ret, 0, 1); }
+    if k == K_LETD { return ng_bar_walk(c, nc(c, n), names, binds, in_ret); }
+    if k == K_LENS { return ng_bar_list(c, nc(c, n), names, binds, in_ret, 0, 1); }
     if k == K_MATCH {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
         let arms = nb(c, n);
         let mut i: i64 = 0;
         while i < list_len(c, arms) {
-            ng_bar_walk(c, list_at(c, arms, i + 1), names, sites, mode, in_ret);
-            ng_bar_walk(c, list_at(c, arms, i + 2), names, sites, mode, in_ret);
+            ng_bar_walk(c, list_at(c, arms, i + 1), names, binds, in_ret);
+            ng_bar_walk(c, list_at(c, arms, i + 2), names, binds, in_ret);
             i = i + 3;
         }
     }
     return 0;
 }
 
-fn ng_bar_list(c: i64, l: i64, names: i64, sites: i64, mode: i64, in_ret: bool, from: i64, step: i64) -> i64 {
+fn ng_bar_list(c: i64, l: i64, names: i64, binds: i64, in_ret: bool, from: i64, step: i64) -> i64 {
     let mut i = from;
     while i < list_len(c, l) {
-        ng_bar_walk(c, list_at(c, l, i), names, sites, mode, in_ret);
+        ng_bar_walk(c, list_at(c, l, i), names, binds, in_ret);
         i = i + step;
     }
     return 0;
@@ -433,21 +439,25 @@ fn ng_bar_list(c: i64, l: i64, names: i64, sites: i64, mode: i64, in_ret: bool, 
 // not be stack cells (`ng_bar_walk`), or 0 when there are none.
 fn ng_stack_bars(c: i64, body: i64, prelude: i64) -> i64 {
     let names = vnew();
+    let binds = vnew();
+    ng_bar_list(c, body, names, binds, false, 0, 1);
+    if prelude >= 0 {
+        let mut p: i64 = 0;
+        while p < vlen(prelude) {
+            ng_bar_walk(c, vget(prelude, p), names, binds, false);
+            p = p + 1;
+        }
+    }
+    if vlen(names) == 0 {
+        return 0;
+    }
     let sites = vnew();
-    let mut mode: i64 = 0;
-    while mode < 2 {
-        ng_bar_list(c, body, names, sites, mode, false, 0, 1);
-        if prelude >= 0 {
-            let mut p: i64 = 0;
-            while p < vlen(prelude) {
-                ng_bar_walk(c, vget(prelude, p), names, sites, mode, false);
-                p = p + 1;
-            }
+    let mut i: i64 = 0;
+    while i < vlen(binds) {
+        if ng_vhas(names, vget(binds, i)) {
+            vpush(sites, vget(binds, i + 1));
         }
-        if vlen(names) == 0 {
-            return 0;
-        }
-        mode = mode + 1;
+        i = i + 2;
     }
     if vlen(sites) == 0 {
         return 0;
@@ -1121,7 +1131,8 @@ fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
     let k = nk(c, n);
     if k == K_VAR {
         let name = na(c, n);
-        if ni(c, name, NI_CVAR) == -1 {
+        let out = ng(c, NG_COLLECT);
+        if out == 0 && ni(c, name, NI_CVAR) == -1 {
             return true;
         }
         let params = nc(c, f);
@@ -1131,6 +1142,10 @@ fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
                 return true;
             }
             i = i + 2;
+        }
+        if out != 0 {
+            vpush(out, name);
+            return true;
         }
         return false;
     }
@@ -1167,12 +1182,62 @@ fn ng_free_ok(c: i64, n: i64, f: i64) -> bool {
     return true;
 }
 
+// The names `n` (inline body or, with `names` >= 0, whole body of `f`)
+// mentions that are not `f`'s own, cached by f's name in `slot`: the
+// walk ng_free_ok / ng_list_names_ok makes, without the NI_CVAR test,
+// which depends on the call site (ng_vars_unbound).
+fn ng_free_vars(c: i64, n: i64, f: i64, slot: i64, names: i64) -> i64 {
+    let key = na(c, f);
+    let memo = ng(c, slot);
+    if vlen(memo) <= key {
+        vfill(memo, key + 1 - vlen(memo), 0);
+    }
+    let known = vget(memo, key);
+    if known != 0 {
+        return known;
+    }
+    let out = vnew();
+    ng_set(c, NG_COLLECT, out);
+    if names < 0 {
+        ng_free_ok(c, n, f);
+    } else {
+        ng_list_names_ok(c, n, names);
+    }
+    ng_set(c, NG_COLLECT, 0);
+    vset(memo, key, out);
+    return out;
+}
+
+// No name in `vars` is bound to a local at this site.
+fn ng_vars_unbound(c: i64, vars: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < vlen(vars) {
+        if ni(c, vget(vars, i), NI_CVAR) != -1 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // The returned expression of a function whose body is `return e;` with a
 // small pure expression e and a value result, else -1.
 fn ng_inline_body(c: i64, f: i64) -> i64 {
     if nk(c, f) != K_FN {
         return -1;
     }
+    // the cached answer in a small frame; the first look in its own
+    let known = vget(ng(c, NG_INL), na(c, f));
+    if known == 1 {
+        return na(c, list_at(c, ne(c, f), 0));
+    }
+    if known == 2 {
+        return -1;
+    }
+    return ng_inline_body_first(c, f);
+}
+
+fn ng_inline_body_first(c: i64, f: i64) -> i64 {
     let name = na(c, f);
     let map = ng(c, NG_INL);
     if vlen(map) <= name {
@@ -1212,7 +1277,7 @@ fn ng_inline_begin(c: i64, f: i64, args: i64) -> i64 {
     }
     let params = nc(c, f);
     let count = list_len(c, args);
-    if count * 2 != list_len(c, params) || !ng_free_ok(c, e, f) {
+    if count * 2 != list_len(c, params) || !ng_vars_unbound(c, ng_free_vars(c, e, f, NG_FREEV, -1)) {
         return -1;
     }
     return ng_bind_args(c, params, args, ng(c, NG_NONE));
@@ -1223,8 +1288,8 @@ fn ng_inline_begin(c: i64, f: i64, args: i64) -> i64 {
 // mark for ng_inline_end.
 fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
     let count = list_len(c, args);
-    let vals = vnew();
-    let kinds = vnew();
+    let stk = ng(c, NG_BINDSTK);
+    let base = vlen(stk);
     let mut i: i64 = 0;
     while i < count {
         let a = list_at(c, args, i);
@@ -1238,22 +1303,22 @@ fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
         }
         if !fixed {
             ng_gen(c, a);
-            vpush(kinds, 2);
-            vpush(vals, ng_temp(c));
+            vpush(stk, 2);
+            vpush(stk, ng_temp(c));
         } else if ng_fold(c, a) {
-            vpush(kinds, 1);
-            vpush(vals, ng(c, NG_OPV));
+            vpush(stk, 1);
+            vpush(stk, ng(c, NG_OPV));
         } else if ng_opnd(c, a) == 2 {
-            vpush(kinds, 2);
-            vpush(vals, ng(c, NG_OPV));
+            vpush(stk, 2);
+            vpush(stk, ng(c, NG_OPV));
         } else if nk(c, a) == K_ADDR && ng_opnd(c, na(c, a)) == 2 {
             // `&local` is the local's cell pointer: share its slot
-            vpush(kinds, 2);
-            vpush(vals, ng(c, NG_OPV));
+            vpush(stk, 2);
+            vpush(stk, ng(c, NG_OPV));
         } else {
             ng_gen(c, a);
-            vpush(kinds, 2);
-            vpush(vals, ng_temp(c));
+            vpush(stk, 2);
+            vpush(stk, ng_temp(c));
         }
         i = i + 1;
     }
@@ -1261,15 +1326,17 @@ fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
     let mut j: i64 = 0;
     while j < count {
         let pname = list_at(c, params, j * 2);
-        if vget(kinds, j) == 1 {
+        let v = vget(stk, base + j * 2 + 1);
+        if vget(stk, base + j * 2) == 1 {
             let cb = ng(c, NG_CBIND);
-            vpush(cb, vget(vals, j));
+            vpush(cb, v);
             ng_bind(c, pname, -1 - vlen(cb));
         } else {
-            ng_bind(c, pname, vget(vals, j));
+            ng_bind(c, pname, v);
         }
         j = j + 1;
     }
+    vtrunc(stk, base);
     ng_set(c, NG_INLDEPTH, ng(c, NG_INLDEPTH) + 1);
     return mark;
 }
@@ -1368,7 +1435,8 @@ fn ng_names_ok(c: i64, n: i64, names: i64) -> bool {
     let k = nk(c, n);
     if k == K_VAR {
         let name = na(c, n);
-        if ni(c, name, NI_CVAR) == -1 {
+        let out = ng(c, NG_COLLECT);
+        if out == 0 && ni(c, name, NI_CVAR) == -1 {
             return true;
         }
         let mut i: i64 = 0;
@@ -1377,6 +1445,10 @@ fn ng_names_ok(c: i64, n: i64, names: i64) -> bool {
                 return true;
             }
             i = i + 1;
+        }
+        if out != 0 {
+            vpush(out, name);
+            return true;
         }
         return false;
     }
@@ -1520,7 +1592,7 @@ fn ng_inline_full(c: i64, f: i64, args: i64) -> bool {
     }
     let params = nc(c, f);
     let count = list_len(c, args);
-    if count * 2 != list_len(c, params) || !ng_list_names_ok(c, ne(c, f), names) {
+    if count * 2 != list_len(c, params) || !ng_vars_unbound(c, ng_free_vars(c, ne(c, f), f, NG_NAMESV, names)) {
         return false;
     }
     let assigned = vnew();
@@ -1800,9 +1872,15 @@ fn ng_amode_op(c: i64, pre: i64, opc: i64, reg: i64) -> i64 {
 }
 
 // load64/load8/store64/store8 with folded displacements.
-fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
+fn ng_mem_builtin(c: i64, name: i64, args: i64) -> bool {
     let b = ncode(c);
-    let nargs = list_len(c, args);
+    let mut text = name;
+    let mut nargs = list_len(c, args);
+    if nargs == 3 && text_eq(text, "memset") && nk(c, list_at(c, args, 2)) == K_INT && na(c, list_at(c, args, 2)) == 1 {
+        // one byte: a byte store, without rep stosb's registers and frame
+        text = "store8";
+        nargs = 2;
+    }
     if nargs >= 1 && ng_pure_addr(c, list_at(c, args, 0)) {
         if nargs == 1 && text_eq(text, "load64") {
             ng_amode_op(c, 0, 139, 0);
@@ -1834,7 +1912,7 @@ fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
         }
     }
     if text_eq(text, "load64") || text_eq(text, "load8") {
-        if list_len(c, args) != 1 {
+        if nargs != 1 {
             return false;
         }
         let d = ng_addr(c, list_at(c, args, 0));
@@ -1845,7 +1923,7 @@ fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
         }
         return true;
     }
-    if !(text_eq(text, "store64") || text_eq(text, "store8")) || list_len(c, args) != 2 {
+    if !(text_eq(text, "store64") || text_eq(text, "store8")) || nargs != 2 {
         return false;
     }
     let v = list_at(c, args, 1);
@@ -1977,6 +2055,16 @@ fn ng_sb_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
 }
 
 fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
+    // every name below starts with `t`, `a`, `s` or `m`
+    let first = str_char_at(text, 0);
+    if first != 116 && first != 97 && first != 115 && first != 109 {
+        return false;
+    }
+    if count == 3 && text_eq(text, "memset") {
+        // rt memset of one constant byte: a byte store (ng_mem_builtin)
+        let n = list_at(c, args, 2);
+        return nk(c, n) == K_INT && na(c, n) == 1 && ng_mem_builtin(c, text, args);
+    }
     let b = ncode(c);
     if ng_sb_prim(c, text, args, count) {
         return true;
@@ -5008,7 +5096,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_ACCLVL, 0);
     ng_set(c, NG_CURFN, f);
-    ng_set(c, NG_NOSTACK, ng_stack_bars(c, ne(c, f), prelude));
+    ng_set(c, NG_NOSTACK, ng(c, NG_BARS));
     vtrunc(ng(c, NG_AUTO), 0);
     vtrunc(ng(c, NG_AUTOBASE), 0);
     vtrunc(ng(c, NG_TEMPS), 0);
@@ -5098,6 +5186,7 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     vtrunc(ng(c, NG_USE), 0);
     vtrunc(ng(c, NG_REG), 0);
     vtrunc(ng(c, NG_PIN), 0);
+    ng_set(c, NG_BARS, ng_stack_bars(c, ne(c, f), prelude));
     ng_function_pass(c, f, prelude);
     let uses = ng(c, NG_USE);
     let nslot = ng(c, NG_NSLOT);
@@ -5293,6 +5382,9 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_COLD, vnew());
     ng_set(c, NG_CBIND, vnew());
     ng_set(c, NG_BODYOK, vnew());
+    ng_set(c, NG_FREEV, vnew());
+    ng_set(c, NG_BINDSTK, vnew());
+    ng_set(c, NG_NAMESV, vnew());
     ng_set(c, NG_EXITS, vnew());
     ng_set(c, NG_NONE, vnew());
     ng_set(c, NG_SLEN, vnew());

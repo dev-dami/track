@@ -1189,12 +1189,14 @@ fn min3(a: i64, b: i64, d: i64) -> i64 {
     return m;
 }
 
-fn levenshtein(a: i64, b: i64) -> i64 {
-    let x = text_bytes(a);
+// Edit distance between byte vector `x` and text `b`, or `cap` when it
+// is at least `cap`: once a whole row is >= cap the distance is too.
+fn levenshtein_capped(x: i64, b: i64, cap: i64) -> i64 {
     let y = text_bytes(b);
     let n = vlen(x);
     let m = vlen(y);
     let mut prev = vnew_cap(m + 1);
+    let mut cur = vnew_cap(m + 1);
     let mut j: i64 = 0;
     while j <= m {
         vpush(prev, j);
@@ -1202,23 +1204,35 @@ fn levenshtein(a: i64, b: i64) -> i64 {
     }
     let mut i: i64 = 1;
     while i <= n {
-        let cur = vnew_cap(m + 1);
+        vtrunc(cur, 0);
         vpush(cur, i);
+        let mut low = i;
         let mut k: i64 = 1;
         while k <= m {
             let mut cost: i64 = 1;
             if vget(x, i - 1) == vget(y, k - 1) {
                 cost = 0;
             }
-            vpush(cur, min3(vget(prev, k) + 1, vget(cur, k - 1) + 1, vget(prev, k - 1) + cost));
+            let v = min3(vget(prev, k) + 1, vget(cur, k - 1) + 1, vget(prev, k - 1) + cost);
+            if v < low {
+                low = v;
+            }
+            vpush(cur, v);
             k = k + 1;
         }
+        if low >= cap {
+            return cap;
+        }
+        let t = prev;
         prev = cur;
+        cur = t;
         i = i + 1;
     }
-    // Read before returning, so `prev` is freed here (L15: `prev = cur`
-    // moves each row's ownership; `return vget(prev, ..)` would keep it).
+    // Read before returning, so `prev` is not held by the return (L15).
     let d = vget(prev, m);
+    if d >= cap {
+        return cap;
+    }
     return d;
 }
 
@@ -1233,6 +1247,7 @@ fn check_call_target(c: i64, n: i64, name: i64) -> i64 {
     }
     let target_text = name_text(c, target);
     let target_len = text_len(target_text);
+    let target_bytes = text_bytes(target_text);
     let names = ck(c, CK_FNNAMES);
     let mut best: i64 = -1;
     let mut best_dist: i64 = 3;
@@ -1241,7 +1256,7 @@ fn check_call_target(c: i64, n: i64, name: i64) -> i64 {
         let cand = name_text(c, vget(names, i));
         let diff = text_len(cand) - target_len;
         if diff <= 2 && diff >= -2 {
-            let dist = levenshtein(target_text, cand);
+            let dist = levenshtein_capped(target_bytes, cand, best_dist);
             if dist < best_dist {
                 best_dist = dist;
                 best = vget(names, i);
