@@ -2010,6 +2010,11 @@ fn ng_sb_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
 }
 
 fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
+    // every name below starts with `t`, `a` or `s`
+    let first = str_char_at(text, 0);
+    if first != 116 && first != 97 && first != 115 {
+        return false;
+    }
     let b = ncode(c);
     if ng_sb_prim(c, text, args, count) {
         return true;

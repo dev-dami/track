@@ -3842,11 +3842,12 @@ fn hd_program(c: i64) -> i64 {
     // A function's checks read only the LT_HFN / LT_HLENT entries of the
     // functions it calls (hd_call_kind, hd_arg_ok), so a sweep skips a
     // function none of whose callees changed since its last check: the
-    // check would repeat its last answer. `stamp` is when each function's
-    // entries last changed, `seen` when each item was last checked.
+    // check would repeat its last answer. `stamp` is when the entries of a
+    // function of each name last changed (functions sharing a name only
+    // cost extra checks), `seen` when each item was last checked.
     let deps = vnew_cap(vlen(items) + 1);
     let seen = vfill(vnew_cap(vlen(items) + 1), vlen(items), -1);
-    let stamp = vfill(vnew_cap(nn + 1), nn, 0);
+    let stamp = vfill(vnew_cap(name_count(c) + 1), name_count(c), 0);
     let mut tick: i64 = 0;
     let mut d: i64 = 0;
     while d < vlen(items) {
@@ -3888,7 +3889,7 @@ fn hd_program(c: i64) -> i64 {
                 vset(lent, f, bits);
                 if vget(hfn, f) != was_h || bits != was_l {
                     tick = tick + 1;
-                    vset(stamp, f, tick);
+                    vset(stamp, na(c, f), tick);
                 }
             }
             j = j + 1;
@@ -3913,7 +3914,7 @@ fn hd_stale(fs: i64, stamp: i64, seen: i64) -> bool {
     return false;
 }
 
-// Push every program function a call in `n` names (callee_fn), walking
+// Push the name of every program function a call in `n` names (callee_fn), walking
 // the nodes scan_calls walks.
 fn hd_scan_fns(c: i64, n: i64, out: i64) -> i64 {
     if n < 0 {
@@ -3926,7 +3927,7 @@ fn hd_scan_fns(c: i64, n: i64, out: i64) -> i64 {
     if k == K_CALL {
         let f = hd_callee_peek(c, na(c, n));
         if f >= 0 {
-            vpush(out, f);
+            vpush(out, na(c, f));
         }
         return hd_scan_list(c, nb(c, n), 0, 1, out);
     }
