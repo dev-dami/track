@@ -66,7 +66,6 @@ pub fn build_file_in_dir(filename: &str, out_dir: &Path) -> Result<PathBuf, Stri
         .arg("-o")
         .arg(&exe_path)
         .arg("-lm")
-        .arg("-no-pie")
         .status()
         .map_err(|e| format!("Linker error: {}", e))?;
 

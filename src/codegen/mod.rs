@@ -130,7 +130,12 @@ fn tuple_len(aliases: &HashMap<String, TrackType>, ty: &TrackType) -> Option<usi
 impl CodeGen {
     pub fn create_default_isa() -> Arc<dyn isa::TargetIsa> {
         let mut flag_builder = settings::builder();
-        flag_builder.set("is_pic", "false").unwrap();
+        // Position-independent, linked as PIE: the heap then sits far above
+        // any integer a program prints, so the runtime's `print` (which
+        // prints a word that points at readable text as a string) cannot
+        // mistake a count for a heap string. Non-PIE put the brk heap a
+        // random 0..32 MiB above the image, where counts like 25988585 live.
+        flag_builder.set("is_pic", "true").unwrap();
         flag_builder.set("opt_level", "speed").unwrap();
         // More aggressive opts for near-native speed
         let _ = flag_builder.set("regalloc_algorithm", "backtracking");

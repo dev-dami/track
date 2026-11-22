@@ -79,7 +79,7 @@ impl LinkerEngine {
             cmd.arg(obj);
         }
         cmd.arg(&runtime_obj);
-        cmd.arg("-o").arg(exe_path).arg("-lm").arg("-no-pie");
+        cmd.arg("-o").arg(exe_path).arg("-lm"); // PIE: see create_default_isa
 
         let status = cmd
             .status()
