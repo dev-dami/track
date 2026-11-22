@@ -1,0 +1,14 @@
+type Pair = (i64, i64);
+fn make(a: i64) -> Pair {
+    let t = (a, a + 1);
+    return t;
+}
+fn clobber() -> i64 {
+    let z = (9, 9, 9, 9, 9, 9, 9, 9);
+    return z.0;
+}
+fn main() -> void {
+    let p = make(5);
+    let q = clobber();
+    print(p.0); print(p.1); print(q);
+}

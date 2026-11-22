@@ -1,0 +1,35 @@
+fn pick(x: i64) -> i64 {
+    match x {
+        1 => return 10,
+        _ => return 20,
+    }
+    return 0;
+}
+fn first_over(limit: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 100 {
+        if i * i > limit {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+fn nested(x: i64) -> i64 {
+    if x > 0 {
+        if x > 5 { return 7; } else { return 8; }
+    }
+    return 9;
+}
+fn loop_return(x: i64) -> i64 {
+    while x > 0 {
+        return 5;
+    }
+    return 6;
+}
+fn main() -> void {
+    print(pick(1)); print(pick(4));
+    print(first_over(50));
+    print(nested(10)); print(nested(2)); print(nested(-1));
+    print(loop_return(1)); print(loop_return(0));
+}

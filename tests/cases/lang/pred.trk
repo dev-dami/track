@@ -1,0 +1,14 @@
+fn main() -> void {
+    if (str_is_int("00042")) {
+        print(str_to_int("00042"));
+    }
+    if (!str_is_int("junk")) {
+        print(111);
+    }
+    if (env_exists("PATH")) {
+        print(222);
+    }
+    if (!env_exists("TRACK_DEFINITELY_NOT_SET_9x7")) {
+        print(333);
+    }
+}

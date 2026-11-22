@@ -1,0 +1,6 @@
+'let'
+identifier x
+'='
+integer 10
+';'
+end of file

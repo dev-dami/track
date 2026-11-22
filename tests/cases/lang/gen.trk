@@ -1,0 +1,14 @@
+fn identity<T>(x: T) -> T { return x; }
+fn pair<T, U>(a: T, b: U) -> (T, U) { return (a, b); }
+fn main() -> void {
+    let a: i32 = 5;
+    print(identity(a));
+    let b: i64 = 10;
+    print(identity(b));
+    let p = pair(1, 2);
+    print(p.0);
+    print(p.1);
+    let z = pair(identity(1), identity(2));
+    print(z.0);
+    print(z.1);
+}

@@ -1,0 +1,20 @@
+# name	rc	first stderr line prefix ("-" = no error line)	source
+# trackc half of parser_tests.rs: the Rust tests compared stage0 AST
+# shapes (no trackc equivalent). Here trackc must parse each source: no
+# lexer (E0001) or parser (E01xx) diagnostic, and the verdict after parsing
+# is pinned (some sources name undeclared variables or modules).
+parse_fn_def	0	-	fn add(a: i32, b: i32) -> i32 { return a + b; }
+parse_let_def	0	-	let mut x: i64 = 100;
+parse_slice_type_and_indexing	1	error[E0200]: Undeclared variable 'arr'.	let s: []u8 = arr[0..5];
+parse_struct_and_lens	0	-	let u = User { age: 30 }; with u -> user { user.set_age(31); }
+parse_enum_and_union	0	-	enum Status: i32 { Active = 1, Inactive = 0 } union Value { Int(i32), Empty }
+parse_match	1	error[E0200]: Undeclared variable 'val'.	match val { Value::Int(n) if n > 0 => print(n), _ => print(0) }
+parse_macro_def_and_call	0	-	@macro bit(n: u32) -> u32 { return 1 << n; } let val = @bit(5);
+parse_use_and_const	1	error[E0011]: Unknown module 'std/math'	import "std/math" as m :: { abs, max }; const PI = 3;
+parse_array_type_and_literal	0	-	let arr: [i32; 3] = [1, 2, 3]; let x = arr[0];
+parse_type_alias	0	-	type ByteBuf = []u8;
+parse_for_in_loop	0	-	for i in 0..10 { print(i); }
+parse_use_statement	1	error[E0200]: Module 'std/io' does not export 'read_line'	use "std/io" as io::{print, read_line};
+parse_generic_fn_single_param	0	-	fn identity<T>(x: T) -> T { return x; }
+parse_generic_fn_multi_params	0	-	fn pair<T, U>(a: T, b: U) -> (T, U) { return (a, b); }
+parse_generic_fn_no_return	0	-	fn log<T>(x: T) { print(x); }

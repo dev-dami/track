@@ -1,0 +1,5 @@
+integer 12345
+string TK_S("hello world\015\n\t")
+identifier my_var
+identifier _var2
+end of file

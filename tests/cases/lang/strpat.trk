@@ -1,0 +1,8 @@
+fn main() -> void {
+    let s = str_concat("he", "llo");
+    match s {
+        "world" => print(0),
+        "hello" => print(1),
+        _ => print(2),
+    }
+}
