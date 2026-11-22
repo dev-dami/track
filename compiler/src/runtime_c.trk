@@ -169,12 +169,12 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "");
     sb_line(b, "static size_t tk_bump_span(size_t size) { return (size + sizeof(size_t) + 15) & ~(size_t)15; }");
     sb_line(b, "");
-    sb_line(b, "static size_t *tk_bump_cell(size_t size) {");
+    sb_line(b, "static size_t *tk_bump_cell(size_t size, int zero) {");
     sb_line(b, "    size_t span = tk_bump_span(size);");
     sb_line(b, "    size_t *cell = g_bump_free[span / 16];");
     sb_line(b, "    if (cell) {");
     sb_line(b, "        g_bump_free[span / 16] = *(size_t **)(cell + 1);");
-    sb_line(b, "        memset(cell, 0, span);");
+    sb_line(b, "        if (zero) memset(cell, 0, span);");
     sb_line(b, "    } else {");
     sb_line(b, "        if ((size_t)(g_bump_end - g_bump_cur) < span) {");
     sb_line(b, "            g_bump_cur = (char *)calloc(1, TK_BUMP_CHUNK);");
@@ -193,7 +193,8 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "    g_bump_free[span / 16] = raw;");
     sb_line(b, "}");
     sb_line(b, "");
-    sb_line(b, "tk_w alloc(tk_w size_w) {");
+    sb_line(b, "/* Zeroed when `zero`; otherwise a reused cell keeps its old bytes. */");
+    sb_line(b, "static tk_w tk_bump_alloc(tk_w size_w, int zero) {");
     sb_line(b, "    size_t size = (size_t)size_w;");
     sb_line(b, "    if (size_w <= 0) return 0;");
     sb_line(b, "    if (g_allocated_bytes + size > g_max_memory_limit) {");
@@ -201,7 +202,9 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "        fflush(stderr);");
     sb_line(b, "        exit(137);");
     sb_line(b, "    }");
-    sb_line(b, "    size_t *ptr = size <= TK_BUMP_MAX ? tk_bump_cell(size) : (size_t *)calloc(1, size + sizeof(size_t));");
+    sb_line(b, "    size_t *ptr = size <= TK_BUMP_MAX ? tk_bump_cell(size, zero)");
+    sb_line(b, "                  : zero ? (size_t *)calloc(1, size + sizeof(size_t))");
+    sb_line(b, "                         : (size_t *)malloc(size + sizeof(size_t));");
     sb_line(b, "    if (!ptr) {");
     sb_line(b, "        fprintf(stderr, \"\\nTrack Runtime Error: Out of memory allocation failure!\\n\");");
     sb_line(b, "        fflush(stderr);");
@@ -211,6 +214,12 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "    g_allocated_bytes += size;");
     sb_line(b, "    return TK_WORD(ptr + 1);");
     sb_line(b, "}");
+    sb_line(b, "");
+    sb_line(b, "tk_w alloc(tk_w size_w) { return tk_bump_alloc(size_w, 1); }");
+    sb_line(b, "");
+    sb_line(b, "/* `alloc` without the zeroing, for cells whose every word is written");
+    sb_line(b, " * before any is read (cell literals and constructors, array copies). */");
+    sb_line(b, "tk_w track_alloc_nz(tk_w size_w) { return tk_bump_alloc(size_w, 0); }");
     sb_line(b, "");
     sb_line(b, "tk_w dealloc(tk_w p) {");
     sb_line(b, "    if (!p) return 0;");
@@ -254,8 +263,9 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "");
     sb_line(b, "/* Copy `count` words to a fresh heap cell (escaping tuples). */");
     sb_line(b, "tk_w track_words_copy(tk_w src, tk_w count) {");
-    sb_line(b, "    tk_w dst = alloc(count > 0 ? count * 8 : 8);");
-    sb_line(b, "    if (src && count > 0) memcpy(TK_PTR(dst), TK_PTR(src), (size_t)count * 8);");
+    sb_line(b, "    if (!src || count <= 0) return alloc(8 > count * 8 ? 8 : count * 8);");
+    sb_line(b, "    tk_w dst = track_alloc_nz(count * 8);");
+    sb_line(b, "    memcpy(TK_PTR(dst), TK_PTR(src), (size_t)count * 8);");
     sb_line(b, "    return dst;");
     sb_line(b, "}");
     sb_line(b, "");
@@ -619,7 +629,7 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "} TrackVec;");
     sb_line(b, "");
     sb_line(b, "tk_w vec_init(tk_w cap) {");
-    sb_line(b, "    TrackVec *v = (TrackVec *)TK_PTR(alloc(sizeof(TrackVec)));");
+    sb_line(b, "    TrackVec *v = (TrackVec *)TK_PTR(track_alloc_nz(sizeof(TrackVec)));");
     sb_line(b, "    v->cap = cap > 0 ? cap : 16;");
     sb_line(b, "    v->data = (tk_w *)TK_PTR(alloc(v->cap * (tk_w)sizeof(tk_w)));");
     sb_line(b, "    v->len = 0;");
@@ -861,7 +871,7 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "    tk_w len = a ? ((tk_w *)TK_PTR(a))[0] : 0;");
     sb_line(b, "    if (to < 0) to = len;");
     sb_line(b, "    if (from < 0 || from > to || to > len) track_abort(TK_WORD(\"array slice out of bounds\"));");
-    sb_line(b, "    tk_w out = alloc((to - from + 1) * 8);");
+    sb_line(b, "    tk_w out = track_alloc_nz((to - from + 1) * 8);");
     sb_line(b, "    ((tk_w *)TK_PTR(out))[0] = to - from;");
     sb_line(b, "    if (to > from) memcpy((tk_w *)TK_PTR(out) + 1, (tk_w *)TK_PTR(a) + 1 + from, (size_t)(to - from) * 8);");
     sb_line(b, "    return out;");
@@ -959,6 +969,7 @@ fn runtime_prototypes(b: i64) -> i64 {
     sb_line(b, "tk_w sys_set_memory_limit(tk_w);");
     sb_line(b, "tk_w sys_get_memory_used(void);");
     sb_line(b, "tk_w alloc(tk_w);");
+    sb_line(b, "tk_w track_alloc_nz(tk_w);");
     sb_line(b, "tk_w dealloc(tk_w);");
     sb_line(b, "tk_w mem_realloc(tk_w, tk_w);");
     sb_line(b, "tk_w track_words_copy(tk_w, tk_w);");
@@ -1077,6 +1088,7 @@ fn register_runtime(c: i64) -> i64 {
     ni_set(c, intern(c, "sys_set_memory_limit"), NI_EXTERN, 1);
     ni_set(c, intern(c, "sys_get_memory_used"), NI_EXTERN, 0);
     ni_set(c, intern(c, "alloc"), NI_EXTERN, 1);
+    ni_set(c, intern(c, "track_alloc_nz"), NI_EXTERN, 1);
     ni_set(c, intern(c, "dealloc"), NI_EXTERN, 1);
     ni_set(c, intern(c, "mem_realloc"), NI_EXTERN, 2);
     ni_set(c, intern(c, "track_words_copy"), NI_EXTERN, 2);

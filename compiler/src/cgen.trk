@@ -164,11 +164,12 @@ fn gen_cell(c: i64, words: i64) -> i64 {
 // `gen_cell` with `note` (a C comment, or "") after the allocation.
 fn gen_cell_note(c: i64, words: i64, note: i64) -> i64 {
     let t = temp(c);
-    let mut size = vlen(words);
-    if size < 1 {
-        size = 1;
+    if vlen(words) < 1 {
+        emit(c, text_cat3(t, " = alloc(8);", note));
+    } else {
+        // every word is stored below, so the cell need not be zeroed first
+        emit(c, text_cat3(t, " = track_alloc_nz(", text_cat3(text_of_int(vlen(words) * 8), ");", note)));
     }
-    emit(c, text_cat3(t, " = alloc(", text_cat3(text_of_int(size * 8), ");", note)));
     let mut i: i64 = 0;
     while i < vlen(words) {
         emit(c, text_cat3("TK_AT(", t, text_cat3(", ", text_of_int(i), text_cat3(") = ", vget(words, i), ";"))));
@@ -1201,7 +1202,11 @@ fn gen_rs_wrapper(c: i64, f: i64) -> i64 {
         sb_add(b, ", ");
         i = i + 1;
     }
-    sb_add(b, "alloc(");
+    if pl_rs_full(c, nd(c, f)) {
+        sb_add(b, "track_alloc_nz(");
+    } else {
+        sb_add(b, "alloc(");
+    }
     sb_int(b, pl_flat_words(c, nd(c, f)) * 8);
     sb_add(b, "));");
     let out = g(c, G_FUNCS);

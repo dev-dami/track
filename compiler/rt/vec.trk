@@ -8,7 +8,7 @@
 // -------------------------------------------------------------------- Vec
 
 fn vec_init(cap: i64) -> i64 {
-    let v = alloc(24);
+    let v = track_alloc_nz(24);
     let mut n = cap;
     if n <= 0 {
         n = 16;
@@ -382,7 +382,7 @@ fn track_array_slice(a: i64, from: i64, to: i64) -> i64 {
     if from < 0 || from > end || end > len {
         track_abort("array slice out of bounds");
     }
-    let out = alloc((end - from + 1) * 8);
+    let out = track_alloc_nz((end - from + 1) * 8);
     store64(out, end - from);
     if end > from {
         rt_copy(out + 8, a + 8 + 8 * from, (end - from) * 8);

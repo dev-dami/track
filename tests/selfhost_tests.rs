@@ -536,6 +536,7 @@ fn track_runtime_matches_the_c_runtime() {
     programs.push(repo().join("compiler/rt/tests/rt_smoke.trk"));
     for name in [
         "rt_alloc",
+        "rt_alloc_nz",
         "rt_memlimit",
         "rt_memlimit_realloc",
         "rt_lcache",
