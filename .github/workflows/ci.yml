@@ -107,6 +107,9 @@ jobs:
       - name: Compiler sources are warning-clean
         run: ./build/bootstrap/stage3/trackc check --deny-warnings compiler/src/main.trk
 
+      - name: Test suite without cargo (tests/run.sh)
+        run: env PATH=/usr/bin:/bin tests/run.sh -j "$(nproc)" -K
+
   lint:
     runs-on: ubuntu-latest
     steps:
