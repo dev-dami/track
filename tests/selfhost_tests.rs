@@ -2296,14 +2296,27 @@ fn temps_free_fresh_cell_temporaries() {
 /// in tests/strfield/ prints its `<stem>.out` with both backends and plans
 /// as its `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them). `temp`
 /// and `local` own their strings (`deep strs`) and run leak-clean under
-/// LSan; a literal, a parameter's, an aliased or a moved-out Str field is
-/// never freed (ASan clean, leaks not checked: those strings may live on).
+/// LSan, as do `result` (a call result's fields, card L15 LT_SFRES) and
+/// `movelocal` (a fresh Str local moved into a field, LT_SFMOVE); a
+/// literal, a parameter's, an aliased, a moved-out, a stored or a maybe
+/// static Str field (`keep`) is never freed (ASan clean, leaks not
+/// checked: those strings may live on).
 #[test]
 fn strfield_frees_owned_str_fields() {
     let root = repo();
     let update = env::var("UPDATE_LIFE").is_ok();
     let dir = scratch("strfield");
-    let stems = ["alias", "literal", "local", "moved", "param", "temp"];
+    let stems = [
+        "alias",
+        "keep",
+        "literal",
+        "local",
+        "moved",
+        "movelocal",
+        "param",
+        "result",
+        "temp",
+    ];
     for stem in stems {
         let rel = format!("tests/strfield/{}.trk", stem);
         let want = fs::read_to_string(root.join(format!("tests/strfield/{}.out", stem))).unwrap();
@@ -2329,7 +2342,9 @@ fn strfield_frees_owned_str_fields() {
         assert_eq!(got, want, "{}: placement plan differs", rel);
         let owns = got.contains(" strs ");
         match stem {
-            "temp" | "local" => assert!(owns, "{}: no owned Str field in\n{}", stem, got),
+            "temp" | "local" | "result" | "movelocal" => {
+                assert!(owns, "{}: no owned Str field in\n{}", stem, got)
+            }
             "param" => {
                 // Only main's `keep` owns its string: the cells built from
                 // the parameter in build_local/build_temp do not.
@@ -2378,7 +2393,10 @@ fn strfield_frees_owned_str_fields() {
             .output()
             .unwrap();
         assert!(out.status.success(), "{}: ASan build failed", rel);
-        let leaks = if matches!(stem, "temp" | "local" | "literal") {
+        let leaks = if matches!(
+            stem,
+            "temp" | "local" | "literal" | "result" | "movelocal"
+        ) {
             "detect_leaks=1"
         } else {
             "detect_leaks=0"

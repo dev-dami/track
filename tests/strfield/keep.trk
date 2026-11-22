@@ -1,0 +1,51 @@
+// L15 negatives: a call result stored in another cell, a Str field
+// returned out of a call result, a local Str that is not fresh moved into
+// a field, and a function whose result may hold a static Str are never
+// freed with the cell.
+struct Named { name: Str, n: i64 }
+struct Holder { inner: Named, k: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn make(n: i64) -> Named {
+    return Named { name: int_to_str(n), n: n };
+}
+
+fn hold(n: i64) -> Holder {
+    return Holder { inner: make(n), k: n };
+}
+
+fn name_of(n: i64) -> Str {
+    let x = make(n);
+    return x.name;
+}
+
+fn wrap(s: Str, n: i64) -> Named {
+    return Named { name: s, n: n };
+}
+
+fn maybe(n: i64) -> Named {
+    if n % 2 == 0 {
+        return make(n);
+    }
+    let s = "static";
+    return Named { name: s, n: n };
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        let h = hold(i);
+        total = total + weight(&h.inner) + h.k;
+        total = total + str_len(name_of(i));
+        let w = wrap("lit", i);
+        total = total + weight(&w);
+        total = total + weight(&maybe(i));
+        i = i + 1;
+    }
+    print(total);
+    print(name_of(42));
+}

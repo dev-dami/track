@@ -3887,9 +3887,20 @@ fn hd_program(c: i64) -> i64 {
 // operand; `x` or `&x` only goes to a parameter that lends its Str fields
 // (LT_SFLENT); anything else, `x.f = v`, or a non-literal `x = v` clears
 // the bit. Only the cell's own fields count; child cells' Str fields leak.
+//
+// Card L15 widens "fresh" in two ways. A call of a glue function (LT_GFN)
+// fills the fields its summary LT_SFRES names: the greatest fixpoint
+// where every `return` of the function gives such a literal or such a
+// call. And a fresh Str local moved into a literal field counts as a fresh
+// call (LT_SFMOVE): `let s = <fresh Str call>` and that field is the one
+// mention of `s` in the rest of its block, not under a loop, a match or a
+// destructuring `let`, so the string has no other owner and the literal
+// runs at most once per binding.
 
 const LT_SMASK = 25;  // by node: owned Str field bits of a deep site (L13e)
 const LT_SFLENT = 26; // by fn node: bits of the struct parameters whose Str fields it only lends
+const LT_SFRES = 27;  // by fn node: Str field bits its result cell owns (L15)
+const LT_SFMOVE = 28; // by node: 1 for a fresh Str local's one mention, moved into a literal field (L15)
 
 // Owned Str field bits of deep site `n`, or 0.
 fn life_str_mask(c: i64, n: i64) -> i64 {
@@ -3925,8 +3936,32 @@ fn sf_all(c: i64, decl: i64) -> i64 {
     return m;
 }
 
-// Bits of the Str fields struct literal `v` fills with a fresh Str call.
+// 1 when `v` is a fresh Str local moved into a literal field (LT_SFMOVE).
+fn sf_moved(c: i64, v: i64) -> bool {
+    let table = ck(c, CK_LIFE);
+    if vlen(table) <= LT_SFMOVE || v < 0 {
+        return false;
+    }
+    let m = vget(table, LT_SFMOVE);
+    return m != 0 && v < vlen(m) && vget(m, v) == 1;
+}
+
+// Bits of the Str fields value `v` fills with a fresh Str: a struct
+// literal's fresh Str calls and moved fresh locals, or a glue function
+// call's LT_SFRES.
 fn sf_init_mask(c: i64, v: i64) -> i64 {
+    if v >= 0 && nk(c, v) == K_CALL {
+        let name = na(c, v);
+        if is_qualified(c, name) && variant_disc(c, name) >= 0 {
+            return 0;
+        }
+        let f = callee_fn(c, name);
+        let res = vget(ck(c, CK_LIFE), LT_SFRES);
+        if res == 0 || f < 0 || f >= vlen(res) || pl_site_kind(c, v) != 5 {
+            return 0;
+        }
+        return vget(res, f);
+    }
     if v < 0 || nk(c, v) != K_SINIT {
         return 0;
     }
@@ -3938,7 +3973,8 @@ fn sf_init_mask(c: i64, v: i64) -> i64 {
     let mut m: i64 = 0;
     let mut i: i64 = 0;
     while i < list_len(c, l) {
-        if hd_call_kind(c, list_at(c, l, i + 1)) == HK_STR {
+        let e = list_at(c, l, i + 1);
+        if hd_call_kind(c, e) == HK_STR || sf_moved(c, e) {
             m = m | sf_bit(c, decl, list_at(c, l, i));
         }
         i = i + 2;
@@ -4115,6 +4151,8 @@ fn sf_program(c: i64) -> i64 {
     let table = ck(c, CK_LIFE);
     vset(table, LT_SFLENT, 0);
     vset(table, LT_SMASK, 0);
+    vset(table, LT_SFRES, 0);
+    vset(table, LT_SFMOVE, 0);
     let items = cx(c, CX_ITEMS);
     let mut any = false;
     let mut i: i64 = 0;
@@ -4151,6 +4189,243 @@ fn sf_program(c: i64) -> i64 {
                         }
                     }
                     q = q + 1;
+                }
+            }
+            j = j + 1;
+        }
+    }
+    sm_program(c, nn);
+    return sr_program(c, nn);
+}
+
+// ------------------------------------------- moved fresh Str locals (L15)
+
+// Mentions of `name` in `n`, each weighing `w` (2 under a loop, so one
+// mention there already disqualifies). A rebinding `let name`, or any
+// mention under a match, a `for` or a destructuring `let`, counts 2, as
+// do unknown kinds. `acc` is [count, node]: node is the last mention when
+// it was a struct literal field value, else -1.
+fn sm_count(c: i64, n: i64, name: i64, w: i64, acc: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_STR || k == K_BOOL { return 0; }
+    if k == K_VAR {
+        if na(c, n) == name {
+            vset(acc, 0, vget(acc, 0) + w);
+            vset(acc, 1, -1);
+        }
+        return 0;
+    }
+    if k == K_FIELD || k == K_ADDR || k == K_TINDEX { return sm_count(c, na(c, n), name, w, acc); }
+    if k == K_UN { return sm_count(c, nb(c, n), name, w, acc); }
+    if k == K_BIN {
+        sm_count(c, nb(c, n), name, w, acc);
+        return sm_count(c, nc(c, n), name, w, acc);
+    }
+    if k == K_ARRAY || k == K_TUPLE { return sm_list(c, na(c, n), name, w, acc, 0, 1); }
+    if k == K_INDEX || k == K_RANGE {
+        sm_count(c, na(c, n), name, w, acc);
+        return sm_count(c, nb(c, n), name, w, acc);
+    }
+    if k == K_SLICE {
+        sm_count(c, na(c, n), name, w, acc);
+        sm_count(c, nb(c, n), name, w, acc);
+        return sm_count(c, nc(c, n), name, w, acc);
+    }
+    if k == K_SINIT {
+        let l = nb(c, n);
+        let mut i: i64 = 1;
+        while i < list_len(c, l) {
+            let e = list_at(c, l, i);
+            sm_count(c, e, name, w, acc);
+            if nk(c, e) == K_VAR && na(c, e) == name {
+                vset(acc, 1, e);
+            }
+            i = i + 2;
+        }
+        return 0;
+    }
+    if k == K_CALL { return sm_list(c, nb(c, n), name, w, acc, 0, 1); }
+    if k == K_MACROCALL {
+        sm_list(c, nb(c, n), name, w, acc, 0, 1);
+        return sm_list(c, nc(c, n), name, w, acc, 0, 1);
+    }
+    if k == K_IF {
+        sm_count(c, na(c, n), name, w, acc);
+        sm_list(c, nb(c, n), name, w, acc, 0, 1);
+        return sm_list(c, nc(c, n), name, w, acc, 0, 1);
+    }
+    if k == K_WHILE {
+        sm_count(c, na(c, n), name, 2, acc);
+        return sm_list(c, nb(c, n), name, 2, acc, 0, 1);
+    }
+    if k == K_RETURN { return sm_count(c, na(c, n), name, w, acc); }
+    if k == K_ASSIGN {
+        sm_count(c, na(c, n), name, w, acc);
+        return sm_count(c, nb(c, n), name, w, acc);
+    }
+    if k == K_LET {
+        sm_count(c, nd(c, n), name, w, acc);
+        if na(c, n) == name {
+            vset(acc, 0, vget(acc, 0) + 2);
+        }
+        return 0;
+    }
+    if k == K_FN || k == K_MACRODEF || k == K_USE || k == K_CONST || k == K_TYPEDEF || k == K_ENUM || k == K_UNION || k == K_STRUCT {
+        return 0;
+    }
+    // K_FOR, K_LENS, K_MATCH, K_LETD and anything else: a mention inside
+    // may be a pattern binding of the same name.
+    vset(acc, 0, vget(acc, 0) + 2);
+    return 0;
+}
+
+fn sm_list(c: i64, l: i64, name: i64, w: i64, acc: i64, from: i64, step: i64) -> i64 {
+    let mut i = from;
+    while i < list_len(c, l) && vget(acc, 0) < 2 {
+        sm_count(c, list_at(c, l, i), name, w, acc);
+        i = i + step;
+    }
+    return 0;
+}
+
+// Mark LT_SFMOVE in block `l` and the blocks nested in its statements.
+fn sm_block(c: i64, l: i64, acc: i64) -> i64 {
+    let marks = vget(ck(c, CK_LIFE), LT_SFMOVE);
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        let n = list_at(c, l, i);
+        if nk(c, n) == K_LET && hd_call_kind(c, nd(c, n)) == HK_STR {
+            vset(acc, 0, 0);
+            vset(acc, 1, -1);
+            sm_list(c, l, na(c, n), 1, acc, i + 1, 1);
+            if vget(acc, 0) == 1 && vget(acc, 1) >= 0 {
+                vset(marks, vget(acc, 1), 1);
+            }
+        }
+        sm_stmt(c, n, acc);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn sm_stmt(c: i64, n: i64, acc: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let k = nk(c, n);
+    if k == K_IF {
+        sm_block(c, nb(c, n), acc);
+        return sm_block(c, nc(c, n), acc);
+    }
+    if k == K_WHILE { return sm_block(c, nb(c, n), acc); }
+    if k == K_FOR || k == K_LENS { return sm_block(c, nc(c, n), acc); }
+    if k == K_MATCH {
+        let arms = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) {
+            sm_block(c, list_at(c, arms, i + 2), acc);
+            i = i + 3;
+        }
+    }
+    return 0;
+}
+
+fn sm_program(c: i64, nn: i64) -> i64 {
+    vset(ck(c, CK_LIFE), LT_SFMOVE, vfill(vnew_cap(nn + 1), nn, 0));
+    let acc = vnew_cap(2);
+    vpush(acc, 0);
+    vpush(acc, -1);
+    let items = cx(c, CX_ITEMS);
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let f = vget(items, i);
+        if nk(c, f) == K_FN {
+            sm_block(c, ne(c, f), acc);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ------------------------------------------- owned Str results (L15)
+
+// The bits of `m` every `return` in statement `n` fills fresh
+// (`sf_init_mask`, which reads the current LT_SFRES).
+fn sr_rets(c: i64, n: i64, m: i64) -> i64 {
+    if n < 0 || m == 0 {
+        return m;
+    }
+    let k = nk(c, n);
+    if k == K_RETURN { return m & sf_init_mask(c, na(c, n)); }
+    if k == K_IF { return sr_rets_list(c, nc(c, n), sr_rets_list(c, nb(c, n), m, 0, 1), 0, 1); }
+    if k == K_WHILE { return sr_rets_list(c, nb(c, n), m, 0, 1); }
+    if k == K_FOR || k == K_LENS { return sr_rets_list(c, nc(c, n), m, 0, 1); }
+    if k == K_MATCH { return sr_rets_list(c, nb(c, n), m, 2, 3); }
+    if k == K_LET { return sr_rets(c, nd(c, n), m); }
+    if k == K_LETD { return sr_rets(c, nc(c, n), m); }
+    if k == K_ASSIGN { return sr_rets(c, nb(c, n), m); }
+    return m;
+}
+
+fn sr_rets_list(c: i64, l: i64, m: i64, from: i64, step: i64) -> i64 {
+    let mut r = m;
+    let mut i = from;
+    while i < list_len(c, l) && r != 0 {
+        r = sr_rets(c, list_at(c, l, i), r);
+        i = i + step;
+    }
+    return r;
+}
+
+// True when non-generic function `f` returns a struct whose shell and
+// child cells are fresh (summary result exactly fresh, or LT_GFN) and its
+// body ends in `return`, so its `return`s are its every exit.
+fn sr_cand(c: i64, f: i64) -> bool {
+    if list_len(c, nb(c, f)) > 0 || pl_drop_kind(c, nd(c, f)) != 1 || !pl_ends_in_return(c, ne(c, f)) {
+        return false;
+    }
+    if pl_glue_fn(c, f) {
+        return true;
+    }
+    let at = life_summary(c, na(c, f));
+    return at >= 0 && vget(life_records(c), at + LR_RES) == O_FRESH;
+}
+
+// LT_SFRES, the greatest fixpoint: each `sr_cand` function starts with
+// every Str field bit of its result struct; each pass keeps only the bits
+// every `return` fills fresh, so marks only ever clear.
+fn sr_program(c: i64, nn: i64) -> i64 {
+    let res = vfill(vnew_cap(nn + 1), nn, 0);
+    vset(ck(c, CK_LIFE), LT_SFRES, res);
+    let items = cx(c, CX_ITEMS);
+    let cand = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let f = vget(items, i);
+        if nk(c, f) == K_FN && sr_cand(c, f) {
+            let decl = struct_def(c, na(c, nd(c, f)));
+            if decl >= 0 && sf_all(c, decl) != 0 {
+                vset(res, f, sf_all(c, decl));
+                vpush(cand, f);
+            }
+        }
+        i = i + 1;
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut j: i64 = 0;
+        while j < vlen(cand) {
+            let f = vget(cand, j);
+            let m = vget(res, f);
+            if m != 0 {
+                let r = sr_rets_list(c, ne(c, f), m, 0, 1);
+                if r != m {
+                    vset(res, f, r);
+                    changed = true;
                 }
             }
             j = j + 1;
@@ -4223,7 +4498,7 @@ fn pl_temp_cell(c: i64, p: i64, v: i64, n: i64, i: i64, is_addr: bool) -> i64 {
     // A struct literal owning a fresh Str field (L13e) is freed with its
     // Str fields at the consumer rather than placed in a stack cell.
     let mut smask: i64 = 0;
-    if deep && kind == 2 && sf_param_ok(c, n, i) {
+    if deep && (kind == 2 || kind == 5) && sf_param_ok(c, n, i) {
         smask = sf_init_mask(c, v);
     }
     let lit = kind == 3 || ((kind == 1 || kind == 2) && pl_flat_words(c, pl_site_type(c, v)) > 0);
@@ -4605,10 +4880,11 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
     // A struct literal owning a fresh Str field (L13e) is heap-autofree with
     // drop glue, even when it would fit a stack cell, so the field is freed.
     let mut smask: i64 = 0;
-    if body >= 0 && kind == 2 && i + 1 < list_len(c, body) && sf_init_mask(c, v) != 0 && pl_deep_fresh(c, v) {
-        vset(ck(c, CK_LIFE), LT_CURTY, pl_site_type(c, v));
+    if body >= 0 && (kind == 2 || kind == 5) && i + 1 < list_len(c, body) && sf_init_mask(c, v) != 0 && pl_deep_fresh(c, v) {
+        let st = pl_site_type(c, v);
+        vset(ck(c, CK_LIFE), LT_CURTY, st);
         if pl_rest_ok(c, body, i + 1, name, 2) && pl_rest_ok(c, body, i + 1, name, 3) {
-            smask = sf_list(c, body, name, struct_def(c, na(c, v)), sf_init_mask(c, v), false, i + 1, 1);
+            smask = sf_list(c, body, name, struct_def(c, na(c, st)), sf_init_mask(c, v), false, i + 1, 1);
         }
     }
     if smask != 0 {
@@ -4657,7 +4933,10 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
     if place == PL_STACK {
         return pl_inplace_flag(ends);
     }
-    if place == PL_AUTO {
+    // A local owning Str fields (L13e) never has its cell rewritten in
+    // place by `x = f(..)`: the old strings must be freed, so the new cell
+    // is built and the old one dropped.
+    if place == PL_AUTO && smask == 0 {
         return pl_inplace_flag(ends) - PL_AUTOFLAG;
     }
     return 0;
@@ -4886,7 +5165,7 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_SFLENT {
+    while vlen(table) <= LT_SFMOVE {
         vpush(table, 0);
     }
     pl_ret_fns(c);

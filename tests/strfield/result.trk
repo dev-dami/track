@@ -1,0 +1,35 @@
+// L15: a function whose every `return` builds a cell with a fresh Str
+// field hands that ownership to its caller (summary LT_SFRES), so the
+// caller's local or temporary frees the string with the cell.
+struct Named { name: Str, n: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn make(n: i64) -> Named {
+    return Named { name: int_to_str(n), n: n };
+}
+
+fn make2(n: i64) -> Named {
+    if n % 2 == 0 {
+        return make(n + 1);
+    }
+    return Named { n: 1, name: str_concat("odd", int_to_str(n)) };
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3000 {
+        let x = make(i);
+        total = total + weight(&x);
+        total = total + weight(&make2(i));
+        let mut y = make2(i);
+        total = total + weight(&y);
+        y = make(i + 3);
+        total = total + weight(&y);
+        i = i + 1;
+    }
+    print(total);
+}
