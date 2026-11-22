@@ -1,0 +1,12 @@
+fn make_rect
+  L9 struct ret-slot ends L9
+fn make_pair
+  L13 struct heap ends -
+  L13 struct heap ends -
+  L13 call heap ends -
+fn make_named
+  L17 struct heap ends -
+fn main
+  L23 call temp-autofree deep ends L23
+  L24 call temp-autofree deep ends L24
+  L25 call temp-autofree deep ends L25

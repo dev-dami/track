@@ -4405,6 +4405,14 @@ fn pl_block(c: i64, p: i64, body: i64) -> i64 {
             // backends emit a statement before the last as a discard.
             pl_temp(c, p, n, n, hk);
             pl_parts(c, p, n);
+        } else if i + 1 < list_len(c, body) && pl_site_kind(c, n) == 5 && pl_drop_kind(c, pl_site_type(c, n)) != 0 {
+            // A discarded fresh cell (L13d): freed right after it returns,
+            // with drop glue (a fresh call's child cells are fresh too).
+            let table = ck(c, CK_LIFE);
+            vset(vget(table, LT_TEMP), n, n);
+            vset(vget(table, LT_DEEP), n, 1);
+            pl_record(c, p, n, PL_TEMP, npos(c, n));
+            pl_parts(c, p, n);
         } else {
             pl_stmt(c, p, body, i, n);
         }

@@ -3582,8 +3582,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     }
     let consumer = life_temp_of(c, n);
     if consumer == n {
-        x_mov_rr(b, 7, 0);
-        ng_call_regs(c, intern(c, hd_free_name(life_auto_handle(c, n))), 1);
+        ng_free_temp(c, gen_temp_code(c, n));
         return x_mov_rax_imm(b, 0);
     }
     if consumer >= 0 {

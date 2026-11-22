@@ -1,0 +1,30 @@
+// L13d: a fresh cell call whose result is discarded (a statement before
+// the last of its block) is freed right after it returns, with drop glue
+// when its children are fresh.
+struct Rect { w: i64, h: i64 }
+struct Pair { a: Rect, b: Rect }
+struct Named { name: Str, n: i64 }
+
+fn make_rect(w: i64, h: i64) -> Rect {
+    return Rect { w: w, h: h };
+}
+
+fn make_pair(n: i64) -> Pair {
+    return Pair { a: Rect { w: n, h: 1 }, b: make_rect(2, n) };
+}
+
+fn make_named(n: i64) -> Named {
+    return Named { name: "d", n: n };
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    while i < 1000 {
+        make_rect(1, 2);
+        make_pair(i);
+        make_named(i);
+        i = i + 1;
+    }
+    print(i);
+    print(sys_get_memory_used());
+}

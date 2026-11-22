@@ -1,0 +1,8 @@
+fn make_named
+  L7 struct heap ends -
+fn main
+  L15 struct stack ends L25
+  L15 call heap ends -
+  L19 call temp-autofree deep ends L19
+  L20 struct stack ends L20
+  L21 call temp-autofree deep ends L21
