@@ -1,4 +1,5 @@
 fn make_named
   L6 struct heap ends -
 fn main
+  L17 call temp-autofree deep ends L17
   L18 struct stack ends L18
