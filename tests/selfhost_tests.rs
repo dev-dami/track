@@ -522,6 +522,27 @@ fn const_divrem_traps_are_e0200_in_both_checkers() {
             Some("division by zero"),
         ),
         ("div_ok", format!("{} const Q = M / 2 + M % 3;", min), None),
+        (
+            "div_cmp_zero",
+            "const Q = 7 / (1 == 2);".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "mod_not_zero",
+            "const Q = 7 % !1;".to_string(),
+            Some("division by zero"),
+        ),
+        ("div_cmp_ok", "const Q = 7 / (1 < 2);".to_string(), None),
+        (
+            "enum_div_zero",
+            "enum E { A, B = 7 / 0, C } const Q = 1;".to_string(),
+            Some("division by zero"),
+        ),
+        (
+            "enum_div_min",
+            format!("{} enum E {{ A = M / (0 - 1) }} const Q = 1;", min),
+            Some("division overflow"),
+        ),
     ];
     for (name, consts, err) in cases {
         let source = format!("{} fn main() -> void {{ print(Q); }}", consts);
@@ -2521,6 +2542,13 @@ fn returns_hidden_in_expressions_are_seen() {
         assert!(out.status.success(), "{}: native build failed", rel);
         assert_eq!(run_exe(&nat), (want, Some(0)), "{}: native output", rel);
         let plan = run_trackc(&["life", "--place", &rel], &root);
+        assert!(
+            plan.status.success() && !plan.stdout.is_empty(),
+            "{}: life --place failed: {:?}\n{}",
+            rel,
+            plan.status,
+            String::from_utf8_lossy(&plan.stderr)
+        );
         let got = String::from_utf8_lossy(&plan.stdout).into_owned();
         assert!(
             !got.contains(banned),
