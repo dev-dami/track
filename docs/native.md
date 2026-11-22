@@ -111,6 +111,34 @@ struct, tuple, array and union cells, `track_array_get/set/slice`,
 `__attribute__((alias))` symbols. A native backend can simply resolve those
 names to the Track functions.
 
+## Symbols (`.symtab`)
+
+`trackc build --native -g` (or `--symbols`) adds an ELF symbol table, so
+`nm`, `objdump -d`, `perf report` and `gdb` show function names. The
+PT_LOAD segment and every loaded byte are the same as without the flag;
+after them `elf.trk` appends `.symtab`, `.strtab`, `.shstrtab` and six section headers (null,
+`.text` = the code, `.data` = the strings and constants after it, then the
+three tables). Each function `ngen.trk` emits out of line gets one
+`STB_GLOBAL STT_FUNC` symbol in `.text` with its exact code range
+(`ng_symbol`): `_start`, every user and runtime function, and both entries
+of a ret-slot function (`<f>__rs` and `<f>`). A function whose every call
+was inlined still has its out-of-line copy and its symbol; inlined bodies
+inside a caller are attributed to the caller. Cold stubs belong to the
+function that emitted them.
+
+Opt-in, not always on: the table names the ~180 runtime functions in
+every program, so small programs grow by ~7 KB (hello 27,735 to 34,656
+bytes, +25%), over the 10% budget, though native trackc grows only +2.4%
+(1,506,266 to 1,542,664). Without `-g` the output is byte-identical to
+before symbols existed, so selfhost stages and goldens are untouched.
+Profile with:
+
+```
+trackc build --native -g compiler/src/main.trk -o /tmp/tc
+perf record /tmp/tc build --native compiler/src/main.trk -o /tmp/out
+perf report --stdio
+```
+
 ## Runtime calls trackc itself makes
 
 From the generated C of `compiler/src/main.trk` (calls in code, not in the

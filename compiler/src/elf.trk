@@ -3,10 +3,10 @@
 // The image is one PT_LOAD segment (read/write/execute) mapped at
 // ELF_BASE: the 64-byte ELF header, two 56-byte program headers (the
 // PT_LOAD and a PT_GNU_STACK asking for a non-executable stack), then the
-// code and data bytes. After the loaded bytes come the unloaded .symtab,
-// .strtab and .shstrtab and the section headers (.text, .data and those
-// three), so nm, objdump, perf and gdb name every generated function. No
-// dynamic linker, no libc. Files are
+// code and data bytes. With symbols (`-g`), the unloaded .symtab, .strtab
+// and .shstrtab and the section headers (.text, .data and those three)
+// follow, so nm, objdump, perf and gdb name every generated function;
+// without, there are no sections. No dynamic linker, no libc. Files are
 // written with `open64`/`write`/`fchmod`/`close` and `memset` so the bytes
 // may hold NULs. These libc names link from libc on the C path and under
 // the Rust bootstrap compiler (which knows no machine builtins); the
@@ -175,11 +175,17 @@ fn elf_tail(body: i64, code: i64, syms: i64, shoff_out: i64) -> i64 {
 
 // Write the executable with code+data `body` (byte vector, entry at
 // offset 0, the first `code` bytes code) to `path` with mode 0755, naming
-// the functions of `syms` (elf_tail). Returns 0 on success.
+// the functions of `syms` (elf_tail), or with no sections when `syms` is
+// 0. Returns 0 on success.
 fn elf_write_file(path: i64, body: i64, code: i64, syms: i64) -> i64 {
     let shoff = vfill(vnew(), 1, 0);
-    let tail = elf_tail(body, code, syms, shoff);
-    let head = elf_headers(body, 0, vget(shoff, 0), 6);
+    let mut tail = vnew();
+    let mut shnum: i64 = 0;
+    if syms != 0 {
+        tail = elf_tail(body, code, syms, shoff);
+        shnum = 6;
+    }
+    let head = elf_headers(body, 0, vget(shoff, 0), shnum);
     let h = vlen(head);
     let m = h + vlen(body);
     let n = m + vlen(tail);

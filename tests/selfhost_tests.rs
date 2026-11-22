@@ -136,6 +136,7 @@ fn native_binaries_carry_a_symbol_table() {
         &[
             "build",
             "--native",
+            "-g",
             src.to_str().unwrap(),
             "-o",
             exe.to_str().unwrap(),
@@ -148,6 +149,23 @@ fn native_binaries_carry_a_symbol_table() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(run_exe(&exe).0.trim(), "5050");
+    // without -g: the same loaded image, no sections
+    let plain = dir.join("plain");
+    let out = run_trackc(
+        &[
+            "build",
+            "--native",
+            src.to_str().unwrap(),
+            "-o",
+            plain.to_str().unwrap(),
+        ],
+        &dir,
+    );
+    assert!(out.status.success());
+    let (with, without) = (fs::read(&exe).unwrap(), fs::read(&plain).unwrap());
+    assert!(with.len() > without.len());
+    assert_eq!(with[64..176], without[64..176], "program headers differ");
+    assert_eq!(with[176..without.len()], without[176..], "loaded bytes differ");
     let nm = Command::new("nm").arg(&exe).output().unwrap();
     let text = String::from_utf8_lossy(&nm.stdout);
     assert!(
