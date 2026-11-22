@@ -68,8 +68,8 @@ jobs:
             ./target/release/track check "$f"
           done
 
-      - name: Bootstrap fixed point (stage0 -> stage3)
-        run: YARD=./target/release/yard scripts/bootstrap.sh
+      - name: Bootstrap fixed point from Rust (stage0 -> stage3, then native)
+        run: YARD=./target/release/yard scripts/bootstrap.sh --from-rust
 
       - name: Compiler sources are warning-clean
         run: ./build/bootstrap/stage3/trackc check --deny-warnings compiler/src/main.trk
@@ -84,6 +84,28 @@ jobs:
           ./build/bootstrap/stage3/trackc --version | grep -q "1.0.0"
           echo "✓ versions ok"
 
+
+  seed-bootstrap:
+    # Track from the committed C seed: cc and POSIX tools only, no Rust.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No Rust toolchain on PATH
+        run: |
+          if env PATH=/usr/bin:/bin sh -c 'command -v cargo || command -v rustc'; then
+            echo "cargo or rustc is reachable"; exit 1
+          fi
+          echo "✓ no cargo or rustc on PATH=/usr/bin:/bin"
+
+      - name: Bootstrap from bootstrap/seed (cc -> stage1 -> stage3, then native)
+        run: env PATH=/usr/bin:/bin scripts/bootstrap.sh
+
+      - name: Seed is up to date
+        run: env PATH=/usr/bin:/bin scripts/update_seed.sh --check
+
+      - name: Compiler sources are warning-clean
+        run: ./build/bootstrap/stage3/trackc check --deny-warnings compiler/src/main.trk
 
   lint:
     runs-on: ubuntu-latest
