@@ -1,0 +1,23 @@
+// L10: `acc = f(&acc)` writes the result into acc's own cell while the
+// callee reads acc through the same pointer. The callee reads every field
+// into a temporary before its first store, so the swap below must see the
+// old fields, not half-written ones.
+struct V { x: i64, y: i64 }
+
+fn swap_add(a: &V, d: &V) -> V {
+    return V { x: a.y + d.x, y: a.x + d.y };
+}
+
+fn main() -> void {
+    let mut acc = V { x: 1, y: 100 };
+    let mut i: i64 = 0;
+    while i < 1000 {
+        let d = V { x: i & 3, y: (i >> 2) & 3 };
+        acc = swap_add(&acc, &d);
+        acc.x = acc.x % 9973;
+        acc.y = acc.y % 9967;
+        i = i + 1;
+    }
+    print(acc.x);
+    print(acc.y);
+}

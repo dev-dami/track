@@ -1,5 +1,5 @@
 fn mk
-  L7 struct ret-slot ends L7
+  L9 struct heap ends -
 fn find
-  L11 call heap-autofree deep ends L20
-  L14 call heap-autofree deep ends L16
+  L14 call heap-autofree deep ends L23
+  L17 call heap-autofree deep ends L19
