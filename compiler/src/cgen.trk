@@ -474,6 +474,7 @@ fn gen_free_temp(c: i64, t: i64, code: i64) -> i64 {
     }
     let site = 0 - 1 - code;
     if life_auto_deep(c, site) {
+        gen_drop_strs(c, t, site);
         return gen_drop(c, t, pl_site_type(c, site), 0);
     }
     return emit(c, text_cat3("dealloc(", t, ");"));
@@ -604,6 +605,7 @@ fn gen_free_local(c: i64, id: i64, site: i64) -> i64 {
         return emit(c, text_cat3(hd_free_name(hk), "(", text_cat(local_name(c, id), ");")));
     }
     if life_auto_deep(c, site) {
+        gen_drop_strs(c, local_name(c, id), site);
         return gen_drop(c, local_name(c, id), pl_site_type(c, site), 0);
     }
     return emit(c, text_cat3("dealloc(", local_name(c, id), ");"));
@@ -620,6 +622,20 @@ fn auto_entry(c: i64, id: i64) -> i64 {
         i = i + 2;
     }
     return -1;
+}
+
+// Free the Str fields deep site `site`'s cell in `p` owns (card L13e,
+// `life_str_mask`: bit f is struct field f, word f + 1).
+fn gen_drop_strs(c: i64, p: i64, site: i64) -> i64 {
+    let m = life_str_mask(c, site);
+    let mut f: i64 = 0;
+    while (m >> f) != 0 {
+        if ((m >> f) & 1) == 1 {
+            emit(c, text_cat3("track_str_free(", load_text(p, f + 1), ");"));
+        }
+        f = f + 1;
+    }
+    return 0;
 }
 
 // Drop glue for the cell in `p` of type `t`: free its owned child cells

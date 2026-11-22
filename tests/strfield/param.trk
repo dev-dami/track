@@ -1,0 +1,29 @@
+// L13e: a Str field from a parameter belongs to the caller; it is never
+// freed, whether the cell is a temporary or a local.
+struct Named { name: Str, n: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn build_local(s: Str, n: i64) -> i64 {
+    let x = Named { name: s, n: n };
+    return weight(&x);
+}
+
+fn build_temp(s: Str, n: i64) -> i64 {
+    return weight(&Named { name: s, n: n }) + 1;
+}
+
+fn main() -> void {
+    let keep = Named { name: int_to_str(77), n: 0 };
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        total = total + build_local("param", i) + build_temp("param", 1);
+        total = total + build_local(keep.name, i) + build_temp(keep.name, 1);
+        i = i + 1;
+    }
+    print(total);
+    print(keep.name);
+}

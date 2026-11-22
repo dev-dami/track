@@ -1,0 +1,6 @@
+fn main
+  L13 struct temp-autofree deep strs ends L13
+  L13 call heap ends -
+  L14 struct temp-autofree deep strs ends L14
+  L14 call heap ends -
+  L14 str temp-autofree ends L14

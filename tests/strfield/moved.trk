@@ -1,0 +1,32 @@
+// L13e: a Str field moved out of the cell (`let s = x.name`, or returned
+// by a callee) outlives it, so the cell must not free it; nor when the
+// field may be fresh or static.
+struct Named { name: Str, n: i64 }
+
+fn name_of(x: &Named) -> Str {
+    return x.name;
+}
+
+fn take(n: i64) -> Str {
+    let x = Named { name: int_to_str(n), n: n };
+    let s = x.name;
+    return s;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        let s = take(i);
+        total = total + str_len(s);
+        let t = name_of(&Named { name: int_to_str(i), n: 1 });
+        total = total + str_len(t);
+        let mut m = Named { name: int_to_str(i), n: 1 };
+        m = Named { name: "static", n: 2 };
+        total = total + str_len(m.name);
+        i = i + 1;
+    }
+    print(total);
+    print(take(42));
+    print(name_of(&Named { name: int_to_str(43), n: 0 }));
+}

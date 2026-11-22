@@ -3184,7 +3184,10 @@ fn pl_deep_fresh(c: i64, v: i64) -> bool {
     let mut i = from;
     while i < list_len(c, l) {
         let e = list_at(c, l, i);
-        if pl_site_kind(c, e) != 0 {
+        // A fresh call drop glue never frees (a Str, L13e) counts as the
+        // declared field type below.
+        let ek = pl_site_kind(c, e);
+        if ek != 0 && (ek != 5 || pl_drop_kind(c, pl_site_type(c, e)) != 0) {
             if !pl_deep_fresh(c, e) {
                 return false;
             }
@@ -3871,6 +3874,291 @@ fn hd_program(c: i64) -> i64 {
     return 0;
 }
 
+// ------------------------------------------- owned Str fields (L13e)
+//
+// docs/lifecycles.md §3.6. Drop glue frees no Str by type: a Str field
+// may be a literal, a parameter's, or a string someone else keeps. A
+// deep site whose cell owns a Str field frees it too (LT_SMASK, bit f for
+// struct field f). A field is owned when its value at every construction
+// reaching the free is a fresh Str call (`hd_call_kind` HK_STR: the
+// `let` literal and every `x = v` literal for a local, the literal for a
+// temporary), and no use can move it out or swap it: a read `x.f` is only
+// a lent call argument (`hd_arg_ok`, not of a returned call) or a binary
+// operand; `x` or `&x` only goes to a parameter that lends its Str fields
+// (LT_SFLENT); anything else, `x.f = v`, or a non-literal `x = v` clears
+// the bit. Only the cell's own fields count; child cells' Str fields leak.
+
+const LT_SMASK = 25;  // by node: owned Str field bits of a deep site (L13e)
+const LT_SFLENT = 26; // by fn node: bits of the struct parameters whose Str fields it only lends
+
+// Owned Str field bits of deep site `n`, or 0.
+fn life_str_mask(c: i64, n: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    if vlen(table) <= LT_SMASK || n < 0 {
+        return 0;
+    }
+    let m = vget(table, LT_SMASK);
+    if m == 0 || n >= vlen(m) {
+        return 0;
+    }
+    return vget(m, n);
+}
+
+// The bit of struct `decl`'s field `field` when it is a Str, else 0.
+fn sf_bit(c: i64, decl: i64, field: i64) -> i64 {
+    let f = struct_field_index(c, decl, field);
+    if f < 0 || f >= O_MAXPARAMS || !is_string_type(c, list_at(c, nb(c, decl), f * 2 + 1)) {
+        return 0;
+    }
+    return 1 << f;
+}
+
+// Every Str field bit of struct `decl`.
+fn sf_all(c: i64, decl: i64) -> i64 {
+    let mut m: i64 = 0;
+    let fields = nb(c, decl);
+    let mut i: i64 = 0;
+    while i < list_len(c, fields) {
+        m = m | sf_bit(c, decl, list_at(c, fields, i));
+        i = i + 2;
+    }
+    return m;
+}
+
+// Bits of the Str fields struct literal `v` fills with a fresh Str call.
+fn sf_init_mask(c: i64, v: i64) -> i64 {
+    if v < 0 || nk(c, v) != K_SINIT {
+        return 0;
+    }
+    let decl = struct_def(c, na(c, v));
+    if decl < 0 {
+        return 0;
+    }
+    let l = nb(c, v);
+    let mut m: i64 = 0;
+    let mut i: i64 = 0;
+    while i < list_len(c, l) {
+        if hd_call_kind(c, list_at(c, l, i + 1)) == HK_STR {
+            m = m | sf_bit(c, decl, list_at(c, l, i));
+        }
+        i = i + 2;
+    }
+    return m;
+}
+
+// The Str field bit `n` reads from `name` (`name.f`), else 0.
+fn sf_read_bit(c: i64, n: i64, name: i64, decl: i64) -> i64 {
+    if n < 0 || nk(c, n) != K_FIELD || !pl_is_name(c, na(c, n), name) {
+        return 0;
+    }
+    return sf_bit(c, decl, nb(c, n));
+}
+
+// True when call `n` may take the struct `name` (or `&name`) as argument
+// `i`: a program function that lends that parameter's Str fields.
+fn sf_param_ok(c: i64, n: i64, i: i64) -> bool {
+    let name = na(c, n);
+    if is_qualified(c, name) && variant_disc(c, name) >= 0 {
+        return false;
+    }
+    let f = callee_fn(c, name);
+    let lent = vget(ck(c, CK_LIFE), LT_SFLENT);
+    return lent != 0 && f >= 0 && f < vlen(lent) && i < O_MAXPARAMS && ((vget(lent, f) >> i) & 1) == 1;
+}
+
+fn sf_list(c: i64, l: i64, name: i64, decl: i64, m: i64, inret: bool, from: i64, step: i64) -> i64 {
+    let mut r = m;
+    let mut i = from;
+    while i < list_len(c, l) && r != 0 {
+        r = sf_mask(c, list_at(c, l, i), name, decl, r, inret);
+        i = i + step;
+    }
+    return r;
+}
+
+// The bits of `m` that stay owned through `n`'s uses of struct `name`.
+fn sf_mask(c: i64, n: i64, name: i64, decl: i64, m: i64, inret: bool) -> i64 {
+    if n < 0 || m == 0 {
+        return m;
+    }
+    let k = nk(c, n);
+    if k == K_INT || k == K_STR || k == K_BOOL { return m; }
+    if k == K_VAR {
+        if na(c, n) == name {
+            return 0;
+        }
+        return m;
+    }
+    if k == K_FIELD {
+        let bit = sf_read_bit(c, n, name, decl);
+        if bit != 0 {
+            return bit_clear(m, bit);
+        }
+        if pl_is_name(c, na(c, n), name) {
+            return m;
+        }
+        return sf_mask(c, na(c, n), name, decl, m, false);
+    }
+    if k == K_BIN {
+        let mut r = m;
+        if sf_read_bit(c, nb(c, n), name, decl) == 0 {
+            r = sf_mask(c, nb(c, n), name, decl, r, false);
+        }
+        if sf_read_bit(c, nc(c, n), name, decl) == 0 {
+            r = sf_mask(c, nc(c, n), name, decl, r, false);
+        }
+        return r;
+    }
+    if k == K_UN { return sf_mask(c, nb(c, n), name, decl, m, false); }
+    if k == K_ADDR || k == K_TINDEX { return sf_mask(c, na(c, n), name, decl, m, false); }
+    if k == K_ARRAY || k == K_TUPLE { return sf_list(c, na(c, n), name, decl, m, false, 0, 1); }
+    if k == K_INDEX || k == K_RANGE { return sf_mask(c, nb(c, n), name, decl, sf_mask(c, na(c, n), name, decl, m, false), false); }
+    if k == K_SLICE {
+        let r = sf_mask(c, nb(c, n), name, decl, sf_mask(c, na(c, n), name, decl, m, false), false);
+        return sf_mask(c, nc(c, n), name, decl, r, false);
+    }
+    if k == K_SINIT { return sf_list(c, nb(c, n), name, decl, m, false, 1, 2); }
+    if k == K_LENS {
+        if na(c, n) == name {
+            return 0;
+        }
+        return sf_list(c, nc(c, n), name, decl, m, false, 0, 1);
+    }
+    if k == K_CALL {
+        let args = nb(c, n);
+        let mut r = m;
+        let mut i: i64 = 0;
+        while i < list_len(c, args) && r != 0 {
+            let a = list_at(c, args, i);
+            let bit = sf_read_bit(c, a, name, decl);
+            if pl_is_name(c, a, name) || (nk(c, a) == K_ADDR && pl_is_name(c, na(c, a), name)) {
+                if !sf_param_ok(c, n, i) {
+                    return 0;
+                }
+            } else if bit != 0 {
+                if inret || !hd_arg_ok(c, n, i, false) {
+                    r = bit_clear(r, bit);
+                }
+            } else {
+                r = sf_mask(c, a, name, decl, r, false);
+            }
+            i = i + 1;
+        }
+        return r;
+    }
+    if k == K_MACROCALL { return sf_list(c, nc(c, n), name, decl, sf_list(c, nb(c, n), name, decl, m, false, 0, 1), false, 0, 1); }
+    if k == K_IF {
+        let r = sf_list(c, nb(c, n), name, decl, sf_mask(c, na(c, n), name, decl, m, false), false, 0, 1);
+        return sf_list(c, nc(c, n), name, decl, r, false, 0, 1);
+    }
+    if k == K_WHILE { return sf_list(c, nb(c, n), name, decl, sf_mask(c, na(c, n), name, decl, m, false), false, 0, 1); }
+    if k == K_FOR { return sf_list(c, nc(c, n), name, decl, sf_mask(c, nb(c, n), name, decl, m, false), false, 0, 1); }
+    if k == K_RETURN { return sf_mask(c, na(c, n), name, decl, m, true); }
+    if k == K_ASSIGN {
+        let t = na(c, n);
+        let mut r = m;
+        if pl_is_name(c, t, name) {
+            r = r & sf_init_mask(c, nb(c, n));
+        } else {
+            let bit = sf_read_bit(c, t, name, decl);
+            if bit != 0 {
+                r = bit_clear(r, bit);
+            } else {
+                r = sf_mask(c, t, name, decl, r, false);
+            }
+        }
+        return sf_mask(c, nb(c, n), name, decl, r, false);
+    }
+    if k == K_LET { return sf_mask(c, nd(c, n), name, decl, m, false); }
+    if k == K_LETD {
+        if pl_is_name(c, nc(c, n), name) {
+            return 0;
+        }
+        return sf_mask(c, nc(c, n), name, decl, m, false);
+    }
+    if k == K_MATCH {
+        if pl_is_name(c, na(c, n), name) {
+            return 0;
+        }
+        let arms = nb(c, n);
+        let mut r = sf_mask(c, na(c, n), name, decl, m, false);
+        let mut i: i64 = 0;
+        while i < list_len(c, arms) && r != 0 {
+            r = sf_mask(c, list_at(c, arms, i + 2), name, decl, sf_mask(c, list_at(c, arms, i + 1), name, decl, r, false), false);
+            i = i + 3;
+        }
+        return r;
+    }
+    if k == K_FN || k == K_MACRODEF || k == K_USE || k == K_CONST || k == K_TYPEDEF || k == K_ENUM || k == K_UNION || k == K_STRUCT {
+        return m;
+    }
+    return 0;
+}
+
+// The struct declaration a parameter of type `t` (or `&t`) names, or -1.
+fn sf_param_decl(c: i64, t: i64) -> i64 {
+    let mut u = t;
+    if ty_is_ref(c, u) {
+        u = na(c, u);
+    }
+    if pl_drop_kind(c, u) != 1 {
+        return -1;
+    }
+    return struct_def(c, na(c, u));
+}
+
+// LT_SFLENT, the least fixpoint: a struct parameter with Str fields is
+// marked once its body keeps every Str field bit (`sf_mask`), counting
+// only parameters already marked; marks are only ever set.
+// A program declaring no struct with a Str field needs neither table.
+fn sf_program(c: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    vset(table, LT_SFLENT, 0);
+    vset(table, LT_SMASK, 0);
+    let items = cx(c, CX_ITEMS);
+    let mut any = false;
+    let mut i: i64 = 0;
+    while i < vlen(items) && !any {
+        let s = vget(items, i);
+        any = nk(c, s) == K_STRUCT && sf_all(c, s) != 0;
+        i = i + 1;
+    }
+    if !any {
+        return 0;
+    }
+    let nn = node_count(c);
+    let lent = vfill(vnew_cap(nn + 1), nn, 0);
+    vset(table, LT_SFLENT, lent);
+    vset(table, LT_SMASK, vfill(vnew_cap(nn + 1), nn, 0));
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut j: i64 = 0;
+        while j < vlen(items) {
+            let f = vget(items, j);
+            if nk(c, f) == K_FN {
+                let params = nc(c, f);
+                let mut q: i64 = 0;
+                while q * 2 < list_len(c, params) && q < O_MAXPARAMS {
+                    if ((vget(lent, f) >> q) & 1) == 0 {
+                        let decl = sf_param_decl(c, list_at(c, params, q * 2 + 1));
+                        if decl >= 0 {
+                            let all = sf_all(c, decl);
+                            if all != 0 && sf_list(c, ne(c, f), list_at(c, params, q * 2), decl, all, false, 0, 1) == all {
+                                vset(lent, f, vget(lent, f) | (1 << q));
+                                changed = true;
+                            }
+                        }
+                    }
+                    q = q + 1;
+                }
+            }
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
 // The HK_* of heap-autofree site `n`, or 0 for cells and other sites.
 fn life_auto_handle(c: i64, n: i64) -> i64 {
     let table = ck(c, CK_LIFE);
@@ -3931,15 +4219,25 @@ fn pl_temp_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
 // only reads the argument, else the shell alone.
 fn pl_temp_cell(c: i64, p: i64, v: i64, n: i64, i: i64, is_addr: bool) -> i64 {
     let kind = pl_site_kind(c, v);
+    let deep = pl_deep_fresh(c, v) && pl_arg_ok(c, n, i, is_addr, true);
+    // A struct literal owning a fresh Str field (L13e) is freed with its
+    // Str fields at the consumer rather than placed in a stack cell.
+    let mut smask: i64 = 0;
+    if deep && kind == 2 && sf_param_ok(c, n, i) {
+        smask = sf_init_mask(c, v);
+    }
     let lit = kind == 3 || ((kind == 1 || kind == 2) && pl_flat_words(c, pl_site_type(c, v)) > 0);
-    if vget(p, PS_INRET) == 0 && (lit || pl_rs_call(c, v)) && pl_cell_fits(c, p, v) {
+    if smask == 0 && vget(p, PS_INRET) == 0 && (lit || pl_rs_call(c, v)) && pl_cell_fits(c, p, v) {
         vset(p, PS_WORDS, vget(p, PS_WORDS) + pl_cell_words(c, v));
         return pl_record(c, p, v, PL_STACK, npos(c, n));
     }
     let table = ck(c, CK_LIFE);
     vset(vget(table, LT_TEMP), v, n);
-    if pl_deep_fresh(c, v) && pl_arg_ok(c, n, i, is_addr, true) {
+    if deep {
         vset(vget(table, LT_DEEP), v, 1);
+        if smask != 0 {
+            vset(vget(table, LT_SMASK), v, smask);
+        }
     }
     return pl_record(c, p, v, PL_TEMP, npos(c, n));
 }
@@ -4304,7 +4602,18 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
         return 0;
     }
     let mut place = PL_HEAP;
-    if body >= 0 && kind == 1 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, 0) {
+    // A struct literal owning a fresh Str field (L13e) is heap-autofree with
+    // drop glue, even when it would fit a stack cell, so the field is freed.
+    let mut smask: i64 = 0;
+    if body >= 0 && kind == 2 && i + 1 < list_len(c, body) && sf_init_mask(c, v) != 0 && pl_deep_fresh(c, v) {
+        vset(ck(c, CK_LIFE), LT_CURTY, pl_site_type(c, v));
+        if pl_rest_ok(c, body, i + 1, name, 2) && pl_rest_ok(c, body, i + 1, name, 3) {
+            smask = sf_list(c, body, name, struct_def(c, na(c, v)), sf_init_mask(c, v), false, i + 1, 1);
+        }
+    }
+    if smask != 0 {
+        place = PL_AUTO;
+    } else if body >= 0 && kind == 1 && i + 1 < list_len(c, body) && pl_rest_ok(c, body, i + 1, name, 0) {
         place = PL_STACK;
     } else if body >= 0 && ((kind >= 2 && kind <= 4) || pl_rs_call(c, v)) && i + 1 < list_len(c, body) && pl_cell_fits(c, p, v) && (pl_rest_ok(c, body, i + 1, name, 1) || pl_rest_ok(c, body, i + 1, name, 4)) {
         place = PL_STACK;
@@ -4337,6 +4646,9 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
     vset(ck(c, CK_LIFE), LT_CURTY, pl_site_type(c, v));
     if place == PL_AUTO && pl_deep_fresh(c, v) && pl_rest_ok(c, body, i + 1, name, 3) {
         vset(vget(ck(c, CK_LIFE), LT_DEEP), v, 1);
+        if smask != 0 {
+            vset(vget(ck(c, CK_LIFE), LT_SMASK), v, smask);
+        }
     }
     pl_parts(c, p, v);
     if place == PL_STACK && kind == 1 {
@@ -4574,12 +4886,13 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_GFN {
+    while vlen(table) <= LT_SFLENT {
         vpush(table, 0);
     }
     pl_ret_fns(c);
     pl_glue_fns(c);
     hd_program(c);
+    sf_program(c);
     vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
     vset(table, LT_DEEP, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     vset(table, LT_HSITE, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
@@ -4663,6 +4976,9 @@ fn life_place_dump(c: i64) -> i64 {
         sb_add(b, pl_place_text(vget(sites, i + 2)));
         if life_auto_deep(c, n) {
             sb_add(b, " deep");
+            if life_str_mask(c, n) != 0 {
+                sb_add(b, " strs");
+            }
         }
         sb_add(b, " ends ");
         if vget(sites, i + 3) < 0 {
