@@ -1,0 +1,46 @@
+// L12a: frees and tail calls. `walk` holds a heap-autofree cell and
+// tail-calls itself: natively the cell is freed after the arguments are
+// computed and before the jump (the C build frees it when the call
+// returns, so the depth stays within the 1 MB limit for both). `lend`
+// passes its cell to `look`, which allocates and reads it back: a cell
+// handed to the callee is not freed before the callee runs.
+struct Pt { x: i64, y: i64, z: i64 }
+
+fn pt(x: i64, y: i64) -> Pt {
+    return Pt { x: x, y: y, z: x & 3 };
+}
+
+fn walk(n: i64, acc: i64) -> i64 {
+    let p = pt(n, acc);
+    if p.x == 0 {
+        return p.y;
+    }
+    return walk(n - 1, (p.y * 7 + p.x + p.z) % 1000003);
+}
+
+fn look(q: &Pt, n: i64) -> i64 {
+    let r = pt(n * 7, n * 11);
+    let s = pt(n + 1, n + 2);
+    return (q.x * 2 + q.y * 3 + q.z * 5 + r.x + r.y + s.x * s.y) % 1000000007;
+}
+
+fn lend(n: i64) -> i64 {
+    let p = pt(n, n * 2);
+    return look(&p, n + 100);
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(1000000);
+    let base = sys_get_memory_used();
+    print(walk(20000, 1));
+    print(sys_get_memory_used() - base);
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 100000 {
+        t = (t + lend(i)) % 1000000007;
+        i = i + 1;
+    }
+    print(t);
+    print(sys_get_memory_used() - base);
+    return 0;
+}

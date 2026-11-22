@@ -1,0 +1,57 @@
+// L12a: native auto-free, freed-then-reused cells. `cell` is a
+// heap-autofree call result freed at the end of every iteration; `acc` is
+// reassigned a fresh cell each iteration, which frees the old one first.
+// Under a 1 MB limit, a million iterations only fit if the freed blocks are
+// reused, and the bytes in use come back to where they started. `blank`
+// builds a cell with zero fields in a block whose last owner held non-zero
+// words: reused blocks come back zeroed.
+struct Pair { a: i64, b: i64 }
+struct Wide { p: i64, q: i64, r: i64 }
+
+fn pair(i: i64) -> Pair {
+    return Pair { a: i, b: i * 3 };
+}
+
+fn wide(i: i64) -> Wide {
+    return Wide { p: i, q: i + 1, r: i + 2 };
+}
+
+fn blank(i: i64) -> Wide {
+    return Wide { p: 0, q: i, r: 0 };
+}
+
+fn sum_pairs(n: i64) -> i64 {
+    let mut acc = pair(0);
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let cell = pair(i);
+        t = (t + cell.a + cell.b + acc.a) % 1000003;
+        acc = pair(t);
+        i = i + 1;
+    }
+    return t + acc.b;
+}
+
+fn zeroes(n: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let w = wide(i + 7);
+        bad = bad + w.p - i - 7;
+        let z = blank(i);
+        bad = bad + z.p + z.r;
+        i = i + 1;
+    }
+    return bad;
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(1000000);
+    let base = sys_get_memory_used();
+    print(sum_pairs(1000000));
+    print(sys_get_memory_used() - base);
+    print(zeroes(100000));
+    print(sys_get_memory_used() - base);
+    return 0;
+}
