@@ -85,11 +85,13 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
     finish_warnings(c);
     if with_rt {
         let from = vlen(cx(c, CX_ITEMS));
+        let node_from = node_count(c);
         let mut m: i64 = 0;
         while m < rt_module_count() {
             load_embedded_module(c, rt_module_name(m), rt_module_source(m));
             m = m + 1;
         }
+        isolate_runtime(c, from, node_from);
         collect_symbols_from(c, from);
     }
     return c;

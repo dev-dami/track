@@ -136,6 +136,17 @@ fn ty_known_scalar(c: i64, t: i64) -> bool {
     return na(c, t) != PRIM_VOID;
 }
 
+// A string literal's type or the owned `Str` of the string builtins.
+fn is_string_type(c: i64, t: i64) -> bool {
+    if t < 0 {
+        return false;
+    }
+    if t == ck(c, CK_TY_STRLIT) {
+        return true;
+    }
+    return nk(c, t) == T_CUSTOM && text_eq(name_text(c, na(c, t)), "Str");
+}
+
 // Struct name of a struct type or a reference to one, or -1.
 fn struct_name_of(c: i64, t: i64) -> i64 {
     let mut u = t;
@@ -2073,7 +2084,13 @@ fn check_expr(c: i64, n: i64) -> i64 {
     }
     if k == K_BIN {
         check_borrow(c, nb(c, n));
-        return check_borrow(c, nc(c, n));
+        check_borrow(c, nc(c, n));
+        // Strings are pointers (SPEC §11): `a + b` would add addresses.
+        let op = na(c, n);
+        if op == OP_ADD && is_string_type(c, infer_type(c, nb(c, n))) && is_string_type(c, infer_type(c, nc(c, n))) {
+            return cfail(c, n, "Cannot add two strings (that adds their addresses); concatenate with str_concat(&a, &b).");
+        }
+        return 0;
     }
     if k == K_UN {
         return check_expr(c, nb(c, n));

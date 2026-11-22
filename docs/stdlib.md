@@ -68,7 +68,8 @@ let len = str_len(&s);
 // Compare
 let eq = str_eq(&a, &b);
 
-// Concatenate (allocates new buffer)
+// Concatenate (allocates new buffer). Strings are pointers, so `a + b`
+// would add addresses: trackc rejects it (E0200).
 let combined = str_concat(&a, &b);
 
 // s is linear — the checker rejects use after a move
