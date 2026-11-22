@@ -867,6 +867,10 @@ fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
         } else if ng_opnd(c, a) == 2 {
             vpush(kinds, 2);
             vpush(vals, ng(c, NG_OPV));
+        } else if nk(c, a) == K_ADDR && ng_opnd(c, na(c, a)) == 2 {
+            // `&local` is the local's cell pointer: share its slot
+            vpush(kinds, 2);
+            vpush(vals, ng(c, NG_OPV));
         } else {
             ng_gen(c, a);
             vpush(kinds, 2);
@@ -2989,6 +2993,27 @@ fn ng_field_access(c: i64, base: i64, field: i64, store: i64) -> i64 {
     return 0;
 }
 
+// `local.field = rax` for a field only one struct has: one store through
+// the local's register (or rcx); rax keeps the value. False if not done.
+fn ng_field_store_direct(c: i64, target: i64) -> bool {
+    let base = na(c, target);
+    if nk(c, base) != K_VAR {
+        return false;
+    }
+    let s = ni(c, na(c, base), NI_CVAR);
+    let cands = field_candidates(c, nb(c, target));
+    if s < 0 || vlen(cands) != 2 {
+        return false;
+    }
+    let mut r = ng_reg(c, s);
+    if r < 0 {
+        ng_load_to(c, s, 1);
+        r = 1;
+    }
+    x_rm(ncode(c), 137, 0, r, (vget(cands, 1) + 1) * 8);
+    return true;
+}
+
 fn ng_field_slot(c: i64, base: i64, idx: i64, store: i64) -> i64 {
     let b = ncode(c);
     ng_load(c, base);
@@ -4034,6 +4059,9 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         if nk(c, target) == K_VAR && ni(c, na(c, target), NI_CVAR) >= 0 {
             let id = ni(c, na(c, target), NI_CVAR);
             return ng_store(c, id);
+        }
+        if nk(c, target) == K_FIELD && ng_field_store_direct(c, target) {
+            return 0;
         }
         let v = ng_temp(c);
         return ng_assign_place(c, target, v);
