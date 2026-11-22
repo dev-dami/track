@@ -3,26 +3,87 @@
 Track 1.0 is self-hosting: `trackc`, the compiler in `compiler/src/`, is
 written entirely in Track and compiles itself to a fixed point.
 
+A clean checkout builds `trackc` with only a C compiler (`cc`) and POSIX
+tools. Rust is not needed. The default run then also checks the native
+fixed point (`scripts/selfhost.sh`), which runs x86-64 Linux executables
+and uses `sha256sum` and GNU `date +%s%N` (nanosecond timing); on other hosts (macOS, ARM) use
+`scripts/bootstrap.sh --no-native` for the C-only bootstrap.
+
 ```sh
 scripts/bootstrap.sh
-# ==> stage 0: yard builds compiler/ (Rust bootstrap compiler)
+# ==> stage 0: cc builds the C seed (bootstrap/seed/, 72502 lines)
 # ==> stage 1: stage1 compiles compiler/src/main.trk
 # ==> stage 2: stage2 compiles compiler/src/main.trk
 # ✓ stage1 and stage2 emit identical C (72502 lines)
 # ✓ stage2 and stage3 executables are byte-identical (635080 bytes)
+# ✓ bootstrap/seed/ matches the fixed-point C
+# trackc 1.0.0
+# ==> native: scripts/selfhost.sh, seeded by stage3
+# ...
+# ✓ n2 = n3 = n4: Track reproduces itself from .trk with no C toolchain
 ```
 
 | Stage | Compiler | Builds |
 | :--- | :--- | :--- |
-| 0 | Rust `yard` / `track` (Cranelift) | `compiler/` → `stage1/trackc` |
+| 0 | `cc` | `bootstrap/seed/trackc.c` + `trackc.rt.c` → `stage1/trackc` |
 | 1 | `stage1/trackc` | `compiler/src/main.trk` → `stage2/trackc` |
 | 2 | `stage2/trackc` | `compiler/src/main.trk` → `stage3/trackc` |
+| native | `stage3/trackc`, then `n1`..`n3` | `compiler/src/main.trk --native` → `n1`..`n4` (`scripts/selfhost.sh`) |
 
-The gate has two parts. Stage 1 (built by Rust) and stage 2 (built by
-Track) must emit byte-identical C for the compiler, which shows the two
-builds of `trackc` behave identically. Stage 2 and stage 3 executables
-must then be byte-identical. CI runs the script on every push, and
-`tests/selfhost_tests.rs` repeats the check under `cargo test`.
+The gate has three parts. Stage 1 and stage 2 must emit byte-identical C
+for the compiler, which shows the two builds of `trackc` behave the same.
+The stage 2 and stage 3 executables must then be byte-identical. Last, the
+native stages `n2`, `n3` and `n4` must be byte-identical (`--no-native`
+skips this part). CI runs the seed path with no Rust toolchain on `PATH`.
+`tests/selfhost_tests.rs` repeats the C check under `cargo test`.
+
+### The seed
+
+`bootstrap/seed/trackc.c` (1.74 MB, 72502 lines) is the C that `trackc`
+emits for `compiler/src/main.trk` at its fixed point.
+`bootstrap/seed/trackc.rt.c` (29 KB) is the C runtime that `trackc` writes
+beside that C. Both files are generated. `.gitattributes` marks them
+`-diff`, so they show as one line in diffs. The seed only has to be able to
+compile the current sources. It does not have to match them, and
+`scripts/bootstrap.sh` only reports a mismatch. The freshness gate is
+separate:
+
+```sh
+scripts/update_seed.sh            # regenerate bootstrap/seed/ from compiler/src
+scripts/update_seed.sh --check    # fail if bootstrap/seed/ is stale (CI)
+```
+
+Rerun `scripts/update_seed.sh` in the same change as any edit to
+`compiler/src/`, `compiler/rt/` or `runtime/`. By default it bootstraps from
+the current seed. If the sources use something the old seed cannot compile,
+point `TRACKC` at any working `trackc`, for example the stage3 of
+`scripts/bootstrap.sh --from-rust`. It builds the compiler twice from that
+binary and writes the fixed-point C.
+
+A runtime change (`runtime/` or `compiler/rt/`, then `embed_runtime.sh` /
+`embed_rt.sh`) always needs that `TRACKC` route. The old seed embeds the
+old runtime, so its stage2 and stage3 differ and the default run (and
+`--check`) stops with "stage2 and stage3 executables differ". Build a
+trackc from the new sources first, e.g. `TRACKC=build/bootstrap/stage3/trackc`
+after `scripts/bootstrap.sh --no-native` reports the mismatch, or
+`--from-rust` while stage 0 still exists.
+
+The seed is C rather than a binary. C can be reviewed, it compresses well
+in git history, and it builds on any host with a C compiler. One step later
+the native stages give a static x86-64 ELF that needs no toolchain.
+
+### The Rust stage 0
+
+The Rust compiler in `src/` still works as stage 0:
+
+```sh
+scripts/bootstrap.sh --from-rust    # or BOOTSTRAP_FROM=rust; YARD=... picks a yard binary
+```
+
+This path runs `cargo build --release` (or uses `$YARD`), and `yard build`
+compiles `compiler/` to `stage1/trackc`. From stage 1 on the stages are the
+same. With a fresh seed, both paths give byte-identical `stage2` and
+`stage3`.
 
 ## Using trackc
 
@@ -305,7 +366,8 @@ scripts/selfhost.sh
 # ✓ processes started by n4 while compiling itself: 0 (strace)
 ```
 
-A seed `trackc` (any build, by default the stage3 of `scripts/bootstrap.sh`)
+A seed `trackc` (any build, by default the stage3 of `scripts/bootstrap.sh`,
+which itself runs this script last)
 compiles `compiler/src/main.trk` with `--native` once. From then on each
 native `trackc` compiles the compiler, runtime included, from `.trk` source
 with an empty environment and no reachable programs. The compiler, the
