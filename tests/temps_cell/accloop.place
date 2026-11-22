@@ -1,0 +1,21 @@
+fn mk
+  L9 struct heap ends -
+  L9 struct heap ends -
+fn acc
+  L12 call temp-autofree deep ends L12
+fn accv
+  L15 call temp-autofree deep ends L15
+fn accs
+  L18 str temp-autofree ends L18
+fn acc2
+  L23 call temp-autofree deep ends L23
+  L23 str temp-autofree ends L23
+fn accp
+  L28 call temp-autofree deep ends L28
+fn main
+  L32 call temp-autofree deep ends L32
+  L33 call temp-autofree deep ends L33
+  L34 str temp-autofree ends L34
+  L35 call temp-autofree deep ends L35
+  L35 str temp-autofree ends L35
+  L36 call temp-autofree deep ends L36

@@ -2227,6 +2227,7 @@ fn temps_free_fresh_cell_temporaries() {
     let update = env::var("UPDATE_LIFE").is_ok();
     let dir = scratch("temps_cell");
     let stems = [
+        "accloop",
         "accret",
         "alias",
         "branch",
@@ -2287,6 +2288,17 @@ fn temps_free_fresh_cell_temporaries() {
             plans
         );
     }
+    // Card F3: accumulator recursion with temporary arguments stays a loop
+    // on the native backend; a million levels deep would overflow the
+    // stack as real calls (the C reference may, so it is native only).
+    let deep = dir.join("accdeep_nat");
+    let out = run_trackc(
+        &["build", "--native", "tests/temps_cell/accdeep.trk", "-o", deep.to_str().unwrap()],
+        &root,
+    );
+    assert!(out.status.success(), "accdeep: native build failed");
+    let want = fs::read_to_string(root.join("tests/temps_cell/accdeep.out")).unwrap();
+    assert_eq!(run_exe(&deep), (want, Some(0)), "accdeep: native output");
     let nested = plans.split("nested:\n").nth(1).unwrap_or("");
     let nested = nested.split(":\n").next().unwrap_or("");
     assert_eq!(
@@ -2338,7 +2350,7 @@ fn temps_free_fresh_cell_temporaries() {
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(
             stem,
-            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr" | "accret"
+            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr" | "accret" | "accloop"
         );
         // str_alias keeps `keep.name` alive to the end of main and drop glue never
         // frees Str, so LSan may report that one string depending on what the C

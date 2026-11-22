@@ -1,0 +1,38 @@
+// Card F3: accumulator recursion `return x + f(args)` whose arguments are
+// fresh temporaries stays a native loop. Each iteration's temporary is the
+// next iteration's parameter: it is freed at the following back edge (or
+// at the loop's exit), never before, so nothing leaks and nothing is read
+// after its free. accdeep.trk runs the same shapes a million levels deep.
+struct In { v: i64 }
+struct Box { r: In, n: i64 }
+
+fn mk(i: i64) -> Box { return Box { r: In { v: i }, n: 1 }; }
+
+// by reference
+fn acc(n: i64, b: &Box) -> i64 { if n == 0 { return b.n; } return b.r.v + acc(n - 1, &mk(n)); }
+
+// by value
+fn accv(n: i64, b: Box) -> i64 { if n == 0 { return b.n; } return b.r.v + accv(n - 1, mk(n)); }
+
+// a fresh Str
+fn accs(n: i64, s: &Str) -> i64 { if n == 0 { return str_len(s); } return str_len(s) + accs(n - 1, &int_to_str(n)); }
+
+// two temporaries
+fn acc2(n: i64, a: &Box, b: &Str) -> i64 {
+    if n == 0 { return a.n + str_len(b); }
+    return a.r.v + str_len(b) + acc2(n - 1, &mk(n), &int_to_str(n));
+}
+
+// the new temporary is made from the parameter it replaces, and the
+// parameter is read again by the exit return
+fn accp(n: i64, b: &Box) -> i64 { if n == 0 { return b.r.v + b.n; } return b.r.v + accp(n - 1, &mk(b.r.v - 1)); }
+
+fn main() -> void {
+    let before = sys_get_memory_used();
+    print(acc(20000, &mk(5)));
+    print(accv(20000, mk(5)));
+    print(accs(20000, &int_to_str(5)));
+    print(acc2(20000, &mk(5), &int_to_str(5)));
+    print(accp(20000, &mk(30000)));
+    print(sys_get_memory_used() - before);
+}
