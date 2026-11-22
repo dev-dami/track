@@ -37,10 +37,27 @@ error inside an imported file is reported on line 1 with that file's
 
 trackc stops at the first error by exiting, so the server never runs the
 checker in-process: every analysis writes the buffer and its path to a
-private scratch directory, `$TMPDIR/trackc-lsp-<tag>` (removed on exit),
-runs `trackc lsp --check <tag>` as a child process (through
+private scratch directory, `$TMPDIR/trackc-lsp-<tag>`, runs
+`trackc lsp --check <tag>` as a child process (through
 `/proc/$PPID/exe`, so Linux only) and reads the child's output. A checker
 crash becomes a diagnostic, never a dead server.
+
+- **Time limit.** The child runs under `timeout -k 1 <secs>` (exec'd, so
+  no shell sits in between; a watchdog stands in when coreutils `timeout`
+  is missing). `<secs>` is `$TRACKC_LSP_TIMEOUT`, default 10. A check that
+  runs out of time publishes one diagnostic, `trackc: check timed out
+  after <secs>s`, and the server keeps answering. If the server is killed
+  mid-check, the orphaned child still dies at the limit.
+- **Scratch directory.** `<tag>` is a fresh UUID from
+  `/proc/sys/kernel/random/uuid`, and the directory is made with
+  `mkdir -m 700`, which refuses any existing path (a planted symlink
+  included). If that fails, the server keeps running but publishes no
+  diagnostics and sends one `window/logMessage` saying so. The directory
+  is removed on exit, and a reaper process removes it within about a
+  second when the server dies any other way (SIGTERM, SIGKILL).
+- **NUL bytes.** Messages are handled as NUL-terminated text: an escaped
+  `\u0000` in a document is dropped, and a raw NUL byte (invalid JSON)
+  cuts its message short, which gets a parse error reply.
 
 ## Supported Files
 
