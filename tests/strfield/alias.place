@@ -1,0 +1,5 @@
+fn main
+  L10 struct stack ends L20
+  L10 call heap ends -
+  L14 struct stack ends L14
+  L15 struct stack ends L16

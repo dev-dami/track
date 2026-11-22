@@ -1,0 +1,22 @@
+// L13e: a local cell whose Str field is fresh at its `let` and at every
+// reassignment owns the string; it is freed with the cell when x dies.
+struct Named { name: Str, n: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3000 {
+        let x = Named { name: int_to_str(i), n: i };
+        total = total + weight(&x) + str_len(x.name);
+        let mut y = Named { name: str_concat("y", int_to_str(i)), n: 1 };
+        total = total + weight(&y);
+        y = Named { name: int_to_str(i + 7), n: 2 };
+        total = total + weight(&y);
+        i = i + 1;
+    }
+    print(total);
+}

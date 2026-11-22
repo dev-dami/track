@@ -1,0 +1,21 @@
+// L13e: a Str field aliasing a string the caller keeps is not owned by
+// the cell; it outlives every cell that held it.
+struct Named { name: Str, n: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn main() -> void {
+    let keep = Named { name: int_to_str(4242), n: 0 };
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        total = total + weight(&Named { name: keep.name, n: i });
+        let x = Named { name: keep.name, n: 1 };
+        total = total + weight(&x);
+        i = i + 1;
+    }
+    print(total);
+    print(keep.name);
+}
