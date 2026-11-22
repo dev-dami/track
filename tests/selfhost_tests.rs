@@ -2073,13 +2073,26 @@ fn temps_free_fresh_temporaries() {
 /// freed. Every program in tests/temps_cell/ prints its `<stem>.out` with
 /// both backends and plans as its `<stem>.place` golden (`UPDATE_LIFE=1`
 /// rewrites them); where gcc has AddressSanitizer the C builds run clean,
-/// with leak checks for the programs whose temporaries all die.
+/// with leak checks for the programs whose temporaries all die. L13d adds
+/// cells whose Str fields are static or borrowed (only the shell is
+/// freed), discarded cell statements, and native inlining (a self tail
+/// call's copy, a branch condition) that must still free the temporary.
 #[test]
 fn temps_free_fresh_cell_temporaries() {
     let root = repo();
     let update = env::var("UPDATE_LIFE").is_ok();
     let dir = scratch("temps_cell");
-    let stems = ["alias", "kept", "nested", "print_loop", "str_cell"];
+    let stems = [
+        "alias",
+        "branch",
+        "discard",
+        "kept",
+        "nested",
+        "print_loop",
+        "str_alias",
+        "str_cell",
+        "tailr",
+    ];
     let mut plans = String::new();
     for stem in stems {
         let rel = format!("tests/temps_cell/{}.trk", stem);
@@ -2114,6 +2127,12 @@ fn temps_free_fresh_cell_temporaries() {
         ("print_loop", "L37 tuple stack ends L37"),
         ("nested", "L26 call stack ends L26"),
         ("str_cell", "L18 struct stack ends L18"),
+        ("str_cell", "L17 call temp-autofree deep ends L17"),
+        ("discard", "L23 call temp-autofree deep ends L23"),
+        ("discard", "L24 call temp-autofree deep ends L24"),
+        ("discard", "L25 call temp-autofree deep ends L25"),
+        ("str_alias", "L19 call temp-autofree deep ends L19"),
+        ("str_alias", "L21 call temp-autofree deep ends L21"),
     ] {
         assert!(
             plans.contains(line),
@@ -2172,7 +2191,16 @@ fn temps_free_fresh_cell_temporaries() {
             .output()
             .unwrap();
         assert!(out.status.success(), "{}: ASan build failed", rel);
-        let all_die = matches!(stem, "nested" | "print_loop");
+        let all_die = matches!(
+            stem,
+            "nested"
+                | "print_loop"
+                | "branch"
+                | "discard"
+                | "str_alias"
+                | "str_cell"
+                | "tailr"
+        );
         let leaks = if all_die {
             "detect_leaks=1"
         } else {

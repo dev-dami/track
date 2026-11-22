@@ -1,0 +1,25 @@
+// L13d: a cell temporary whose consumer the native backend would inline
+// as a branch condition is freed: the call goes through ng_call.
+struct In { v: i64 }
+struct Rect { w: i64, h: In }
+
+fn make_rect(w: i64, h: i64) -> Rect {
+    return Rect { w: w, h: In { v: h } };
+}
+
+fn big(r: &Rect) -> bool {
+    return r.w > 1;
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    let mut k: i64 = 0;
+    while i < 1000 {
+        if big(&make_rect(i, 2)) {
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    print(k);
+    print(sys_get_memory_used());
+}

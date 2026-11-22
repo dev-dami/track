@@ -3065,7 +3065,8 @@ fn ng_branch(c: i64, n: i64, sense: bool, list: i64) -> i64 {
     if k == K_UN && na(c, n) == OP_NOT {
         return ng_branch(c, nb(c, n), !sense, list);
     }
-    if k == K_CALL {
+    if k == K_CALL && !ng_has_temps(c, n) {
+        // A call with temporaries goes through ng_call, which frees them.
         let f = ng_call_target(c, n);
         if f >= 0 {
             let mark = ng_inline_begin(c, f, nb(c, n));
@@ -3557,11 +3558,14 @@ fn ng_libc_call(c: i64, nr: i64) -> i64 {
 // result is kept for its consumer, or freed here when it is a discarded
 // statement.
 fn ng_call(c: i64, n: i64, args: i64) -> i64 {
+    // Only temporaries pushed while this call's arguments were made are
+    // its own: an inlined body of the same function holds a copy of `n`
+    // whose frees sit on one branch only (card L13d).
+    let mut i = vlen(ng(c, NG_TEMPS));
     ng_call_body(c, n, args);
     let b = ncode(c);
     let temps = ng(c, NG_TEMPS);
     let mut saved = false;
-    let mut i: i64 = 0;
     while i < vlen(temps) {
         if vget(temps, i) == n {
             if !saved {

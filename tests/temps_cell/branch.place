@@ -1,0 +1,5 @@
+fn make_rect
+  L7 struct heap ends -
+  L7 struct heap ends -
+fn main
+  L18 call temp-autofree deep ends L18
