@@ -1,5 +1,6 @@
-// L10: a nested call `f(g(x))`: the inner result is an argument, so it
-// takes the allocating entry; the outer result lives in the caller's slot.
+// L10: a nested call `f(g(x))`: the outer result lives in the caller's
+// slot; the inner results are arguments only lent, so (L13c) each lives
+// in a stack cell of the caller too.
 struct V { x: i64, y: i64 }
 
 fn mk(i: i64) -> V {

@@ -1,0 +1,13 @@
+fn make_outer
+  L7 struct heap ends -
+  L7 struct heap ends -
+fn grow
+  L11 struct heap ends -
+  L11 struct heap ends -
+fn to_rect
+  L15 struct ret-slot ends L15
+fn main
+  L26 call stack ends L26
+  L26 call temp-autofree deep ends L26
+  L26 call temp-autofree deep ends L26
+  L26 call temp-autofree deep ends L26

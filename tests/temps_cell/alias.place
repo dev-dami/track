@@ -1,0 +1,6 @@
+fn make_rect
+  L5 struct ret-slot ends L5
+fn main
+  L22 call heap ends -
+  L23 call heap ends -
+  L23 struct heap ends -

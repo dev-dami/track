@@ -435,7 +435,7 @@ fn gen_call_rs(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
     let mut i: i64 = 0;
     while i < vlen(temps) {
         if vget(temps, i) == n {
-            emit(c, text_cat3(hd_free_name(vget(temps, i + 2)), "(", text_cat(vget(temps, i + 1), ");")));
+            gen_free_temp(c, vget(temps, i + 1), vget(temps, i + 2));
             vset(temps, i, -1);
         }
         i = i + 3;
@@ -451,7 +451,43 @@ fn gen_call_rs(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
     if consumer >= 0 {
         vpush(temps, consumer);
         vpush(temps, t);
-        vpush(temps, life_auto_handle(c, n));
+        vpush(temps, gen_temp_code(c, n));
+    }
+    return t;
+}
+
+// What frees temporary site `n` (G_TEMPS): its HK_* when it is a Str or
+// handle, else `-1 - n` for a cell (card L13c).
+fn gen_temp_code(c: i64, n: i64) -> i64 {
+    let hk = life_auto_handle(c, n);
+    if hk > 0 {
+        return hk;
+    }
+    return 0 - 1 - n;
+}
+
+// Free temporary `t` (C text) by its G_TEMPS code: the kind's free, drop
+// glue for a deep cell, or the cell alone.
+fn gen_free_temp(c: i64, t: i64, code: i64) -> i64 {
+    if code > 0 {
+        return emit(c, text_cat3(hd_free_name(code), "(", text_cat(t, ");")));
+    }
+    let site = 0 - 1 - code;
+    if life_auto_deep(c, site) {
+        return gen_drop(c, t, pl_site_type(c, site), 0);
+    }
+    return emit(c, text_cat3("dealloc(", t, ");"));
+}
+
+// Heap cell `t` of literal `n`: kept for its consumer when the plan makes
+// it a temporary (card L13c).
+fn gen_temp_cell(c: i64, n: i64, t: i64) -> i64 {
+    let consumer = life_temp_of(c, n);
+    if consumer >= 0 {
+        let temps = g(c, G_TEMPS);
+        vpush(temps, consumer);
+        vpush(temps, t);
+        vpush(temps, gen_temp_code(c, n));
     }
     return t;
 }
@@ -707,7 +743,10 @@ fn gen_tuple(c: i64, n: i64) -> i64 {
     if life_place_of(c, n) == PL_RET && g(c, G_RS) != 0 {
         return gen_into_cell(c, g(c, G_RS), values);
     }
-    return gen_cell(c, values);
+    if life_place_of(c, n) == PL_STACK {
+        return gen_slot(c, values);
+    }
+    return gen_temp_cell(c, n, gen_cell(c, values));
 }
 
 fn gen_stack_tuple(c: i64, n: i64) -> i64 {
@@ -729,7 +768,7 @@ fn gen_site_cell(c: i64, n: i64, words: i64) -> i64 {
     if life_place_of(c, n) == PL_AUTO {
         return gen_cell_note(c, words, " /* heap-autofree */");
     }
-    return gen_cell(c, words);
+    return gen_temp_cell(c, n, gen_cell(c, words));
 }
 
 // A stack slot `tk_w sN[k]` holding `values`.
@@ -1012,6 +1051,10 @@ fn gen(c: i64, n: i64) -> i64 {
     if k == K_CALL {
         if life_place_of(c, n) == PL_RET && g(c, G_RS) != 0 {
             return gen_rs_call(c, n, g(c, G_RS));
+        }
+        if life_place_of(c, n) == PL_STACK && pl_rs_call(c, n) {
+            // A stack temporary (card L13c): the result goes in a slot.
+            return gen_rs_call(c, n, gen_new_slot(c, pl_flat_words(c, pl_site_type(c, n))));
         }
         return gen_call(c, n, nb(c, n));
     }
