@@ -1,0 +1,74 @@
+// F1: a glue-fresh function (LT_GFN) with a `return` of a local cell
+// hidden inside an expression: a call argument, a while condition, a
+// match target, a binary operand, a struct literal field and an
+// assignment value. A local is not a deep-fresh literal, so none of
+// these functions may join LT_GFN (the static `tag` keeps the summary
+// result from being exactly fresh, so LT_GFN decides the drop glue).
+struct Inner { v: i64 }
+struct Outer { inner: Inner, tag: Str, n: i64 }
+struct P { a: i64, b: i64 }
+
+fn id(x: i64) -> i64 {
+    return x;
+}
+
+fn val(o: &Outer) -> i64 {
+    return o.inner.v * 10 + o.n + str_len(o.tag) * 1000;
+}
+
+fn in_arg(n: i64) -> Outer {
+    let o = Outer { inner: Inner { v: 5 }, tag: "tag", n: n };
+    print(id(if n > 0 { return o; } else { n }));
+    return Outer { inner: Inner { v: n }, tag: "tag", n: 1 };
+}
+
+fn in_while(n: i64) -> Outer {
+    let o = Outer { inner: Inner { v: 6 }, tag: "tag", n: n };
+    while (if n > 0 { return o; } else { false }) {
+        print(9);
+    }
+    return Outer { inner: Inner { v: n }, tag: "tag", n: 2 };
+}
+
+fn in_match(n: i64) -> Outer {
+    let o = Outer { inner: Inner { v: 7 }, tag: "tag", n: n };
+    match (if n > 0 { return o; } else { n }) {
+        0 => print(0),
+        _ => print(1),
+    }
+    return Outer { inner: Inner { v: n }, tag: "tag", n: 3 };
+}
+
+fn in_binary(n: i64) -> Outer {
+    let o = Outer { inner: Inner { v: 8 }, tag: "tag", n: n };
+    let mut z: i64 = 0;
+    z = n + (if n > 0 { return o; } else { 1 });
+    return Outer { inner: Inner { v: z }, tag: "tag", n: 4 };
+}
+
+fn in_struct(n: i64) -> Outer {
+    let o = Outer { inner: Inner { v: 9 }, tag: "tag", n: n };
+    let p = P { a: if n > 0 { return o; } else { n }, b: 2 };
+    return Outer { inner: Inner { v: p.a }, tag: "tag", n: p.b };
+}
+
+fn in_assign(n: i64) -> Outer {
+    let o = Outer { inner: Inner { v: 3 }, tag: "tag", n: n };
+    let mut z: i64 = 0;
+    z = if n > 0 { return o; } else { n * 2 };
+    return Outer { inner: Inner { v: z }, tag: "tag", n: 6 };
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    while i < 2 {
+        let n = 1 - i * 8;
+        print(val(&in_arg(n)));
+        print(val(&in_while(n)));
+        print(val(&in_match(n)));
+        print(val(&in_binary(n)));
+        print(val(&in_struct(n)));
+        print(val(&in_assign(n)));
+        i = i + 1;
+    }
+}

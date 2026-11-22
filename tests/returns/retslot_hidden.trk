@@ -1,0 +1,77 @@
+// F1: a ret-slot function (LT_RSFN, card L10) with a `return` of a local
+// cell hidden inside an expression: a call argument, a while condition, a
+// match target, a binary operand, a struct literal field and an
+// assignment value. That return neither builds a literal nor calls a
+// member, so none of these functions may get a ret-slot entry.
+struct V { x: i64, y: i64 }
+struct P { a: i64, b: i64 }
+
+fn id(x: i64) -> i64 {
+    return x;
+}
+
+fn in_arg(n: i64) -> V {
+    let v = V { x: 5, y: n };
+    print(id(if n > 0 { return v; } else { n }));
+    return V { x: n, y: 1 };
+}
+
+fn in_while(n: i64) -> V {
+    let v = V { x: 6, y: n };
+    while (if n > 0 { return v; } else { false }) {
+        print(9);
+    }
+    return V { x: n, y: 2 };
+}
+
+fn in_match(n: i64) -> V {
+    let v = V { x: 7, y: n };
+    match (if n > 0 { return v; } else { n }) {
+        0 => print(0),
+        _ => print(1),
+    }
+    return V { x: n, y: 3 };
+}
+
+fn in_binary(n: i64) -> V {
+    let v = V { x: 8, y: n };
+    let mut z: i64 = 0;
+    z = n + (if n > 0 { return v; } else { 1 });
+    return V { x: z, y: 4 };
+}
+
+fn in_struct(n: i64) -> V {
+    let v = V { x: 9, y: n };
+    let p = P { a: if n > 0 { return v; } else { n }, b: 2 };
+    return V { x: p.a, y: p.b };
+}
+
+fn in_assign(n: i64) -> V {
+    let v = V { x: 3, y: n };
+    let mut z: i64 = 0;
+    z = if n > 0 { return v; } else { n * 2 };
+    return V { x: z, y: 6 };
+}
+
+fn main() -> void {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 2 {
+        let n = 1 - i * 8;
+        let a = in_arg(n);
+        let b = in_while(n);
+        let c = in_match(n);
+        let d = in_binary(n);
+        let e = in_struct(n);
+        let f = in_assign(n);
+        print(a.x * 10 + a.y);
+        print(b.x * 10 + b.y);
+        print(c.x * 10 + c.y);
+        print(d.x * 10 + d.y);
+        print(e.x * 10 + e.y);
+        print(f.x * 10 + f.y);
+        t = t + a.x + b.x + c.x + d.x + e.x + f.x;
+        i = i + 1;
+    }
+    print(t);
+}

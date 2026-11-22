@@ -1,0 +1,12 @@
+// F1: a `return` hidden in a `let` value gives a static Str, so the
+// function's returns are not all fresh calls (LT_HFN) and its result is
+// never freed as a Str temporary.
+fn label(n: i64) -> Str {
+    let z = if n > 0 { return "static"; } else { n };
+    return int_to_str(z);
+}
+
+fn main() -> void {
+    print(str_len(label(1)));
+    print(str_len(label(-42)));
+}

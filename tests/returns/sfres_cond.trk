@@ -1,0 +1,20 @@
+// F1: a `return` hidden in an `if` condition builds a struct with a static
+// Str field, so the result does not own that field (LT_SFRES) and freeing
+// the temporary must leave the literal alone.
+struct Named { name: Str, n: i64 }
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn make(n: i64) -> Named {
+    if (if n > 0 { return Named { name: "static", n: n }; } else { n < -5 }) {
+        print(0);
+    }
+    return Named { name: int_to_str(n), n: n };
+}
+
+fn main() -> void {
+    print(weight(&make(1)));
+    print(weight(&make(-7)));
+}
