@@ -65,9 +65,14 @@ runtime, but must not place segments at that address.
 
 **Allocator.** Power-of-two blocks from 32 bytes, one header word
 (`requested_size << 8 | class`), per-class free lists, 64 MiB `mmap`
-arenas. `alloc` zeroes and counts against the memory limit; collections,
-builders, and strings use the uncounted `rt_malloc`, as the C runtime uses
-`malloc`.
+arenas. Blocks over 64 KiB get a prefaulted mapping of their own that
+grows with `mremap`; freeing one keeps it in the large-block cache (at
+most 16 mappings, 128 MiB; past that the oldest are unmapped), and the
+next large request takes the smallest cached mapping that fits, so a
+free-and-reallocate loop makes no syscalls. Cached blocks are not in use
+for the memory limit. `alloc` zeroes and counts against the memory limit;
+collections, builders, and strings use the uncounted `rt_malloc`, as the
+C runtime uses `malloc`.
 
 ## Entry contract (`_start`)
 
