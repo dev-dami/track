@@ -5,6 +5,61 @@ All notable changes to the Track programming language and toolchain will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Runtime written in Track** (`compiler/rt/*.trk`): every function of
+  `runtime/track_runtime.c` on raw syscalls, no libc. `trackc build
+  --rt=track` links it through the C backend. See
+  [docs/native.md](docs/native.md).
+- **Native backend** (`ngen.trk`, `x64.trk`, `elf.trk`): `trackc build
+  --native` writes a static x86-64 Linux ELF with no C compiler,
+  assembler or linker; `-g` / `--symbols` adds `.symtab`.
+  `scripts/selfhost.sh` rebuilds trackc natively under
+  `env -i PATH=/nonexistent` and checks n2 = n3 = n4 and that n4 starts
+  no processes. `scripts/native_parity.sh` and `bench/native.sh` compare
+  native, C and Rust builds.
+- **Inferred lifecycles** (`life.trk`, [docs/lifecycles.md](docs/lifecycles.md)):
+  `trackc life` and `trackc life --place`; errors E0211-E0214, warnings
+  W0301-W0305 and `--deny-warnings`; every allocation is placed on the
+  stack, in a caller return slot, freed where its life ends
+  (`heap-autofree`, `temp-autofree`, with drop glue and owned Str fields),
+  or left on the heap, in both trackc backends.
+- A range used as a value (`let r = 0..3;`) is E0200 in trackc; it used
+  to compile and segfault on both backends (F3).
+
+### Changed
+- Native accumulator loops (`return x + f(args)`) carry argument
+  temporaries the plan frees after the call: each is parked in a slot,
+  freed by the back edge that replaces it and at every loop exit, and a
+  pass-through keeps it (F3, F3b). Such returns had been left as calls
+  after F2.
+- Native calls of collection forwarders (`vget`, `vset`, `cx`, ...) are
+  emitted as the collection primitive on the call's own arguments; a
+  get by a constant index compares with the length directly, and a get
+  whose handle is another get computes its index first, with no push
+  and pop (R10a).
+
+### Fixed
+- A `return` hidden inside an `if` or `match` expression (a `let` value,
+  condition, call argument, operand or field) was missed by the
+  lifecycle walkers, so the plan could free a static Str (C abort,
+  native memory corruption). One visitor now finds every return (F1).
+- Native `return x + f(args)` leaked an argument temporary the C backend
+  frees; a union-constructor temporary was registered twice (F2).
+- A constant `INT64_MIN / -1` or `% -1` crashed trackc with SIGFPE; it is
+  now E0200 in both checkers, like a constant zero divisor, including in
+  explicit enum discriminants and through named comparison constants
+  and enum variants (F2).
+- Stage 0 folds comparisons, `!`, `&&` and `||` in constants, and unit
+  variants are constants to later constants. `const ONE = 1 < 2;`
+  printed 0 and the variants after it were off by one; trackc already
+  folded them.
+- Stage 0 dropped the run-time divide trap when a parameter or local
+  shadowed a constant of the same name (`fn d(TWO: i64)` called with 0
+  died with SIGILL without flushing stdout); the divisor is now checked
+  at run time.
+
 ## [1.0.0] — 2026-10-30
 
 Track is self-hosting. `trackc`, the compiler in `compiler/`, is written

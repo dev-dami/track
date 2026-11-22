@@ -38,6 +38,10 @@ type ALIAS_NAME = TargetType;
 - No hidden evaluation
 - Type inferred from value
 - Usable in register addresses and other constant expressions (array sizes currently require literal integers — const array sizing is planned, see the roadmap)
+- Folded by both compilers: integer literals, other constants, unit enum variants, unary `-` and `!`, `+ - * / %`, `& |`, `<< >>`, comparisons and `&& ||` (comparisons and logic give `0` or `1`)
+- A constant `/` or `%` by zero, or `INT64_MIN / -1`, is a compile error (E0200), in constants and in explicit enum discriminants
+- A parameter or local named like a constant shadows it: in `fn d(TWO: i64) -> i64 { return 7 / TWO; }` the division happens at run time and `d(0)` flushes stdout and traps (SIGFPE)
+- Integer literals are decimal; hex literals such as `0x10` are not lexed yet
 
 ## Examples
 
@@ -48,15 +52,15 @@ const BUFFER_SIZE = 1024;
 const CHANNELS = 2;
 const SAMPLE_RATE = 44100;
 
-let buffer: [i32; 1024];
+// array sizes take literals: [i32; 1024], not [i32; BUFFER_SIZE]
 ```
 
 ### Hardware Registers
 
 ```track
-const GPIO_BASE = 0x40021000;
-const GPIO_MODER = GPIO_BASE + 0x00;
-const GPIO_OTYPER = GPIO_BASE + 0x04;
+const GPIO_BASE = 1073876992;   // 0x40021000
+const GPIO_MODER = GPIO_BASE + 0;
+const GPIO_OTYPER = GPIO_BASE + 4;
 ```
 
 ### Magic Numbers

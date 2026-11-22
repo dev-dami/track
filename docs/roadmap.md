@@ -165,8 +165,17 @@ values that live on the call stack and are passed around explicitly.
 - Structs, field access/update, struct patterns, and bounds-checked arrays
   with slicing now have runtime representations in both compilers.
 
+### After v1.0.0 (unreleased) ✅
+- Runtime written in Track (`compiler/rt/`), linked with `--rt=track` or
+  `--native`; no libc.
+- Native x86-64 backend (`trackc build --native`): static ELF written
+  directly, optional symbol table (`-g`). `scripts/selfhost.sh` rebuilds
+  trackc natively with no C toolchain reachable (n2 = n3 = n4).
+- Inferred lifecycles (`life.trk`, [lifecycles.md](lifecycles.md)): new
+  errors E0211-E0214 and warnings W0301-W0305, and a placement for every
+  allocation (stack, caller return slot, or freed where its life ends) in
+  both trackc backends.
+
 ### Next
-- Emit deallocation at scope exit from the ownership analysis (linear values
-  are currently reclaimed at process exit).
 - Generic structs (`struct Stack<T>`), and retiring the Rust compiler once
   `yard` itself is ported.
