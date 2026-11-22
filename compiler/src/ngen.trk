@@ -20,6 +20,7 @@ import "ast";
 import "symbols";
 import "x64";
 import "elf";
+import "life";
 
 const NG_CODE = 0;     // code bytes
 const NG_DATA = 1;     // data bytes (string literals)
