@@ -1,0 +1,25 @@
+// Deep (non-tail) recursion with a stack cell in every frame: each frame's
+// cell is its own (read after the recursive call returns), and two hundred
+// 20000-deep recursions under a 3 MB memory limit never touch the heap.
+struct Pt { x: i64, y: i64, z: i64 }
+
+fn depth(n: i64, salt: i64) -> i64 {
+    let p = Pt { x: n, y: n * 2 + salt, z: salt & 7 };
+    if n == 0 {
+        return p.y;
+    }
+    let r: i64 = depth(n - 1, (salt * 31 + n) % 65521);
+    return (r + p.x * 3 + p.y - p.z) % 1000000007;
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(3000000);
+    let mut acc: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 200 {
+        acc = (acc + depth(20000, k)) % 1000000007;
+        k = k + 1;
+    }
+    print(acc);
+    return 0;
+}

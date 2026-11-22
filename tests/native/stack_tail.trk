@@ -1,0 +1,41 @@
+// Stack cells and tail calls. `walk` tail-calls itself ten million times
+// with a struct cell in its frame (the tail call does not take the cell),
+// under a 3 MB memory limit: the cell is a frame slot and the tail call
+// stays a jump. `lend` tail-calls `look` passing `&p`: the frame is gone
+// before `look` runs, so `p` must not live in it (`look` writes its own
+// cells where `p` would have been, then reads `p`).
+struct Pt { x: i64, y: i64, z: i64 }
+
+fn walk(n: i64, acc: i64) -> i64 {
+    let p = Pt { x: n, y: acc, z: n & 3 };
+    if p.x == 0 {
+        return p.y;
+    }
+    return walk(n - 1, (p.y * 7 + p.x + p.z) % 1000003);
+}
+
+fn look(q: &Pt, n: i64) -> i64 {
+    let r = Pt { x: n * 7, y: n * 11, z: n * 13 };
+    let s = Pt { x: n + 1, y: n + 2, z: n + 3 };
+    let a: i64 = q.x * 2 + q.y * 3 + q.z * 5 + r.x + r.y + r.z;
+    let b: i64 = s.x * s.y * s.z + (r.x | q.y) + (s.z & q.x);
+    return (a * 31 + b) % 1000000007;
+}
+
+fn lend(n: i64) -> i64 {
+    let p = Pt { x: n, y: n * 2, z: n * 3 };
+    return look(&p, n + 100);
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(3000000);
+    print(walk(10000000, 1));
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        t = (t + lend(i)) % 1000000007;
+        i = i + 1;
+    }
+    print(t);
+    return 0;
+}

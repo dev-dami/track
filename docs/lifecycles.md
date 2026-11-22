@@ -10,14 +10,17 @@ L9 landed: cgen frees `heap-autofree` struct, tuple, array and union
 cells when their block ends or a `return` leaves it, and the old cell at
 each fresh reassignment; sites dumped `deep` also run drop glue into
 fresh child cells. Locals reassigned fresh cells are autofree, not stack
-(C structs: 89 faults, wall ~180 ms median on the loaded host).
+(C structs: 89 faults, wall ~180 ms median on the loaded host). Str and
+handles wait for L13.
+L11 landed: ngen puts the same `stack` literals in contiguous frame slots
+(`ng_site_cell`; native structs 0.88 of C in `bench/native.sh`).
 L10 landed: functions whose result is exactly `fresh`, of a flat struct
 or tuple type, and whose every `return` is a literal or another such
 call get a `tk_<f>__rs` entry with a hidden last cell parameter; callers
 pass a stack slot or the local's own cell (no temp slot: the callee
 stores only after every word is in a temp, so `acc = f(&acc)` is safe),
 and others call the allocating `tk_<f>` (C structs: 74 faults, ~70 ms).
-Str and handles wait for L13; the native backend is not acted on yet.
+Native ret-slot calls wait for L12.
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors

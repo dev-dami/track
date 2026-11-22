@@ -381,6 +381,7 @@ fn cmd_build_native(path: i64) -> i64 {
     if exe == 0 {
         exe = file_stem(path);
     }
+    life_place_program(c); // stack cells (ngen `ng_site_cell`)
     let image = generate_native(c);
     if image == 0 {
         quit(1);
