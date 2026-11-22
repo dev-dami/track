@@ -1,44 +1,44 @@
 # Event lifecycles and stack-first memory (design, card L0)
 
-Status: design, partly implemented. Base: `agent/track-race` at
-62d8d50, with card K2 (branch `k2`, not yet landed) taken as given.
-L7 landed: `life.trk` builds the placement plan (`PLACE`/`ENDS`, dumped by
-`trackc life --place`) and cgen takes its stack tuples from it.
-L8 landed: cgen puts struct, array and payload-union literals planned
-`stack` in `tk_w sN[k]` slots (C structs: 78k faults, was 109k).
-L9 landed: cgen frees `heap-autofree` struct, tuple, array and union
-cells when their block ends or a `return` leaves it, and the old cell at
-each fresh reassignment; sites dumped `deep` also run drop glue into
-fresh child cells. Locals reassigned fresh cells are autofree, not stack
-(C structs: 89 faults, wall ~180 ms median on the loaded host). Str and
-handles wait for L13.
-L11 landed: ngen puts the same `stack` literals in contiguous frame slots
-(`ng_site_cell`; native structs 0.88 of C in `bench/native.sh`).
-L12a landed: ngen frees the same `heap-autofree` cells as cgen, drop glue
-included, with an inlined free and a free-list pop in the inlined alloc
-(native structs 0.66 of C user cycles, total cycles 322M vs C 477M).
-L10 landed: functions whose result is exactly `fresh`, of a flat struct
-or tuple type, and whose every `return` is a literal or another such
-call get a `tk_<f>__rs` entry with a hidden last cell parameter; callers
-pass a stack slot or the local's own cell (no temp slot: the callee
-stores only after every word is in a temp, so `acc = f(&acc)` is safe),
-and others call the allocating `tk_<f>` (C structs: 74 faults, ~70 ms).
-L12b landed: ngen emits the same `<f>__rs` entries (the cell as one
-more argument, returned in rax) and passes the same cells, so native
-frees match C (native structs 0.83 of C user cycles, 178M vs 222M).
-L13b landed: a fresh Str or handle passed straight to a call whose
-summary for that parameter is die-only (not kept, freed or returned, and
-the result not derived from it), or used as a discarded statement, is
-dumped `temp-autofree` and freed right after that call in both backends
-(ASan self-compile leaks 340,813 allocations, was 584,001).
-L13c landed: a fresh struct, tuple or array passed straight to such a
-call dies there too. A flat literal or ret-slot call that fits the frame
-budget is dumped `stack` and lives in a stack cell of the caller (not
-inside a `return` value, whose call may be a tail call); any other is
-`temp-autofree` and freed right after the call, `deep` (drop glue) when
-its children are fresh and the callee only reads it (§3.5).
-L13d landed: cells whose Str fields are static or borrowed, discarded
-cell statements, and native temporaries of inlined consumers are freed.
+Status: implemented. Cards L1 to L15 have landed, on top of K2; the
+sections below are the design, with *as built* notes where the code went
+further. `life.trk` infers a summary for every function and a placement
+for every allocation site, dumped by `trackc life --place`: `stack`,
+`ret-slot`, `heap-autofree`, `temp-autofree` (either may add `deep`, and
+`strs` when the cell owns Str fields), or `heap`. Both backends follow
+the same plan.
+
+- L1, L2: wall ms and page faults in `bench/native.sh`; the warnings
+  channel and `--deny-warnings`.
+- L3 to L6: origin sets, interprocedural summaries, errors E0211 to
+  E0214 and warnings W0301 to W0305 (§2).
+- L7: the shared placement plan (`PLACE`/`ENDS`).
+- L8, L11: struct, tuple, array and payload-union literals planned
+  `stack` live in `tk_w sN[k]` slots (cgen) or contiguous frame slots
+  (ngen, `ng_site_cell`).
+- L9, L12a: `heap-autofree` cells are freed at block end, at a `return`
+  once its value is read, and the old cell at each fresh reassignment;
+  `deep` sites run drop glue into fresh child cells. ngen inlines the
+  free and pops the free list in its inlined alloc.
+- L10, L12b: functions whose result is exactly `fresh`, of a flat struct
+  or tuple type, get a `<f>__rs` entry with a hidden result-cell
+  parameter; callers pass a stack slot or the local's own cell.
+- L13, L13b: fresh Str and runtime handles (phase 2, §3.5) are freed at
+  end of life, and as temporaries right after a call that only lends
+  them (`temp-autofree`).
+- L13c, L13d: fresh cell temporaries are stack-placed or freed after
+  their consumer, including cells whose Str fields are static or
+  borrowed, discarded cell statements, and native temporaries of
+  inlined consumers.
+- L13e, L15: Str fields a cell provably owns are freed with it (§3.6),
+  including fields filled by call results and moved fresh locals.
+- L14: cells whose every word is written use `track_alloc_nz` and skip
+  zeroing.
+- F1: a `return` hidden inside an `if` or `match` expression (in a `let`
+  value, condition, call argument, operand or field) is seen by every
+  walker that decides freshness (`rets_walk`, cached per function as
+  `LT_RETS`), so a hidden `return "literal"` no longer lets the plan free
+  a static Str.
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors
@@ -222,14 +222,14 @@ moves it into `life.trk`, so ngen gets it too.
 
 ## 2. Error and warning catalogue
 
-Every example below is in `docs/lifecycles/` and **passes
-`trackc check` today and runs** [observed: stage3 trackc at 62d8d50 plus
-this branch]. Each is a logic error that only works because cells are
-never freed.
+Every example below is in `docs/lifecycles/`. Before L5 and L6 each
+**passed `trackc check` and ran** [observed: stage3 trackc at 62d8d50].
+Each is a logic error that only worked because cells were never freed.
+trackc now reports each one with the diagnostic shown [observed].
 
 ### Hard errors (definite bugs)
 
-| code | example | trackc today | diagnostic |
+| code | example | trackc before L5 | diagnostic |
 |---|---|---|---|
 | E0211 | `e1_lent_consumed.trk`: `fn peek(r: &Point) -> i64 { return take(r); }` where `take(p: Point)` | ✓ passes, prints `1 2` | `error[E0211]: 'take' consumes its parameter 'p', but 'r' is only lent to 'peek'. Pass '&' and make 'p: &Point', or take ownership in 'peek'.` |
 | E0212 | `e2_escape_tuple.trk`: `return (&p, 7);` with `p` a local | ✓ passes, prints `8` | `error[E0212]: local 'p' escapes 'pair' inside the returned tuple (element 0); it dies when 'pair' returns.` |
@@ -251,8 +251,8 @@ payload literals through container edges.
 (`life_fail_pending` in `life.trk`; `trackc life` still dumps them).
 E0211 fires when a `&`-typed variable is passed to a by-value,
 non-generic parameter whose end includes `die` or `esc`. E0212 checks
-`&local` elements of returned tuple, array and struct literals (payload
-literals are not covered yet). E0213 records `r = &x` targets and flags
+`&local` elements of returned tuple, array and struct literals, and
+payloads of returned union constructors (`return U::P(&p);`). E0213 records `r = &x` targets and flags
 a reference whose target's block closed when it is next read or stored
 through. E0214 is found at the literal; when the borrowed value is a
 `&` parameter, it is reported at each call site and names the caller's
@@ -314,8 +314,9 @@ today [observed: `let _ = mk();` gives E0100]. Write
 
 ### The warnings channel
 
-trackc has only errors today: `fail_at` exits. `diagnostic.trk` already
-has `format_warning` [observed], but nothing calls it.
+*As built (L2), following this plan.* Before it trackc had only
+errors (`fail_at` exits), and `format_warning` in `diagnostic.trk` had
+no caller.
 
 - `base.trk`: add `warn_at(c, pos, code, message)`, which appends
   `(pos, code, message)` to a new `CX_WARN` vector.
@@ -400,21 +401,23 @@ fields: linear-typed, non-reference fields that are cells. Each cell
 type gets a generated `drop_<tag>` function. Reference fields are
 skipped. Phase 1 skips `Str` fields, because a field's string may be
 `static` and the representation does not say which (open question 1).
+L13e frees the ones a cell provably owns (§3.6).
 
 **Allocators.** Both runtimes already have `dealloc`: the C bump/free
 list in `runtime/track_runtime.c:195` and the size classes in
-`compiler/rt/mem.trk:298`. Nothing calls them from generated code yet.
-The C free list `memset`s every reused cell, and `alloc` zeroes every
-cell. A cell from a literal has all its words written, so card L14 adds
-`alloc_nz` and drops the memset. Measurement v2 below shows this cost.
+`compiler/rt/mem.trk`. When this was written nothing called them from
+generated code; L9 and L12a free through them. `alloc` zeroes every
+cell, but a cell from a literal has all its words written, so L14 added
+`track_alloc_nz`, which skips the zeroing. Measurement v2 below shows the
+cost it removed.
 
 ### 3.4 Native backend specifics
 
-ngen keeps every value in `rax` and every temporary in a frame slot
-[observed: `ngen.trk:41-57`], so stack cells are just extra slots. Frees
-are calls to `dealloc` (`ng_call_rt`). The native-speed race is editing
-ngen and x64. The native placement cards come after that work lands and
-touch only `ng_cell` call sites and `ng_function`.
+ngen keeps every value in `rax` and temporaries in frame slots or
+registers, so stack cells are just extra slots (`ng_site_cell`). As
+built (L12a), a free is inlined (`ng_dealloc_rax`: bytes in use down,
+block onto its class's free list; large blocks call `dealloc`). See
+docs/bootstrap.md, "Native backend", for the native details.
 
 ### 3.5 Phase 2: runtime handles typed `i64`
 
@@ -558,10 +561,11 @@ cold-path list (`ng_cold_back`).
 
 ## 4. Measured motivation
 
-Machine: the shared host, loaded. Runs are medians [observed].
+This section is the baseline the design started from, at 62d8d50,
+before L1 and with the naive native backend. Machine: the shared host,
+loaded. Runs are medians [observed then].
 
-`bench/native.sh` reports user-mode megacycles. Native is the naive
-backend that the race is improving.
+`bench/native.sh` reports user-mode megacycles.
 
 ```
 prog         native      C    rust   nat/C
@@ -630,9 +634,27 @@ L13), hand-edited: wall 402 → 327 ms (−19%), faults 39k → 16k.
 L1 adds wall-ms and page-fault columns to `bench/native.sh`, so the
 scoreboard measures what this work changes.
 
+**After L1 to L15 and the native race** (`RACE_RUNS=3 bench/native.sh`
+at 8b96bb2, same loaded host) [observed]:
+
+```
+prog         native      C    rust   nat/C   faults nat/C/rust
+array_mix      315M    355M   1499M   0.89        5/62/77
+fib            318M    364M   1021M   0.87        5/61/61
+loop_arith    2638M   2844M   3237M   0.93        6/62/62
+sieve          699M    869M   1242M   0.80     7/15685/39127
+strings        166M    214M   1098M   0.78     7/2118/21966
+structs        174M    222M    443M   0.78      6/62/109496
+tokenize       573M    727M   2114M   0.79        8/65/9429
+```
+
+The Rust column is the stage 0 compiler, which frees nothing.
+
 ---
 
 ## 5. Work chart
+
+Every card in this chart has landed.
 
 Every accept includes the **self-hosting gate**:
 `scripts/bootstrap.sh` (stage1/stage2 C identical, stage2/stage3
@@ -665,6 +687,9 @@ in parallel with L3.
 ---
 
 ## 6. Open questions for the user
+
+Both were settled on the recommended default: L13 frees strings and
+handles on the origin proof alone, and warnings print by default.
 
 1. **Should freeing extend to strings and runtime handles (phase 2,
    L13)?** These are where the code holds `Str`/`i64` values that might

@@ -8,11 +8,14 @@ executable, with no C compiler and no C source in the chain. Two halves:
 - **the native backend** (x86-64 code + ELF writer), which lowers Track,
   including the five machine builtins below.
 
-Until the native backend lands, `trackc build --rt=track` proves the
-runtime half through the C backend: it links the Track runtime instead of
-the C runtime and builds with `cc -ffreestanding -nostdlib -static` (no
-libc, no `.rt.c` file). trackc built that way self-compiles to C that is
-byte-identical to trackc on the C runtime, and reaches its own fixed point.
+Both halves have landed: `trackc build --native` (`ngen.trk`, `x64.trk`,
+`elf.trk`) writes the executable itself, and `scripts/selfhost.sh` rebuilds
+trackc that way with no C toolchain reachable (docs/bootstrap.md).
+`trackc build --rt=track` still checks the runtime half on its own through
+the C backend: it links the Track runtime instead of the C runtime and
+builds with `cc -ffreestanding -nostdlib -static` (no libc, no `.rt.c`
+file). trackc built that way self-compiles to C that is byte-identical to
+trackc on the C runtime, and reaches its own fixed point.
 
 ## Machine builtins
 
@@ -40,8 +43,9 @@ calls; `store64`/`store8` must not be reordered across `syscall6`.
 | `str.trk` | `str_*`, `int_to_str`, `track_str_bytes`, `char_*`, `path_*` |
 | `vec.trk` | `vec_*`, `track_i64_collection_*`, `track_sb_*`, `track_array_*`, `array_len`, `track_bad_field`, `math_*`, `add`/`sum`/`sub` |
 | `sys.trk` | argv, `env_*`, `sys_exec`/`process_spawn` (fork + execve `/bin/sh -c` + wait4), `clock_ms`, `file_*`, `track_file_*`, `dir_exists`, `net_socket_*` |
+| `libc.trk` | `open64`, `write`, `fchmod`, `close`, `memset`: the libc names `elf.trk` calls, written in Track |
 
-All 110 functions exported by `runtime/track_runtime.c` exist in Track with
+All 114 functions exported by `runtime/track_runtime.c` exist in Track with
 the same name and word-ABI behaviour (docs/bootstrap.md, "Value model"):
 strings are NUL-terminated byte pointers; handles to collections and string
 builders point to `[data, len, cap]` records, the same layout as the C
@@ -128,8 +132,8 @@ function that emitted them.
 
 Opt-in, not always on: the table names the ~180 runtime functions in
 every program, so small programs grow by ~7 KB (hello 27,735 to 34,656
-bytes, +25%), over the 10% budget, though native trackc grows only +2.4%
-(1,506,266 to 1,542,664). Without `-g` the output is byte-identical to
+bytes, +25%), over the 10% budget, though native trackc grows only +2.6%
+(1,484,541 to 1,522,480). Without `-g` the output is byte-identical to
 before symbols existed, so selfhost stages and goldens are untouched.
 Profile with:
 

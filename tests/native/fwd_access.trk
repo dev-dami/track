@@ -1,0 +1,67 @@
+// Collection access through forwarding wrappers (`fn vget(v, i) { return
+// track_i64_collection_get(v, i); }`, chained as `cx` -> `vget`) that the
+// native backend emits as the primitive on the call's own arguments, with
+// the inner get of a nested access made before an arithmetic index and
+// constant indexes compared with the length directly. Out of range (-1,
+// len, len + huge, constants past the end) and the null handle give 0 and
+// store nothing, as the runtime does.
+fn vnew() -> i64 { return track_i64_collection_new(4); }
+fn vlen(v: i64) -> i64 { return track_i64_collection_len(v); }
+fn vpush(v: i64, x: i64) -> i64 { return track_i64_collection_push(v, x); }
+fn vget(v: i64, i: i64) -> i64 { return track_i64_collection_get(v, i); }
+fn vset(v: i64, i: i64, x: i64) -> i64 { return track_i64_collection_set(v, i, x); }
+fn cx(c: i64, slot: i64) -> i64 { return vget(c, slot); }
+
+const W = 3;
+
+fn nk(c: i64, n: i64) -> i64 { return vget(cx(c, 1), n * W); }
+fn na(c: i64, n: i64) -> i64 { return vget(cx(c, 1), n * W + 1); }
+fn far(c: i64) -> i64 { return vget(cx(c, 1), 20000000); }
+fn huge(c: i64, n: i64) -> i64 { return vget(cx(c, 1), n + 4611686018427387904); }
+
+fn main() -> void {
+    let c = vnew();
+    let nodes = vnew();
+    vpush(c, 7);
+    vpush(c, nodes);
+    let mut i: i64 = 0;
+    while i < 12 {
+        print(vpush(nodes, i * 10));
+        i = i + 1;
+    }
+    print(vlen(nodes));
+    print(nk(c, 0) + nk(c, 1) * 1000 + nk(c, 3) * 1000000);
+    print(na(c, 2));
+    print(nk(c, 4));
+    print(nk(c, 0 - 1));
+    print(na(c, 0 - 1));
+    print(huge(c, 0));
+    print(huge(c, 11));
+    print(far(c));
+    print(vget(nodes, 0) + vget(nodes, 11));
+    print(vget(nodes, 12));
+    print(vget(nodes, 0 - 1));
+    print(vget(nodes, 99999999));
+    print(vget(cx(c, 2), 0));
+    print(cx(c, 0) + cx(c, 2) + cx(0, 0));
+    print(vget(0, 3));
+    print(vlen(0));
+    print(vpush(0, 1));
+    let mut ok: i64 = 0;
+    let mut j: i64 = 0 - 2;
+    while j < 15 {
+        ok = ok + vset(nodes, j, j + 100);
+        ok = ok + vset(cx(c, 1), j * W, j);
+        j = j + 1;
+    }
+    print(ok);
+    print(vset(0, 0, 1));
+    let mut sum: i64 = 0;
+    let mut k: i64 = 0 - 3;
+    while k < 16 {
+        sum = sum * 3 + vget(cx(c, 1), k) + nk(c, k);
+        k = k + 1;
+    }
+    print(sum);
+    print(vlen(cx(c, 1)));
+}

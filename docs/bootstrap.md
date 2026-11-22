@@ -8,8 +8,8 @@ scripts/bootstrap.sh
 # ==> stage 0: yard builds compiler/ (Rust bootstrap compiler)
 # ==> stage 1: stage1 compiles compiler/src/main.trk
 # ==> stage 2: stage2 compiles compiler/src/main.trk
-# ✓ stage1 and stage2 emit identical C (18954 lines)
-# ✓ stage2 and stage3 executables are byte-identical (209880 bytes)
+# ✓ stage1 and stage2 emit identical C (72502 lines)
+# ✓ stage2 and stage3 executables are byte-identical (635080 bytes)
 ```
 
 | Stage | Compiler | Builds |
@@ -28,10 +28,14 @@ must then be byte-identical. CI runs the script on every push, and
 
 ```sh
 trackc build hello.trk -o hello     # native executable via the C compiler
+trackc build --native hello.trk -o hello     # static x86-64 ELF, no C compiler
+trackc build --native -g hello.trk -o hello  # ... with a symbol table
 trackc run hello.trk arg1 arg2      # build to a temporary file and run
 trackc check hello.trk              # parse + ownership check only
 trackc emit-c hello.trk -o hello.c  # inspect the generated C
 trackc tokens hello.trk             # token stream
+trackc life hello.trk               # inferred lifecycle summaries
+trackc life --place hello.trk       # placement of every allocation site
 ```
 
 `trackc` loads the root file and every local module it imports. Imports
@@ -52,8 +56,11 @@ built-in namespaces.
 | `loader.trk` | whole-program loading in the order the Rust checker visits modules |
 | `symbols.trk` | functions, enum/union layouts, aliases, integer constants |
 | `checker.trk` | the ownership checker |
+| `life.trk` | lifecycle summaries, errors E0211-E0214, warnings W0301-W0305, the placement plan ([lifecycles.md](lifecycles.md)) |
 | `cgen.trk` | the C99 backend |
+| `ngen.trk`, `x64.trk`, `elf.trk` | the native backend (below) |
 | `runtime_c.trk` | generated copy of `runtime/track_runtime.c` |
+| `runtime_trk.trk` | generated copy of the Track runtime, `compiler/rt/*.trk` |
 | `main.trk` | command-line driver |
 
 Every compiler table is a runtime-owned vector of 64-bit words referenced
@@ -80,13 +87,17 @@ takes and returns words:
   `[tag, payload...]`, and `match` loads the tag from the cell;
 - division by zero (and `INT64_MIN / -1`) flushes buffered stdout, then
   raises `SIGFPE` (shell status 136) under the C and the Track runtime alike
-  (native `INT64_MIN / -1` traps in hardware without the flush); `exit(n)`
+  (native `INT64_MIN / -1` traps in hardware without the flush); a
+  constant zero divisor or constant `INT64_MIN / -1` (also in enum
+  discriminants) is E0200 at compile time in both checkers; `exit(n)`
   flushes stdout and exits with `n`; shifts mask the amount to 6 bits and
   `>>` is logical; arithmetic wraps;
 - `for x in a..b` binds `a`, `a + 1`, ..., `b - 1`; `for x in arr` binds
   each element of array `arr` in order (`arr` moves into the loop; iterate
   `&arr` to keep it); an empty array runs the body zero times, and a scalar
-  iterable is a type error (count with `for i in 0..n`).
+  iterable is a type error (count with `for i in 0..n`). A range is
+  only a `for` iterator or a slice index: trackc rejects one used as a
+  value (`let r = 0..3;`) with E0200.
 
 - structs are heap cells `[tag, fields...]` with fields in declaration
   order; the tag is a hash of the struct name, so separately compiled
@@ -173,7 +184,14 @@ load. Likewise, in a loop made only of such code plus collection get, set
 and len, each never-reassigned, never-redeclared local handle has its data
 pointer and length loaded once before the loop, and each access is one
 unsigned bounds compare and a load or store (out of range: a cold stub
-giving 0). `x * (2^k -+ 1) +- y` is a shift and two adds with the `y -+ x`
+giving 0). A call of a collection forwarder, a function that passes its
+`i64` parameters unchanged to one collection get, set, len or push
+(`vget`, `vset`, ...), directly or through another forwarder, is emitted
+as that primitive on the call's own arguments (`ng_forward`); a get by a
+constant index compares it with the length directly, and a get or set
+whose handle is itself such a get (`vget(cx(c, K), n * W)`) and whose
+index is arithmetic on locals and constants computes the index first
+into `rdx`, with no push and pop around the inner get. `x * (2^k -+ 1) +- y` is a shift and two adds with the `y -+ x`
 side independent of the shift. Indexes of a never-reassigned array literal by `x & C`
 with `C` below its length skip the null and bounds checks. A `while` body that ends in
 an else-less `if` (then only assignments and calls that use none of the
@@ -221,7 +239,13 @@ the cells (anything but arithmetic or a scalar-typed read): then it is an
 ordinary call. A latch-first loop whose body declares such a cell sends
 the skipped `if` to the frees ahead of the latch, and an accumulator loop
 frees before its back edge (functions that would pass a cell to the
-recursive call keep plain recursion). The free is inlined (`ng_dealloc_rax`:
+recursive call keep plain recursion). An argument temporary the plan
+frees after the recursive call (`x + f(.., &mk(n), ..)`) is carried by
+the loop instead: it is parked in a slot zeroed before the loop, a back
+edge frees the parked cell when it stores a fresh temporary in its place
+(a pass-through keeps it), and every loop exit frees it. A return that
+lets another parameter, a local or an argument point into a parked cell
+keeps its call (cards F3, F3b). The free is inlined (`ng_dealloc_rax`:
 bytes in use down, block onto its class's free list; large blocks call
 `dealloc`), and the inlined allocator pops a freed block of 32 or 64
 bytes and zeroes its payload before it bumps the arena.
@@ -273,10 +297,10 @@ compares native and C builds of the examples.
 ```sh
 scripts/selfhost.sh
 # stage  built by                                bytes    ms  sha256
-# n1     seed (build/bootstrap/stage3/trackc)   410309    63  086fa61f8a84db56
-# n2     n1, env -i PATH=/nonexistent           410309   298  086fa61f8a84db56
-# n3     n2, env -i PATH=/nonexistent           410309   294  086fa61f8a84db56
-# n4     n3, env -i PATH=/nonexistent           410309   262  086fa61f8a84db56
+# n1     seed (build/bootstrap/stage3/trackc)  1484541   457  07c2e45109dd6957
+# n2     n1, env -i PATH=/nonexistent          1484541   202  07c2e45109dd6957
+# n3     n2, env -i PATH=/nonexistent          1484541   173  07c2e45109dd6957
+# n4     n3, env -i PATH=/nonexistent          1484541   236  07c2e45109dd6957
 # ✓ n2 = n3 = n4: Track reproduces itself from .trk with no C toolchain
 # ✓ processes started by n4 while compiling itself: 0 (strace)
 ```

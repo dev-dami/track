@@ -2,10 +2,10 @@
 
 **Track** is a low-level systems programming language designed for deterministic memory management, zero-cost abstractions, and real-time execution.
 
-- **No Garbage Collector.** Resource lifecycles are verified at compile time; there is no collector and only a small C runtime.
-- **Linear Ownership.** Eliminates use-after-free, double-free, and memory leaks.
+- **No Garbage Collector.** Resource lifecycles are verified at compile time; there is no collector and only a small runtime, in C or in Track.
+- **Linear Ownership.** Rejects use-after-free and double-free. The self-hosted compiler infers where each allocation's life ends and places it on the stack or frees it there ([docs/lifecycles.md](docs/lifecycles.md)).
 - **Lexical Lenses.** Scoped mutable access without manual pointer arithmetic or ownership transfer.
-- **Cranelift Standalone Backend.** Fast native code generation without system LLVM dynamic library dependencies.
+- **Native Backend.** `trackc build --native` writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker. The Rust bootstrap compiler uses Cranelift.
 
 ## Hello World
 
@@ -98,8 +98,10 @@ yard test
 
 ### Self-Hosted Compiler (`trackc`)
 
-Track is self-hosting: `compiler/` is the Track compiler written in Track.
-It compiles itself to a verified fixed point.
+Track is self-hosting: `compiler/` is the Track compiler written in Track
+(`compiler/src/`, plus its runtime in `compiler/rt/`). It compiles itself
+to a verified fixed point, through C or natively. The Rust compiler in
+`src/` is needed only to bootstrap from nothing.
 
 ```bash
 # Build trackc with the Rust bootstrap compiler
@@ -108,13 +110,17 @@ It compiles itself to a verified fixed point.
 compiler/target/trackc build examples/hello.trk -o hello
 compiler/target/trackc run examples/generics.trk
 compiler/target/trackc emit-c examples/hello.trk   # generated C on stdout
+compiler/target/trackc build --native examples/hello.trk -o hello  # no C compiler
 
 # Stage 0 -> 1 -> 2 -> 3, then check the fixed point
 scripts/bootstrap.sh
+# Native trackc rebuilds itself with no C toolchain on PATH (n2 = n3 = n4)
+scripts/selfhost.sh
 ```
 
 See [docs/bootstrap.md](docs/bootstrap.md) for the pipeline, the shared
-word-ABI runtime, and the C backend contract.
+word-ABI runtime, the C backend contract and the native backend, and
+[docs/native.md](docs/native.md) for the runtime written in Track.
 
 ## Testing
 
@@ -122,6 +128,8 @@ word-ABI runtime, and the C backend contract.
 cargo test                      # Rust suites, incl. the self-hosting parity tests
 (cd compiler && yard test)      # native compiler tests
 scripts/bootstrap.sh            # bootstrap fixed point
+scripts/selfhost.sh             # native fixed point, no C toolchain
+bench/native.sh                 # native vs C vs Rust scoreboard
 ```
 
 ## License
