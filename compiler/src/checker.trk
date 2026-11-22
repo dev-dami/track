@@ -1539,9 +1539,15 @@ fn check_loop_body(c: i64, n: i64, body: i64, pre: i64, long_message: bool) -> i
     return 0;
 }
 
+// Element type of `for x in iter`: the elements of an array or slice
+// (directly or through `&`), else unknown.
 fn for_elem_type(c: i64, t: i64) -> i64 {
-    if t >= 0 && (nk(c, t) == T_SLICE || nk(c, t) == T_ARRAY) {
-        return na(c, t);
+    let mut u = t;
+    if ty_is_ref(c, u) {
+        u = na(c, u);
+    }
+    if u >= 0 && (nk(c, u) == T_SLICE || nk(c, u) == T_ARRAY) {
+        return na(c, u);
     }
     return ck(c, CK_TY_UNK);
 }
@@ -2194,6 +2200,9 @@ fn check_expr(c: i64, n: i64) -> i64 {
     if k == K_FOR {
         let iter = nb(c, n);
         check_expr(c, iter);
+        if nk(c, iter) != K_RANGE && ty_known_scalar(c, infer_type(c, iter)) {
+            return cfail(c, iter, "`for` iterates over a range or an array; use `for i in 0..n` to count.");
+        }
         let elem = for_elem_type(c, infer_type(c, iter));
         let pre = snapshot(c);
         declare(c, na(c, n), elem, 0);

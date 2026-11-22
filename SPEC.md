@@ -163,6 +163,11 @@ destructuring pattern). Mutability belongs to the binding: a later
 out of scope at the end of its block. Parameters, `for` loop variables, and
 lens aliases are immutable. Assigning to an undeclared name is an error.
 
+`for x in a..b { ... }` binds `x` to `a`, `a + 1`, ..., `b - 1`.
+`for x in arr { ... }` binds `x` to each element of the array (or slice)
+`arr` in order; `arr` moves into the loop, so iterate `&arr` to keep using
+it. trackc rejects a scalar iterable (count with `for i in 0..n`).
+
 ## 11. Runtime Value Model
 
 Every value is one 64-bit word: integers and booleans directly (comparisons
@@ -172,7 +177,7 @@ pointers to word arrays, enums as their discriminant, values of unions
 with payload variants as heap cells `[tag, payload...]`, structs as
 `[name hash, fields...]`, and arrays as `[length, elements...]`. Arithmetic wraps,
 shift amounts are taken modulo 64, `>>` is logical, and integer division by
-zero traps. Both compilers share this model and the runtime in
+zero traps (stdout is flushed, then `SIGFPE`). Both compilers share this model and the runtime in
 `runtime/track_runtime.c`; see [docs/bootstrap.md](docs/bootstrap.md).
 
 ## 12. Diagnostics & Error Reporting

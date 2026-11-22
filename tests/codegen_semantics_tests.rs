@@ -26,6 +26,40 @@ fn run(name: &str, source: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// K3b: executables are PIE (ELF type ET_DYN). Non-PIE put the brk heap a
+/// random 0..32 MiB above the image, so `print(count)` sometimes found a
+/// heap string at address `count` and printed it (bench/progs/tokenize.trk
+/// printed `9036 = bar + 1814332 * (baz - 1);` for 25988585 in ~1 run in 40).
+#[test]
+fn executables_are_position_independent() {
+    let temp_dir = env::temp_dir().join(format!("track_sem_pie_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+    let src = temp_dir.join("pie.trk");
+    fs::write(&src, "fn main() -> i64 { print(25988585); return 0; }\n").unwrap();
+    let exe = build_file_in_dir(src.to_str().unwrap(), &temp_dir).unwrap();
+    let image = fs::read(&exe).unwrap();
+    let out = Command::new(&exe).output().unwrap();
+    let _ = fs::remove_dir_all(&temp_dir);
+    assert_eq!(u16::from_le_bytes([image[16], image[17]]), 3, "not a PIE");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "25988585\n");
+}
+
+/// K3b: `for x in a` binds the elements of array `a`, not 0, 1, 2, ...
+/// forever; ranges count, empty arrays skip the body, loops nest.
+#[test]
+fn for_in_binds_array_elements() {
+    let source = fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/native/for_in.trk"),
+    )
+    .unwrap();
+    let out = run("for_in", &source, &[]);
+    assert_eq!(
+        out,
+        "10\n20\n30\n3\n2\n3\n4\n10\n20\n30\n110\n120\n130\nab\ncde\n60\n11\n21\n31"
+    );
+}
+
 #[test]
 fn program_arguments_reach_os_args() {
     let out = run(

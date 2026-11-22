@@ -471,6 +471,8 @@ fn gen_call_rs(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
     let mut sym = target;
     if text_eq(name_text(c, target), "abort") {
         sym = intern(c, "track_abort");
+    } else if text_eq(name_text(c, target), "exit") {
+        sym = intern(c, "sys_exit"); // flushes stdout first, on both runtimes
     }
     let mut arity = ni(c, sym, NI_EXTERN);
     if arity < 0 {
@@ -611,18 +613,26 @@ fn gen_for(c: i64, n: i64) -> i64 {
     let iter = nb(c, n);
     let start = temp(c);
     let end = temp(c);
+    let mut arr: i64 = 0;
     if nk(c, iter) == K_RANGE {
         emit(c, text_cat3(start, " = ", text_cat(gen(c, na(c, iter)), ";")));
         emit(c, text_cat3(end, " = ", text_cat(gen(c, nb(c, iter)), ";")));
     } else {
+        // An array `[length, elements...]`: bind each element in turn.
+        arr = temp(c);
+        emit(c, text_cat3(arr, " = ", text_cat(gen(c, iter), ";")));
         emit(c, text_cat(start, " = 0;"));
-        emit(c, text_cat3(end, " = ", text_cat(gen(c, iter), ";")));
+        emit(c, text_cat3(end, " = TK_AT(", text_cat(arr, ", 0);")));
     }
     emit(c, text_cat3("while (", start, text_cat3(" < ", end, ") {")));
     indent(c, 1);
     let mark = scope_begin(c);
     let var = new_local(c, na(c, n));
-    emit(c, text_cat3(local_name(c, var), " = ", text_cat(start, ";")));
+    if arr == 0 {
+        emit(c, text_cat3(local_name(c, var), " = ", text_cat(start, ";")));
+    } else {
+        emit(c, text_cat3(local_name(c, var), " = TK_AT(", text_cat3(arr, ", ", text_cat(start, " + 1);"))));
+    }
     gen_block(c, nc(c, n));
     scope_end(c, mark);
     emit(c, text_cat3(start, " = ", text_cat(start, " + 1;")));

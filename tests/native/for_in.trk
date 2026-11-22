@@ -1,0 +1,35 @@
+// `for x in <array>` binds each element in order (`&a` borrows the array,
+// `a` moves it); `for i in a..b` counts from a up to b - 1.
+
+fn total(xs: &[i64]) -> i64 {
+    let mut t = 0;
+    for x in xs { t = t + x; }
+    return t;
+}
+
+fn main() -> i64 {
+    let a = [10, 20, 30];
+    let mut n = 0;
+    for x in &a {
+        n = n + 1;
+        if n > 5 { print(999); return 1; }
+        print(x);
+    }
+    print(array_len(&a));
+    let e: [i64] = [];
+    for x in &e { print(999); return 2; }
+    for i in 2..5 { print(i); }
+    for i in 0..2 {
+        for y in &a { print(i * 100 + y); }
+    }
+    let words = ["ab", "cde"];
+    for w in &words { print(w); }
+    print(total(&a));
+    let mut m = 0;
+    for x in a {
+        m = m + 1;
+        if m > 5 { print(999); return 3; }
+        print(x + 1);
+    }
+    return 0;
+}
