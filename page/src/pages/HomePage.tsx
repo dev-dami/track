@@ -163,7 +163,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               Native Backend, No Linker
             </h3>
             <p className="text-xs text-zinc-400 leading-relaxed font-sans">
-              trackc build --native writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker. Prefer C? trackc build compiles through generated C.
+              trackc build writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker. Track is x86-64 Linux only and holds no C or Rust.
             </p>
           </div>
         </div>

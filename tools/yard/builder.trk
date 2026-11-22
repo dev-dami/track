@@ -11,7 +11,7 @@
 //     the first failure is reported in source order;
 //   * the executable holds every module, as the Rust yard linked every
 //     object: yard writes `target/_yard_root.trk`, one `import` per module,
-//     and builds it with `trackc build --native` into `target/<package
+//     and builds it with `trackc build` into `target/<package
 //     name>`. `<src>/main.trk` must exist and holds `fn main`.
 //   * `yard check` builds the same image in a scratch directory, so check
 //     and build agree on undefined and duplicate functions.
@@ -170,7 +170,7 @@ fn link_image(trackc: i64, root: i64, files: i64, dir: i64, out: i64) -> i64 {
     }
     let errf = join(dir, "_yard_link.err");
     let tmp = text_cat(out, ".tmp");
-    let build_cmd = text_cat3(text_cat3(sq(trackc), " build --native ", sq(root_file)), " -o ", sq(tmp));
+    let build_cmd = text_cat3(text_cat3(sq(trackc), " build ", sq(root_file)), " -o ", sq(tmp));
     let cmd = text_cat3(text_cat3("cd ", sq(root), " && "), build_cmd, text_cat(" >/dev/null 2>", sq(errf)));
     let status = shell(text_cat3(cmd, " && mv -f ", text_cat3(sq(tmp), " ", sq(out))));
     let e = text_trim(read_text(errf));

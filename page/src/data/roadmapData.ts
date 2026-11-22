@@ -85,7 +85,7 @@ export const roadmapMilestones: Milestone[] = [
     title: 'Self-Hosting: trackc, yard and LSP in Track',
     status: 'completed',
     date: '2026',
-    description: 'trackc is written in Track and bootstraps from a committed C seed with only cc (scripts/bootstrap.sh). yard and trackc lsp are written in Track. The Rust stage 0 is removed.',
-    highlights: ['cc -> stage1..3 -> native trackc', 'Native stages n2 = n3 = n4 byte-identical', 'yard written in Track', 'trackc lsp written in Track'],
+    description: 'trackc is written in Track and bootstraps from a committed native seed binary with no C compiler (scripts/bootstrap.sh). yard and trackc lsp are written in Track. The Rust stage 0 and the C backend are removed; Track targets x86-64 Linux only.',
+    highlights: ['native seed -> stage1..3, stage2 = stage3', 'Native stages n2 = n3 = n4 byte-identical', 'yard written in Track', 'trackc lsp written in Track'],
   },
 ];

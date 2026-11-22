@@ -1,0 +1,86 @@
+hello
+42
+-7
+-9223372036854775808
+0xff
+0x0
+0xffffffffffffffff
+plain
+str_len = 11
+str_eq same = 1
+str_eq diff = 0
+str_concat = [foobar]
+str_find = 6
+str_find miss = -1
+str_find empty = 0
+str_contains = 1
+str_to_int = -1234
+str_to_int plus = 77
+str_is_int = 1
+str_is_int bad = 0
+int_to_str = [1234567890123]
+int_to_str 0 = [0]
+starts = 1
+ends = 1
+ends no = 0
+substr = [world]
+substr past = [lo]
+substr out = []
+trim = [padded]
+char_at = 98
+char_at out = 0
+is_digit = 1
+is_alpha = 1
+is_alnum = 0
+is_space = 1
+upper = 65
+lower = 97
+basename = [x.so]
+ext = [gz]
+ext none = []
+join = [dir/file]
+join slash = [dir//file]
+bytes len = 2
+bytes 1 = 90
+coll len = 1000
+coll 999 = 2997
+coll set = 77
+coll pop = 2997
+coll trunc = 10
+sb len = 1690
+sb str len = 1690
+sb = [after clear]
+vec len = 3
+vec get = 11
+vec pop = 30
+mem used > 0 = 1
+alloc zero = 0
+math_pow = 1594323
+math_sqrt = 31622
+math_abs = 5
+math_clamp = 10
+random = 774066261159266847
+random 2 = -4552203470196298933
+env missing = 0
+env missing value = []
+args = 1
+exec true = 3
+write = 0
+exists = 1
+size = 18
+read = [line one
+line two
+]
+read all = [line one
+line two
+]
+append = 0
+dir = 1
+dir file = 0
+remove = 0
+exists after = 0
+open missing = 0
+array_len = 4
+slice len = 2
+slice 0 = 2
+done

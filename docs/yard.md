@@ -7,7 +7,7 @@ Yard is written in Track (`tools/yard/*.trk`) and drives the self-hosted compile
 ## Building yard
 
 ```bash
-trackc build --native tools/yard/main.trk -o yard
+trackc build tools/yard/main.trk -o yard
 ```
 
 This needs no Rust toolchain and no C compiler. Put `trackc` next to the `yard` binary, or on `PATH`.
@@ -104,7 +104,7 @@ yard build
 
 Each `.trk` module in the source directory is checked on its own with `trackc check`. Its artifact is a stamp, `target/objects/<module path>.o`, holding the key it was checked under. Modules check in parallel. If any fail, yard reports the first failure in source order. Files whose name contains `_test`, and files under a `tests/` directory, are left out of the build.
 
-The executable holds every module of the package, nested ones included, as the Rust yard linked every object. A module can call a function from another module without importing it. Yard writes `target/_yard_root.trk`, with one `import "<src>/<module>"` per module. It then builds that file with `trackc build --native`, from the project root, into `target/<package name>`. A module that is also imported explicitly resolves to the same file and is loaded once. The package needs a `main.trk` holding `fn main`. Dependencies are not compiled into the image.
+The executable holds every module of the package, nested ones included, as the Rust yard linked every object. A module can call a function from another module without importing it. Yard writes `target/_yard_root.trk`, with one `import "<src>/<module>"` per module. It then builds that file with `trackc build`, from the project root, into `target/<package name>`. A module that is also imported explicitly resolves to the same file and is loaded once. The package needs a `main.trk` holding `fn main`. Dependencies are not compiled into the image.
 
 Builds are incremental. `target/.cache_meta.json` maps each source path to a hash of the yard version, the `trackc` binary (its `cksum`), every package source and that module's own text. Yard re-checks a module only when its hash changes or its stamp is missing. The image has its own entry, keyed by the same package fingerprint. An unchanged package keeps its image, and an edit to any module rebuilds it. A warm build leaves stamps and the image untouched, and it writes the same metadata, byte for byte, as a clean build does.
 

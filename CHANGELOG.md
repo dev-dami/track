@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- **All C code and the C backend.** `compiler/src/cgen.trk`,
+  `runtime_c.trk`, `runtime/track_runtime.c`, the C seed
+  (`bootstrap/seed/trackc.c`, `trackc.rt.c`), `trackc emit-c`,
+  `scripts/native_parity.sh`, `bench/race.sh` and the C/Rust benchmark
+  suite in `scratch/` are deleted. `trackc build` and `run` always write
+  static x86-64 Linux executables; `--native` and `--rt=track` are accepted
+  no-ops. Track now targets x86-64 Linux only and bootstraps from
+  `bootstrap/seed/trackc`, a committed native seed binary:
+  `scripts/bootstrap.sh` runs seed -> stage1 -> stage2 -> stage3 with no C
+  compiler and requires stage2 = stage3. `scripts/embed_rt.sh` is now
+  `scripts/embed_runtime.sh`. Tests that compared C with native or needed
+  cc/ASan are converted to goldens (`tests/cases/native_runs/`) or dropped.
 - **All Rust code.** The Rust stage 0 compiler, the Rust yard and the Rust
   LSP (`src/`), `Cargo.toml`, `Cargo.lock` and the cargo test suites
   (`tests/*.rs`) are deleted. Track builds from the C seed with

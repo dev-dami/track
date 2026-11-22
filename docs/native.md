@@ -1,28 +1,25 @@
-# Native seam: the Track runtime and what a native backend must provide
+# The native backend and the Track runtime
 
-Goal: `trackc` compiles `compiler/src/*.trk` straight to a Linux x86-64
-executable, with no C compiler and no C source in the chain. Two halves:
+`trackc` compiles `compiler/src/*.trk` straight to a Linux x86-64
+executable, with no C compiler and no C source in the chain. Track targets
+x86-64 Linux only. Two halves:
 
-- **the runtime written in Track** (`compiler/rt/*.trk`), which replaces
-  `runtime/track_runtime.c` and needs no libc;
+- **the runtime written in Track** (`compiler/rt/*.trk`), which needs no
+  libc;
 - **the native backend** (x86-64 code + ELF writer), which lowers Track,
   including the five machine builtins below.
 
-Both halves have landed: `trackc build --native` (`ngen.trk`, `x64.trk`,
-`elf.trk`) writes the executable itself, and `scripts/selfhost.sh` rebuilds
-trackc that way with no C toolchain reachable (docs/bootstrap.md).
-`trackc build --rt=track` still checks the runtime half on its own through
-the C backend: it links the Track runtime instead of the C runtime and
-builds with `cc -ffreestanding -nostdlib -static` (no libc, no `.rt.c`
-file). trackc built that way self-compiles to C that is byte-identical to
-trackc on the C runtime, and reaches its own fixed point.
+`trackc build` (`ngen.trk`, `x64.trk`, `elf.trk`) writes the executable
+itself, and `scripts/selfhost.sh` rebuilds trackc that way with no program
+reachable (docs/bootstrap.md). The C backend and the C runtime
+(`runtime/track_runtime.c`) that once stood beside them are gone (card NOC).
 
 ## Machine builtins
 
-Registered in `checker.trk` (`register_builtins`) and lowered inline in
-`cgen.trk` (`gen_raw_builtin`). Every argument and result is a word.
+Registered in `checker.trk` (`register_builtins`) and lowered inline by
+`ngen.trk`. Every argument and result is a word.
 
-| builtin | meaning | C lowering |
+| builtin | meaning | C equivalent |
 |---|---|---|
 | `syscall6(nr, a, b, c, d, e, f) -> i64` | Linux x86-64 `syscall`: `rax=nr, rdi=a, rsi=b, rdx=c, r10=d, r8=e, r9=f`; returns `rax` (negative errno on failure). Clobbers `rcx`, `r11`, memory. | inline asm `syscall` |
 | `load64(addr) -> i64` | 8-byte load | `((tk_w *)addr)[0]` |
@@ -45,20 +42,19 @@ calls; `store64`/`store8` must not be reordered across `syscall6`.
 | `sys.trk` | argv, `env_*`, `sys_exec`/`process_spawn` (fork + execve `/bin/sh -c` + wait4), `clock_ms`, `file_*`, `track_file_*`, `dir_exists`, `net_socket_*` |
 | `libc.trk` | `open64`, `write`, `fchmod`, `close`, `memset`: the libc names `elf.trk` calls, written in Track |
 
-All 114 functions exported by `runtime/track_runtime.c` exist in Track with
-the same name and word-ABI behaviour (docs/bootstrap.md, "Value model"):
-strings are NUL-terminated byte pointers; handles to collections and string
-builders point to `[data, len, cap]` records, the same layout as the C
-structs; booleans are 0/1. Deliberate differences: file handles are
-`[fd]` records and writes through them are unbuffered (the C runtime
-buffers them in stdio until exit); stdout is buffered in a 64 KiB runtime
+The runtime keeps the word-ABI behaviour of the retired C runtime
+(docs/bootstrap.md, "Value model"): strings are NUL-terminated byte
+pointers; handles to collections and string builders point to
+`[data, len, cap]` records; booleans are 0/1. File handles are `[fd]`
+records and writes through them are unbuffered; stdout is buffered in a 64 KiB runtime
 buffer and flushed when full, before any stderr write, before `sys_exec`,
 and at exit.
 
 The rt modules import nothing; trackc loads all of them after the program.
-`scripts/embed_rt.sh` embeds them into `compiler/src/runtime_trk.trk` (as
-`embed_runtime.sh` does for the C runtime); `scripts/bootstrap.sh` checks it
-is current. Edit `compiler/rt/*.trk`, then run `scripts/embed_rt.sh`.
+`scripts/embed_runtime.sh` embeds them into `compiler/src/runtime_trk.trk`;
+`scripts/embed_runtime.sh --check` fails when it is stale. Edit
+`compiler/rt/*.trk`, then run `scripts/embed_runtime.sh` and
+`scripts/update_seed.sh`.
 
 **Runtime state.** Track has no globals, so the runtime keeps its state
 (argc/argv/envp, heap bump pointer, free-list heads, stdout buffer, RNG,
@@ -89,8 +85,7 @@ The kernel enters `_start` with `rsp` 16-byte aligned and pointing at:
              auxv ...
 ```
 
-The native backend must emit (this is exactly what the C backend emits in
-`--rt=track` mode, `cgen.trk: track_runtime_entry`):
+The native backend emits:
 
 ```
 _start:
@@ -107,17 +102,14 @@ calls the program's `main()`, flushes stdout, and exits with `exit_group`
 and main's result. Calls follow the System V convention for word
 arguments (`rdi, rsi, rdx, rcx, r8, r9`, result in `rax`).
 
-In the C backend the runtime functions are Track functions (`tk_alloc`);
-runtime names the emitter calls directly (`alloc`, `track_alloc_nz` for
+Runtime names the emitter calls directly (`alloc`, `track_alloc_nz` for
 struct, tuple, array and union cells, `track_array_get/set/slice`,
-`track_words_copy`, `track_bad_field`,
-`track_trap_div`, `track_abort` for `abort`) are emitted as
-`__attribute__((alias))` symbols. A native backend can simply resolve those
-names to the Track functions.
+`track_words_copy`, `track_bad_field`, `track_trap_div`, `track_abort` for
+`abort`) resolve to the Track functions.
 
 ## Symbols (`.symtab`)
 
-`trackc build --native -g` (or `--symbols`) adds an ELF symbol table, so
+`trackc build -g` (or `--symbols`) adds an ELF symbol table, so
 `nm`, `objdump -d`, `perf report` and `gdb` show function names. The
 PT_LOAD segment and every loaded byte are the same as without the flag;
 after them `elf.trk` appends `.symtab`, `.strtab`, `.shstrtab` and six section headers (null,
@@ -138,17 +130,17 @@ before symbols existed, so selfhost stages and goldens are untouched.
 Profile with:
 
 ```
-trackc build --native -g compiler/src/main.trk -o /tmp/tc
-perf record /tmp/tc build --native compiler/src/main.trk -o /tmp/out
+trackc build -g compiler/src/main.trk -o /tmp/tc
+perf record /tmp/tc build compiler/src/main.trk -o /tmp/out
 perf report --stdio
 ```
 
 ## Runtime calls trackc itself makes
 
-From the generated C of `compiler/src/main.trk` (calls in code, not in the
-embedded runtime text), the runtime surface the compiler needs:
+The runtime surface the compiler needs (calls in code, not in the
+embedded runtime text):
 
-- emitted by cgen: `alloc`, `track_alloc_nz`, `track_array_get`, `track_array_set`,
+- emitted by ngen: `alloc`, `track_alloc_nz`, `track_array_get`, `track_array_set`,
   `track_array_slice`, `track_words_copy`, `track_bad_field`,
   `track_trap_div`, `track_abort`;
 - called through `base.trk`/`main.trk`: `track_i64_collection_{new,len,push,get,set,pop,truncate}`,
@@ -157,4 +149,4 @@ embedded runtime text), the runtime surface the compiler needs:
   `track_out`, `track_err`, `track_file_read`, `track_file_write_all`,
   `file_exists`, `file_remove`, `sys_exec`, `sys_exit`, `os_args_count`,
   `os_arg`, `env_get`, `env_exists`, `clock_ms`;
-- entry: `track_runtime_init` (C runtime) / `rt_start` (Track runtime).
+- entry: `rt_start`.

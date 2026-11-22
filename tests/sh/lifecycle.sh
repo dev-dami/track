@@ -70,35 +70,13 @@ $1" ;; esac ;;
     done <<<"$1"
 }
 
-# asan_cc: gcc builds an AddressSanitizer program (the Rust probe: compile
-# only, from stdin).
-asan_cc() {
-    printf 'int main(void){return 0;}' | gcc -fsanitize=address -x c - -o "$T/probe" >/dev/null 2>&1
-}
-
-# asan_run REL LEAKS NEEDLE: build REL with CC="gcc -fsanitize=address -g"
-# (private cache), run it with ASAN_OPTIONS=LEAKS; it must exit 0 and its
-# stderr must not contain NEEDLE.
-asan_run() {
-    local rel=$1 exe
-    exe="$T/$(stem "$rel")_asan"
-    in_repo env CC="gcc -fsanitize=address -g" TRACKC_CACHE="$T/asan-cache" "$TRACKC" build "$rel" -o "$exe"
-    rc_ok "$rel: ASan build failed"
-    in_repo env ASAN_OPTIONS="$2" "$exe"
-    rc_ok "$rel: ASan run ($2)"
-    lacks "$ERR" "$3" "$rel: ASan reports an error or a leak"
-}
-
-# c_and_native DIR STEM: build tests/DIR/STEM.trk with both backends; each
-# prints tests/DIR/STEM.out and exits 0.
-c_and_native() {
+# build_golden DIR STEM: build tests/DIR/STEM.trk; it prints
+# tests/DIR/STEM.out and exits 0.
+build_golden() {
     local rel="tests/$1/$2.trk" want="$ROOT/tests/$1/$2.out"
     in_repo "$TRACKC" build "$rel" -o "$T/$2"
     rc_ok "$rel: build failed"
-    run_want "$T/$2" "$want" "$rel: C output differs"
-    in_repo "$TRACKC" build --native "$rel" -o "$T/$2_nat"
-    rc_ok "$rel: native build failed"
-    run_want "$T/$2_nat" "$want" "$rel: native output differs"
+    run_want "$T/$2" "$want" "$rel: output differs"
 }
 
 t_life_dumps_match_goldens() {
@@ -142,9 +120,6 @@ t_stack_cells_run_and_plan() {
         in_repo "$TRACKC" build "$rel" -o "$T/$s"
         rc_ok "$rel: build failed"
         run_want "$T/$s" "$ROOT/tests/stack/$s.out" "$rel: output differs"
-        if [ "$s" != escapes ]; then
-            grep -qF 'tk_w s0[' "$T/$s.c" || fail "$rel: no stack slot in emitted C"
-        fi
         plan "$rel"
         golden "$T/plan.got" "$ROOT/tests/stack/$s.place" "$rel: placement plan"
     done
@@ -169,7 +144,6 @@ t_autofree_frees_heap_cells() {
         in_repo "$TRACKC" build "$rel" -o "$T/$s"
         rc_ok "$rel: build failed"
         run_want "$T/$s" "$ROOT/tests/autofree/$s.out" "$rel: output differs"
-        grep -qF 'dealloc(l' "$T/$s.c" || fail "$rel: no free in emitted C"
         plan "$rel"
         golden "$T/plan.got" "$ROOT/tests/autofree/$s.place" "$rel: placement plan"
     done
@@ -182,31 +156,15 @@ L22 struct heap-autofree deep ends L27|a nested literal reassigned fresh cells r
 L7 struct heap ends -|a returned cell is never freed
 L13 struct heap ends -|a cell stored into a returned cell is never freed
 LINES
-    asan_cc || skip "gcc has no AddressSanitizer"
-    for s in $stems; do
-        asan_run "tests/autofree/$s.trk" detect_leaks=0 AddressSanitizer
-    done
 }
 
 t_handles_free_fresh_values() {
-    local stems="builder coll_kept coll_local coll_move int_loop str_kept str_local" s rel prog free kept plans moved
+    local stems="builder coll_kept coll_local coll_move int_loop str_kept str_local" s rel prog kept plans moved
     for s in $stems; do
         rel="tests/handles/$s.trk"
-        c_and_native handles "$s"
+        build_golden handles "$s"
         plan "$rel"
         golden "$T/plan.got" "$ROOT/tests/handles/$s.place" "$rel: placement plan"
-        while read -r prog free; do
-            if [ "$prog" = "$s" ]; then
-                grep -qF "$free" "$T/$s.c" || fail "$rel: no \`$free\` in emitted C"
-            fi
-        done <<'FREES'
-str_local track_str_free(l
-int_loop track_str_free(l
-builder track_sb_free(l
-builder track_str_free(l
-coll_local track_i64_collection_free(l
-coll_local vec_free(l
-FREES
     done
     plans=$(plans_text)
     # coll_move (card L15): only `rows` moves a fresh row into `prev` as
@@ -234,17 +192,13 @@ str_kept|L14 str
 coll_kept|L7
 coll_kept|L11
 KEPT
-    asan_cc || skip "gcc has no AddressSanitizer"
-    for s in $stems; do
-        asan_run "tests/handles/$s.trk" detect_leaks=0 AddressSanitizer
-    done
 }
 
 t_temps_free_fresh_temporaries() {
     local stems="alias discard kept nested print_loop" s rel plans prog line n why kept leaks
     for s in $stems; do
         rel="tests/temps/$s.trk"
-        c_and_native temps "$s"
+        build_golden temps "$s"
         plan "$rel"
         golden "$T/plan.got" "$ROOT/tests/temps/$s.place" "$rel: placement plan"
     done
@@ -264,11 +218,6 @@ COUNTS
 kept|L11
 alias|temp-autofree
 KEPT
-    asan_cc || skip "gcc has no AddressSanitizer"
-    for s in $stems; do
-        case "$s" in discard | nested | print_loop) leaks=detect_leaks=1 ;; *) leaks=detect_leaks=0 ;; esac
-        asan_run "tests/temps/$s.trk" "$leaks" Sanitizer
-    done
 }
 
 t_temps_free_fresh_cell_temporaries() {
@@ -276,7 +225,7 @@ t_temps_free_fresh_cell_temporaries() {
     local s rel plans b leaks
     for s in $stems; do
         rel="tests/temps_cell/$s.trk"
-        c_and_native temps_cell "$s"
+        build_golden temps_cell "$s"
         plan "$rel"
         golden "$T/plan.got" "$ROOT/tests/temps_cell/$s.place" "$rel: placement plan"
     done
@@ -298,7 +247,7 @@ L21 call temp-autofree deep ends L21|str_alias
 LINES
     # Card F3: accumulator recursion with temporary arguments stays a loop
     # natively; a million levels deep would overflow as real calls.
-    in_repo "$TRACKC" build --native tests/temps_cell/accdeep.trk -o "$T/accdeep_nat"
+    in_repo "$TRACKC" build tests/temps_cell/accdeep.trk -o "$T/accdeep_nat"
     rc_ok "accdeep: native build failed"
     run_want "$T/accdeep_nat" "$ROOT/tests/temps_cell/accdeep.out" "accdeep: native output"
     eq "$(count "$(block "$plans" nested)" "call temp-autofree deep")" 3 "every nested fresh cell is freed"
@@ -307,23 +256,13 @@ LINES
         lacks "$b" temp-autofree "$s: a cell that is kept or aliased must stay on the heap"
         lacks "$b" stack "$s: a cell that is kept or aliased must stay on the heap"
     done
-    asan_cc || skip "gcc has no AddressSanitizer"
-    for s in $stems; do
-        # str_alias keeps `keep.name` alive to the end of main and drop glue
-        # never frees Str, so it is checked for errors, not leaks.
-        case "$s" in
-            nested | print_loop | branch | discard | str_cell | tailr | accret | accloop) leaks=detect_leaks=1 ;;
-            *) leaks=detect_leaks=0 ;;
-        esac
-        asan_run "tests/temps_cell/$s.trk" "$leaks" Sanitizer
-    done
 }
 
 t_strfield_frees_owned_str_fields() {
     local stems="alias keep literal local moved movelocal param result temp" s rel got leaks
     for s in $stems; do
         rel="tests/strfield/$s.trk"
-        c_and_native strfield "$s"
+        build_golden strfield "$s"
         in_repo "$TRACKC" life --place "$rel"
         cp "$T/.out" "$T/plan.got"
         golden "$T/plan.got" "$ROOT/tests/strfield/$s.place" "$rel: placement plan"
@@ -335,11 +274,6 @@ t_strfield_frees_owned_str_fields() {
                 lacks "${got%%fn main*}" " strs " "param: callee frees a parameter's Str" ;;
             *) lacks "$got" " strs " "$s: a Str field it does not own is freed" ;;
         esac
-    done
-    asan_cc || skip "gcc has no AddressSanitizer"
-    for s in $stems; do
-        case "$s" in temp | local | literal | result | movelocal) leaks=detect_leaks=1 ;; *) leaks=detect_leaks=0 ;; esac
-        asan_run "tests/strfield/$s.trk" "$leaks" Sanitizer
     done
 }
 
@@ -353,15 +287,11 @@ glue_hidden|temp-autofree
 retslot_hidden|ret-slot'
     while IFS='|' read -r s banned; do
         rel="tests/returns/$s.trk"
-        c_and_native returns "$s"
+        build_golden returns "$s"
         in_repo "$TRACKC" life --place "$rel"
         rc_ok "$rel: life --place failed"
         [ -s "$T/.out" ] || fail "$rel: life --place printed nothing"
         lacks "$OUT" "$banned" "$rel: a hidden return rules out \`$banned\`"
-    done <<<"$cases"
-    asan_cc || skip "gcc has no AddressSanitizer"
-    while IFS='|' read -r s banned; do
-        asan_run "tests/returns/$s.trk" detect_leaks=0 Sanitizer
     done <<<"$cases"
 }
 
@@ -372,7 +302,6 @@ t_ret_slots_write_caller_cells() {
         in_repo "$TRACKC" build "$rel" -o "$T/$s"
         rc_ok "$rel: build failed"
         run_want "$T/$s" "$ROOT/tests/retslot/$s.out" "$rel: output differs"
-        grep -qF '__rs(' "$T/$s.c" || fail "$rel: no ret-slot entry in emitted C"
         plan "$rel"
         golden "$T/plan.got" "$ROOT/tests/retslot/$s.place" "$rel: placement plan"
     done
@@ -389,10 +318,6 @@ L10 call stack ends L11|a recursive ret-slot call writes a slot of its caller's 
 L18 call ret-slot ends L18|a `return f(..)` passes the caller's slot through
 L18 call stack ends L19|the outer call of `f(g(x))` writes a stack slot
 LINES
-    asan_cc || skip "gcc has no AddressSanitizer"
-    for s in $stems; do
-        asan_run "tests/retslot/$s.trk" detect_leaks=0 AddressSanitizer
-    done
 }
 
 # K3a: a user program may define any name a runtime uses internally.
@@ -408,20 +333,20 @@ t_user_names_never_clash_with_runtime_names() {
             run_want "$exe" "$ROOT/$s.out" "$s.trk $mode: output differs"
         done
     done <<'CASES'
-tests/names/rt_clash|c --rt=track --native
-tests/stack/read_only|--native
-tests/autofree/die_param|--native
+tests/names/rt_clash|c
+tests/stack/read_only|c
+tests/autofree/die_param|c
 CASES
 }
 
-# A user `RT_BASE` (and friends) under --native is E0201, not a segfault.
+# A user `RT_BASE` (and friends) is E0201, not a segfault.
 t_runtime_layout_consts_stay_reserved() {
     local name
     for name in RT_BASE RS_USED RS_HEAP RS_LIMIT RS_HEAP_END RS_FREE; do
         printf 'const %s = 5;\nstruct P { x: i64 }\nfn mk(i: i64) -> P { return P { x: i }; }\nfn main() -> i64 { let p = mk(3); print(p.x); return 0; }\n' "$name" >"$T/$name.trk"
-        trackc build --native "$name.trk" -o "$T/$name"
-        rc_fail "$name: user const accepted under --native"
-        has "$ERR" E0201 "$name: user const accepted under --native"
+        trackc build "$name.trk" -o "$T/$name"
+        rc_fail "$name: user const accepted"
+        has "$ERR" E0201 "$name: user const accepted"
     done
 }
 
@@ -460,66 +385,29 @@ BAD
     rc_ok "string + int rejected"
 }
 
-# build_both_rt STEM SRC: build SRC with the C and the Track runtime into
-# $T/STEM_crt and $T/STEM_trt (trackc runs in $T, as run_under_both_runtimes).
-build_both_rt() {
-    trackc build "$2" -o "$T/$1_crt"
-    rc_ok "$1: build failed"
-    trackc build --rt=track "$2" -o "$T/$1_trt"
-    rc_ok "$1: --rt=track build failed"
-}
-
-# K3b: for-in, exit(3) and a division trap keep what was printed on both
-# runtimes; a scalar iterable and a range value are type errors.
-t_for_in_exit_and_div_trap_on_both_runtimes() {
+# K3b: for-in, exit(3) and a division trap keep what was printed; a
+# scalar iterable and a range value are type errors.
+t_for_in_exit_and_div_trap_keep_output() {
     local exe
-    build_both_rt for_in "$ROOT/tests/native/for_in.trk"
-    for exe in for_in_crt for_in_trt; do
-        observe "$T/$exe"
-        stdout_is '10\n20\n30\n3\n2\n3\n4\n10\n20\n30\n110\n120\n130\nab\ncde\n60\n11\n21\n31\n' "$exe"
-        rc_is 0 "$exe"
+    for exe in for_in exit_flush divzero_flush; do
+        build "$ROOT/tests/native/$exe.trk" "$T/$exe"
     done
-    build_both_rt exit_flush "$ROOT/tests/native/exit_flush.trk"
-    for exe in exit_flush_crt exit_flush_trt; do
-        observe "$T/$exe"
-        stdout_is '1\n' "$exe"
-        rc_is 3 "$exe"
-    done
-    build_both_rt divzero_flush "$ROOT/tests/native/divzero_flush.trk"
-    for exe in divzero_flush_crt divzero_flush_trt; do
-        observe "$T/$exe"
-        stdout_is '1\n' "$exe: output lost on SIGFPE"
-        rc_is 136 "$exe: SIGFPE"
-    done
+    observe "$T/for_in"
+    stdout_is '10\n20\n30\n3\n2\n3\n4\n10\n20\n30\n110\n120\n130\nab\ncde\n60\n11\n21\n31\n' for_in
+    rc_is 0 for_in
+    observe "$T/exit_flush"
+    stdout_is '1\n' exit_flush
+    rc_is 3 exit_flush
+    observe "$T/divzero_flush"
+    stdout_is '1\n' "divzero_flush: output lost on SIGFPE"
+    rc_is 136 "divzero_flush: SIGFPE"
     write "$T/forint.trk" $'fn main() -> i64 { let n = 3; for i in n { print(i); } return 0; }\n'
     trackc check forint.trk
     rc_fail "for over an integer accepted"
     has "$ERR" '`for` iterates over a range or an array' "for over an integer accepted"
-    # F3: a range bound as a value segfaulted on both backends; it is E0200.
+    # F3: a range bound as a value segfaulted; it is E0200.
     write "$T/rangeval.trk" $'fn main() -> void { let r = (0-1)..3; for i in r { print(i); } }\n'
     trackc check rangeval.trk
     rc_fail "range bound as a value accepted"
     has "$ERR" 'A range `a..b` is not a value' "range bound as a value accepted"
-}
-
-# K3c: INT64_MIN / -1 (and % -1) flushes, then SIGFPE, on every backend.
-t_int64_min_div_minus_one_flushes_on_every_backend() {
-    local s want mode exe
-    while IFS='|' read -r s want; do
-        for mode in c --rt=track --native; do
-            exe="$T/$s$(printf '%s' "$mode" | tr -- '-=' '__')"
-            if [ "$mode" = c ]; then
-                trackc build "$ROOT/tests/native/$s.trk" -o "$exe"
-            else
-                trackc build "$mode" "$ROOT/tests/native/$s.trk" -o "$exe"
-            fi
-            rc_ok "$s $mode: build failed"
-            observe "$exe"
-            stdout_is "$want" "$s $mode: output lost"
-            rc_is 136 "$s $mode: wrong signal"
-        done
-    done <<'CASES'
-divmin_flush|-7\n0\n-9223372036854775807\n
-divmin_mod_flush|0\n
-CASES
 }

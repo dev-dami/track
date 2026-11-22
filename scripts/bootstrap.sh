@@ -1,31 +1,27 @@
 #!/bin/sh
 # Bootstrap the self-hosted Track compiler and verify the fixed point.
 #
-#   stage 0  cc builds the committed C seed (bootstrap/seed/) -> stage1 trackc
-#   stage 1  stage1 compiles compiler/src/main.trk     -> stage2 trackc
-#   stage 2  stage2 compiles compiler/src/main.trk     -> stage3 trackc
-#   native   scripts/selfhost.sh with stage3 as its seed: n2 = n3 = n4
+#   seed     bootstrap/seed/trackc, a committed static x86-64 Linux ELF
+#            (the fixed-point trackc), compiles compiler/src/main.trk -> stage1
+#   stage1   compiles compiler/src/main.trk                           -> stage2
+#   stage2   compiles compiler/src/main.trk                           -> stage3
 #
-# The gate: stage2 and stage3 C are byte-identical, the stage2 and stage3
-# executables are byte-identical, and the native stages reproduce
-# themselves. The default path needs only a C compiler ($CC, default cc)
-# and POSIX tools.
+# Every stage runs under `env -i PATH=/nonexistent`: no C compiler,
+# assembler, linker or any other program is reachable. The gate: stage2 and
+# stage3 are byte-identical. Needs only POSIX sh, cmp and wc on x86-64 Linux.
 #
-#   scripts/bootstrap.sh               # from the C seed
-#   scripts/bootstrap.sh --no-native   # skip the native fixed point
-#   (--from-seed is accepted for old callers; the seed is the only route)
+#   scripts/bootstrap.sh
+#   (--no-native and --from-seed are accepted for old callers; no-ops)
 #
-# Artifacts go to build/bootstrap/ (override with BOOTSTRAP_DIR); the native
-# stages go to $BOOTSTRAP_DIR/selfhost unless SELFHOST_DIR is set.
+# Artifacts go to build/bootstrap/ (override with BOOTSTRAP_DIR); the
+# result is build/bootstrap/stage3/trackc.
 set -eu
 
-native=1
 for arg in "$@"; do
     case "$arg" in
-        --from-seed) ;;
-        --no-native) native=0 ;;
-        -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "usage: $0 [--no-native] [--from-seed]" >&2; exit 2 ;;
+        --from-seed|--no-native) ;;
+        -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "usage: $0" >&2; exit 2 ;;
     esac
 done
 
@@ -35,65 +31,38 @@ case "$out" in
     /*) ;;
     *) out="$(pwd)/$out" ;;
 esac
-seed="$root/bootstrap/seed"
-cc=${CC:-cc}
-# The flags trackc itself passes to the C compiler (cc_flags in main.trk).
-cflags="-std=gnu99 -O2 -fwrapv -fno-strict-aliasing -fno-builtin -w"
+seed="$root/bootstrap/seed/trackc"
 
-"$root/scripts/embed_runtime.sh" --check
-"$root/scripts/embed_rt.sh" --check
-
+[ -f "$seed" ] || { echo "bootstrap: missing bootstrap/seed/trackc" >&2; exit 1; }
 rm -rf "$out"
-mkdir -p "$out/stage1" "$out/stage2" "$out/stage3"
-# A private runtime-object cache per run: every stage links the runtime the
-# same way, and concurrent bootstraps cannot race on a shared cache.
-TRACKC_CACHE="$out/cache"
-export TRACKC_CACHE
-
-for f in trackc.c trackc.rt.c; do
-    [ -f "$seed/$f" ] || { echo "bootstrap: missing bootstrap/seed/$f" >&2; exit 1; }
-done
-# CC may be a launcher command (`ccache cc`): check its first word only.
-command -v "${cc%% *}" >/dev/null 2>&1 || { echo "bootstrap: C compiler '$cc' not found" >&2; exit 1; }
-echo "==> stage 0: $cc builds the C seed (bootstrap/seed/, $(wc -l < "$seed/trackc.c") lines)"
-cp "$seed/trackc.c" "$seed/trackc.rt.c" "$out/stage1/"
-# Compile inside the stage directory with trackc's own base names, the
-# same way trackc links its output.
-(cd "$out/stage1" && $cc $cflags -o trackc trackc.c trackc.rt.c)
+mkdir -p "$out/seed" "$out/stage1" "$out/stage2" "$out/stage3"
+# A fresh, executable copy: git may check the seed out without its mode bit.
+cp "$seed" "$out/seed/trackc"
+chmod +x "$out/seed/trackc"
 
 # Every stage compiles the same sources from the repository root, so the
 # loader resolves identical module paths at every stage.
 cd "$root"
-echo "==> stage 1: stage1 compiles compiler/src/main.trk"
-"$out/stage1/trackc" build compiler/src/main.trk -o "$out/stage2/trackc" >/dev/null
-echo "==> stage 2: stage2 compiles compiler/src/main.trk"
-"$out/stage2/trackc" build compiler/src/main.trk -o "$out/stage3/trackc" >/dev/null
+prev="$out/seed/trackc"
+for s in stage1 stage2 stage3; do
+    echo "==> $s: $(basename "$(dirname "$prev")") compiles compiler/src/main.trk"
+    env -i PATH=/nonexistent "$prev" build --native compiler/src/main.trk -o "$out/$s/trackc" >/dev/null
+    prev="$out/$s/trackc"
+done
 
 status=0
-if cmp -s "$out/stage2/trackc.c" "$out/stage3/trackc.c"; then
-    echo "✓ stage1 and stage2 emit identical C ($(wc -l < "$out/stage2/trackc.c") lines)"
-else
-    echo "✗ stage1 and stage2 emitted different C" >&2
-    status=1
-fi
 if cmp -s "$out/stage2/trackc" "$out/stage3/trackc"; then
-    echo "✓ stage2 and stage3 executables are byte-identical ($(wc -c < "$out/stage2/trackc") bytes)"
+    echo "✓ stage2 and stage3 are byte-identical ($(wc -c < "$out/stage3/trackc") bytes)"
 else
-    echo "✗ stage2 and stage3 executables differ" >&2
+    echo "✗ stage2 and stage3 differ" >&2
     status=1
 fi
 # The seed only has to be able to build the current compiler; a stale seed
 # is reported here and gated by scripts/update_seed.sh --check.
-if cmp -s "$out/stage3/trackc.c" "$seed/trackc.c" && cmp -s "$out/stage3/trackc.rt.c" "$seed/trackc.rt.c"; then
-    echo "✓ bootstrap/seed/ matches the fixed-point C"
+if cmp -s "$out/stage3/trackc" "$seed"; then
+    echo "✓ bootstrap/seed/trackc matches the fixed point"
 else
-    echo "! bootstrap/seed/ differs from the fixed-point C; run scripts/update_seed.sh"
+    echo "! bootstrap/seed/trackc differs from the fixed point; run scripts/update_seed.sh"
 fi
 "$out/stage3/trackc" --version
-[ "$status" -eq 0 ] || exit "$status"
-
-if [ "$native" -eq 1 ]; then
-    echo "==> native: scripts/selfhost.sh, seeded by stage3"
-    SELFHOST_DIR=${SELFHOST_DIR:-"$out/selfhost"} BOOTSTRAP_DIR="$out" \
-        "$root/scripts/selfhost.sh" "$out/stage3/trackc"
-fi
+exit "$status"

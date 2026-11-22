@@ -8,22 +8,23 @@ on:
 
 jobs:
   build:
-    # Track from the committed C seed: cc and POSIX tools only.
+    # Track from the committed native seed (bootstrap/seed/trackc, a static
+    # x86-64 Linux ELF): no C compiler, assembler, linker or Rust toolchain.
     runs-on: ubuntu-latest
     env:
       TRACKC: ${{ github.workspace }}/build/bootstrap/stage3/trackc
     steps:
       - uses: actions/checkout@v4
 
-      - name: No Rust toolchain on PATH
+      - name: Bootstrap from bootstrap/seed/trackc (seed -> stage1 -> stage2 = stage3)
+        # Only the tools bootstrap.sh uses are on PATH; every stage runs
+        # under env -i PATH=/nonexistent.
         run: |
-          if env PATH=/usr/bin:/bin sh -c 'command -v cargo || command -v rustc'; then
-            echo "cargo or rustc is reachable"; exit 1
-          fi
-          echo "✓ no cargo or rustc on PATH=/usr/bin:/bin"
-
-      - name: Bootstrap from bootstrap/seed (cc -> stage1 -> stage3, then native)
-        run: env PATH=/usr/bin:/bin scripts/bootstrap.sh
+          mkdir -p /tmp/bootstrap-bin
+          for t in sh cp chmod mkdir rm cmp wc basename dirname env sed; do
+            ln -sf "$(command -v "$t")" /tmp/bootstrap-bin/"$t"
+          done
+          env -i PATH=/tmp/bootstrap-bin HOME="$HOME" scripts/bootstrap.sh
 
       - name: Seed is up to date
         run: env PATH=/usr/bin:/bin scripts/update_seed.sh --check
@@ -39,7 +40,7 @@ jobs:
             env PATH=/usr/bin:/bin "$TRACKC" check "$f" || { echo "check failed: $f"; exit 1; }
           done
           mkdir -p build
-          env PATH=/usr/bin:/bin "$TRACKC" build --native tools/yard/main.trk -o build/yard
+          env PATH=/usr/bin:/bin "$TRACKC" build tools/yard/main.trk -o build/yard
           (cd compiler && env PATH=/usr/bin:/bin TRACKC="$TRACKC" ../build/yard check)
           (cd compiler && env PATH=/usr/bin:/bin TRACKC="$TRACKC" ../build/yard build)
 
@@ -52,27 +53,36 @@ jobs:
       - name: trackc lsp passes its recorded sessions
         run: env PATH=/usr/bin:/bin tests/lsp/run.sh "$TRACKC"
 
-      - name: Self-hosting from .trk alone (native, no C toolchain)
+      - name: Self-hosting from .trk alone (n2 = n3 = n4, nothing on PATH)
         run: env PATH=/usr/bin:/bin scripts/selfhost.sh "$TRACKC"
 
-      - name: Check examples
+      - name: Examples build, run and match their goldens
         run: |
+          hb=0
+          [ -f /etc/hostname ] && hb=$(wc -c </etc/hostname | tr -d ' ')
+          mkdir -p build/examples
           for f in examples/*.trk; do
-            if [[ "$f" == *"_err.trk" ]]; then
+            s=$(basename "$f" .trk)
+            if [[ "$s" == *_err ]]; then
               if env PATH=/usr/bin:/bin "$TRACKC" check "$f" >/dev/null 2>&1; then
-                echo "Error: expected rejection for $f but check succeeded"
-                exit 1
+                echo "Error: expected rejection for $f but check succeeded"; exit 1
               fi
               echo "✓ rejected $f"
-            else
-              env PATH=/usr/bin:/bin "$TRACKC" check "$f"
+              continue
             fi
+            env PATH=/usr/bin:/bin "$TRACKC" build "$f" -o "build/examples/$s" >/dev/null
+            set +e
+            env PATH=/usr/bin:/bin "build/examples/$s" >"build/examples/$s.out" 2>/dev/null
+            rc=$?
+            set -e
+            sed "s/@HOSTNAME_BYTES@/$hb/" "tests/cases/examples/$s.out" | cmp -s - "build/examples/$s.out" \
+              || { echo "✗ $s: output differs"; exit 1; }
+            [ "$rc" = "$(cat "tests/cases/examples/$s.code")" ] || { echo "✗ $s: exit $rc"; exit 1; }
+            echo "✓ $s"
           done
 
       - name: Verify versions
         run: |
-          mkdir -p build
-          env PATH=/usr/bin:/bin "$TRACKC" build --native tools/yard/main.trk -o build/yard >/dev/null
           "$TRACKC" --version | grep -q "1.0.0"
           build/yard --version | grep -q "1.0.0"
           echo "✓ versions ok"

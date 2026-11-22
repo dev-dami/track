@@ -1,4 +1,4 @@
-// Checker and C emitter on in-memory programs. Rejections exit the
+// Checker and symbol tables on in-memory programs. Rejections exit the
 // process, so they are covered by tests/run.sh (tests/sh/selfhost.sh);
 // here every program must be accepted.
 
@@ -6,7 +6,6 @@ import "base";
 import "ast";
 import "symbols";
 import "checker";
-import "cgen";
 import "testing";
 
 fn compile_text(text: i64) -> i64 {
@@ -25,10 +24,6 @@ fn compile_text(text: i64) -> i64 {
     return c;
 }
 
-fn contains(haystack: i64, needle: i64) -> bool {
-    return str_contains(haystack, needle) != 0;
-}
-
 fn test_constants_and_enums_are_evaluated() -> i64 {
     let c = compile_text("const A = 4; const B = A * 2 + 1; enum E { X = 5, Y, Z = 10 } fn main() -> void { print(B); }");
     expect_i64(ni(c, intern(c, "B"), NI_CONSTVAL), 9, "constant arithmetic");
@@ -43,43 +38,18 @@ fn test_inference_tracks_copy_types() -> i64 {
     return 0;
 }
 
-fn test_emitted_c_shape() -> i64 {
-    let c = compile_text("union V { I(i64), N } fn add(a: i64, b: i64) -> i64 { return a + b; } fn main() -> void { let v = V::I(add(1, 2)); match v { V::I(x) => print(x), _ => print(0), } }");
-    let code = generate_c(c);
-    expect_true(contains(code, "tk_w tk_add(tk_w a0, tk_w a1) {"), "function signature");
-    expect_true(contains(code, "return (l0 + l1);"), "arithmetic return");
-    expect_true(contains(code, "tk_w s0[2];"), "a payload variant only matched is a stack cell");
-    expect_true(contains(code, "s0[0] = t"), "tag in word 0 of the slot");
-    expect_true(contains(code, "(TK_AT(t"), "match loads the tag");
-    expect_true(contains(code, "int main(int argc, char **argv) {"), "C entry point");
-    return 0;
-}
-
-fn test_structs_and_arrays_lower_to_cells() -> i64 {
+fn test_struct_tags_and_shared_fields() -> i64 {
     let c = compile_text("struct P { x: i64, y: i64 } struct Q { y: i64 } fn mk() -> P { let mut p = P { y: 2, x: 1 }; p.x = 3; return p; } fn main() -> void { let q = mk(); print(q.y); let a = [4, 5]; print(a[1]); }");
     let tag = struct_tag(c, intern(c, "P"));
     expect_true(tag == text_hash("P"), "struct tag is the name hash");
     expect_i64(vlen(field_candidates(c, intern(c, "y"))), 4, "two structs declare y");
-    let code = generate_c(c);
-    expect_true(contains(code, text_cat3("TK_AT(t0, 0) = ", text_of_int(tag), ";")), "tag in word 0");
-    expect_true(contains(code, "TK_AT(t0, 1) = 1;"), "fields in declaration order");
-    expect_true(contains(code, "track_bad_field()"), "shared field name dispatches on the tag");
-    expect_true(contains(code, "track_array_get("), "bounds-checked indexing");
-    expect_true(contains(code, "tk_w s0[3];"), "an array only indexed is a stack cell");
-    return 0;
-}
-
-fn test_string_literals_are_escaped() -> i64 {
-    expect_text(c_string("a\"b\\c?\n"), "TK_S(\"a\\\"b\\\\c\\?\\n\")", "C escapes");
     return 0;
 }
 
 fn main() -> i64 {
     test_constants_and_enums_are_evaluated();
     test_inference_tracks_copy_types();
-    test_emitted_c_shape();
-    test_structs_and_arrays_lower_to_cells();
-    test_string_literals_are_escaped();
+    test_struct_tags_and_shared_fields();
     print("ok");
     return 0;
 }

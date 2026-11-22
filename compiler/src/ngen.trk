@@ -3770,6 +3770,11 @@ fn ng_var(c: i64, n: i64) -> i64 {
     if ni(c, name, NI_CONSTOK) == 1 {
         return x_mov_rax_imm(b, ni(c, name, NI_CONSTVAL));
     }
+    if ni(c, name, NI_CONSTOK) == 3 {
+        // A constant that does not fold (a string literal): its value
+        // expression, evaluated at each use.
+        return ng_gen(c, nb(c, ni(c, name, NI_CONST)));
+    }
     return x_mov_rax_imm(b, 0);
 }
 
@@ -3809,6 +3814,17 @@ fn ng_libc_call(c: i64, nr: i64) -> i64 {
     return x_bytes2(b, 15, 5);
 }
 
+
+// What frees temporary site `n`: its HK_* when it is a Str or handle, else
+// `-1 - n` for a cell (card L13c).
+fn ng_temp_code(c: i64, n: i64) -> i64 {
+    let hk = life_auto_handle(c, n);
+    if hk > 0 {
+        return hk;
+    }
+    return 0 - 1 - n;
+}
+
 // A call, then the frees of the temporaries the plan says die at it (card
 // L13b): each was kept in a frame slot (or its register) since it was
 // made; rax, the call's value, is saved around the frees. A temp-autofree
@@ -3843,13 +3859,13 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     }
     let consumer = life_temp_of(c, n);
     if consumer == n {
-        ng_free_temp(c, gen_temp_code(c, n));
+        ng_free_temp(c, ng_temp_code(c, n));
         return x_mov_rax_imm(b, 0);
     }
     if consumer >= 0 {
         vpush(temps, consumer);
         vpush(temps, ng_temp(c));
-        vpush(temps, gen_temp_code(c, n));
+        vpush(temps, ng_temp_code(c, n));
     }
     return 0;
 }
@@ -3877,7 +3893,7 @@ fn ng_temp_cell(c: i64, n: i64) -> i64 {
         let temps = ng(c, NG_TEMPS);
         vpush(temps, consumer);
         vpush(temps, ng_temp(c));
-        vpush(temps, gen_temp_code(c, n));
+        vpush(temps, ng_temp_code(c, n));
     }
     return 0;
 }
@@ -4867,7 +4883,7 @@ fn ng_acc_carry_init(c: i64, f: i64) -> i64 {
                     ng_set_imm(c, k, 0);
                     vpush(carry, call);
                     vpush(carry, k);
-                    vpush(carry, gen_temp_code(c, a));
+                    vpush(carry, ng_temp_code(c, a));
                     vpush(carry, j);
                 }
                 j = j + 1;

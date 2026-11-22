@@ -90,11 +90,10 @@ step "Checking prerequisites"
 
 need_ok=1
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | head -n1 | awk '{print $3}')"; else err "git not found — install git"; need_ok=0; fi
-if command -v "${CC:-cc}" >/dev/null 2>&1; then
-  ccv=$("${CC:-cc}" --version 2>/dev/null | head -n1)
-  ok "cc ${ccv:0:48}"
+if [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]]; then
+  ok "x86-64 Linux"
 else
-  err "C compiler '${CC:-cc}' not found — the bootstrap builds the C seed with it"
+  err "Track runs on x86-64 Linux only (this is $(uname -s) $(uname -m))"
   need_ok=0
 fi
 if [[ $need_ok == 0 ]]; then err "fix prerequisites and re-run"; exit 1; fi
@@ -143,15 +142,15 @@ ok "cloned to $TMP_DIR/track"
 cd "$TMP_DIR/track"
 
 # ── build ─────────────────────────────────────────────────────────
-step "Bootstrapping trackc from the C seed"
-printf "  ${DIM}scripts/bootstrap.sh --no-native  (this may take a minute)${RESET}\n"
-if ! scripts/bootstrap.sh --no-native 2>&1 | sed 's/^/  '"$GRAY"'│ '"$RESET"'/'; then
-  err "bootstrap failed — check the C compiler"
+step "Bootstrapping trackc from the native seed"
+printf "  ${DIM}scripts/bootstrap.sh${RESET}\n"
+if ! scripts/bootstrap.sh 2>&1 | sed 's/^/  '"$GRAY"'│ '"$RESET"'/'; then
+  err "bootstrap failed"
   exit 1
 fi
 mkdir -p build/bin
 cp build/bootstrap/stage3/trackc build/bin/trackc
-if ! build/bin/trackc build --native tools/yard/main.trk -o build/bin/yard >/dev/null; then
+if ! build/bin/trackc build tools/yard/main.trk -o build/bin/yard >/dev/null; then
   err "building yard failed"
   exit 1
 fi

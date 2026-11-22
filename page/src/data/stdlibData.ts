@@ -266,7 +266,7 @@ export const stdlibModules: StdlibModule[] = [
         name: 'process_spawn',
         signature: 'fn process_spawn(command: ptr<u8>) -> i32',
         description: 'Spawns a child process and waits for termination. Returns process exit code.',
-        example: 'let status = process_spawn("cc -O2 -c out.c -o out.o");',
+        example: 'let status = process_spawn("ls -l target");',
         errorModel: 'Status Code',
       },
       {
