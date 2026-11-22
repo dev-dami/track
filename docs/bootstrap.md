@@ -57,6 +57,14 @@ point `TRACKC` at any working `trackc`, for example the stage3 of
 `scripts/bootstrap.sh --from-rust`. It builds the compiler twice from that
 binary and writes the fixed-point C.
 
+A runtime change (`runtime/` or `compiler/rt/`, then `embed_runtime.sh` /
+`embed_rt.sh`) always needs that `TRACKC` route. The old seed embeds the
+old runtime, so its stage2 and stage3 differ and the default run (and
+`--check`) stops with "stage2 and stage3 executables differ". Build a
+trackc from the new sources first, e.g. `TRACKC=build/bootstrap/stage3/trackc`
+after `scripts/bootstrap.sh --no-native` reports the mismatch, or
+`--from-rust` while stage 0 still exists.
+
 The seed is C rather than a binary. C can be reviewed, it compresses well
 in git history, and it builds on any host with a C compiler. One step later
 the native stages give a static x86-64 ELF that needs no toolchain.
