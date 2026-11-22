@@ -2175,6 +2175,7 @@ fn rt_module_source_5(b: i64) -> i64 {
     sb_line(b, "extern \"kernel32.dll\" fn GetFileAttributesW(path: i64) -> u32;");
     sb_line(b, "extern \"kernel32.dll\" fn GetFileAttributesExW(path: i64, level: i64, info: i64) -> i32;");
     sb_line(b, "extern \"kernel32.dll\" fn DeleteFileW(path: i64) -> i32;");
+    sb_line(b, "extern \"kernel32.dll\" fn SetFileInformationByHandle(h: i64, class: i64, info: i64, size: i64) -> i32;");
     sb_line(b, "extern \"kernel32.dll\" fn SetFilePointerEx(h: i64, dist: i64, newpos: i64, how: i64) -> i32;");
     sb_line(b, "extern \"kernel32.dll\" fn QueryPerformanceCounter(out: i64) -> i32;");
     sb_line(b, "extern \"kernel32.dll\" fn QueryPerformanceFrequency(out: i64) -> i32;");
@@ -2610,8 +2611,18 @@ fn rt_module_source_5(b: i64) -> i64 {
     sb_line(b, "        return 0;");
     sb_line(b, "    }");
     sb_line(b, "    if nr == 87 {");
+    sb_line(b, "        // POSIX semantics: the name goes now even while handles are open");
     sb_line(b, "        let wp = win_wide(a);");
-    sb_line(b, "        let ok = DeleteFileW(wp);");
+    sb_line(b, "        let mut ok: i64 = 0;");
+    sb_line(b, "        let h = CreateFileW(wp, 65536, 7, 0, 3, 33554432, 0);   // DELETE, OPEN_EXISTING, BACKUP_SEMANTICS");
+    sb_line(b, "        if h != -1 && h != 0 {");
+    sb_line(b, "            store64(ws(0), 3);                                  // FILE_DISPOSITION_DELETE | POSIX_SEMANTICS");
+    sb_line(b, "            ok = SetFileInformationByHandle(h, 21, ws(0), 4);");
+    sb_line(b, "            CloseHandle(h);");
+    sb_line(b, "        }");
+    sb_line(b, "        if ok == 0 {");
+    sb_line(b, "            ok = DeleteFileW(wp);");
+    sb_line(b, "        }");
     sb_line(b, "        rt_free(wp);");
     sb_line(b, "        if ok == 0 {");
     sb_line(b, "            return -2;");

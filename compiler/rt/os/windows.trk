@@ -32,6 +32,7 @@ extern "kernel32.dll" fn GetEnvironmentVariableW(name: i64, buf: i64, n: i64) ->
 extern "kernel32.dll" fn GetFileAttributesW(path: i64) -> u32;
 extern "kernel32.dll" fn GetFileAttributesExW(path: i64, level: i64, info: i64) -> i32;
 extern "kernel32.dll" fn DeleteFileW(path: i64) -> i32;
+extern "kernel32.dll" fn SetFileInformationByHandle(h: i64, class: i64, info: i64, size: i64) -> i32;
 extern "kernel32.dll" fn SetFilePointerEx(h: i64, dist: i64, newpos: i64, how: i64) -> i32;
 extern "kernel32.dll" fn QueryPerformanceCounter(out: i64) -> i32;
 extern "kernel32.dll" fn QueryPerformanceFrequency(out: i64) -> i32;
@@ -467,8 +468,18 @@ fn os_syscall(nr: i64, a: i64, b: i64, d: i64, e: i64, f: i64) -> i64 {
         return 0;
     }
     if nr == 87 {
+        // POSIX semantics: the name goes now even while handles are open
         let wp = win_wide(a);
-        let ok = DeleteFileW(wp);
+        let mut ok: i64 = 0;
+        let h = CreateFileW(wp, 65536, 7, 0, 3, 33554432, 0);   // DELETE, OPEN_EXISTING, BACKUP_SEMANTICS
+        if h != -1 && h != 0 {
+            store64(ws(0), 3);                                  // FILE_DISPOSITION_DELETE | POSIX_SEMANTICS
+            ok = SetFileInformationByHandle(h, 21, ws(0), 4);
+            CloseHandle(h);
+        }
+        if ok == 0 {
+            ok = DeleteFileW(wp);
+        }
         rt_free(wp);
         if ok == 0 {
             return -2;
