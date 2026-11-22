@@ -1,0 +1,32 @@
+// The memory limit still stops a program once the large-block cache is
+// full (compiler/rt/mem.trk): 40 large blocks of mixed sizes are freed
+// (more than the cache keeps), then large blocks are kept until the
+// limit is hit: exit 137 with the same message on every runtime. (Nothing
+// is printed first: the C runtime's buffered stdout would come out after
+// the message when both streams share a pipe.)
+import "std" :: { dealloc };
+
+fn a_new(n: i64) -> i64 { return alloc(n); }
+fn a_free(p: i64) -> i64 {
+    dealloc(p);
+    return 0;
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(3000000);
+    let mut i: i64 = 0;
+    while i < 40 {
+        let p: i64 = a_new(100000 + 7000 * i);
+        store64(p, i);
+        a_free(p);
+        i = i + 1;
+    }
+    let mut n: i64 = 0;
+    while n < 1000 {
+        let p: i64 = a_new(200000);
+        store64(p, n);
+        n = n + 1;
+    }
+    print(n);
+    return 0;
+}

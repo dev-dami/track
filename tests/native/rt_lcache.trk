@@ -1,0 +1,120 @@
+// rt_lcache.trk (tests/native) — freed large blocks are kept and reused
+// (compiler/rt/mem.trk large-block cache): a large block freed and asked
+// for again 10k times stays under a tight memory limit, a cached block
+// serves a smaller request (zeroed, as `alloc` promises), and a small
+// block grows into a cached one with its bytes kept. The output must be
+// the same with runtime/track_runtime.c, with `--rt=track` and with
+// `--native`.
+
+import "std" :: { dealloc };
+
+fn a_new(n: i64) -> i64 { return alloc(n); }
+fn a_grow(p: i64, n: i64) -> i64 { return mem_realloc(p, n); }
+fn a_free(p: i64) -> i64 {
+    dealloc(p);
+    return 0;
+}
+
+fn show(label: i64, v: i64) -> i64 {
+    track_out(label);
+    track_out(" = ");
+    track_out(int_to_str(v));
+    track_out("\n");
+    return 0;
+}
+
+fn fill(p: i64, words: i64, seed: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        store64(p + 8 * i, seed * 31 + i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn check(p: i64, words: i64, seed: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        if load64(p + 8 * i) != seed * 31 + i {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn zeroed(p: i64, bytes: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < bytes {
+        if load64(p + i) != 0 {
+            return 0;
+        }
+        i = i + 8;
+    }
+    return 1;
+}
+
+// 10k rounds of a 1 MB block, dirtied at both ends and freed, under a
+// 1.5 MB limit: freed (cached) blocks never count as used.
+fn churn() -> i64 {
+    sys_set_memory_limit(1500000);
+    let mut ok: i64 = 1;
+    let mut i: i64 = 0;
+    while i < 10000 {
+        let p: i64 = a_new(1000000);
+        if load64(p) != 0 || load64(p + 999992) != 0 {
+            ok = 0;
+        }
+        store64(p, i + 1);
+        store64(p + 999992, i + 7);
+        a_free(p);
+        i = i + 1;
+    }
+    show("churn ok", ok);
+    show("churn used", sys_get_memory_used());
+    sys_set_memory_limit(536870912);
+    return 0;
+}
+
+// A dirtied 800 KB block, freed, then a 200 KB request: zeroed and usable.
+fn smaller() -> i64 {
+    let big: i64 = a_new(800000);
+    fill(big, 100000, 3);
+    a_free(big);
+    let p: i64 = a_new(200000);
+    show("smaller zeroed", zeroed(p, 200000));
+    fill(p, 25000, 4);
+    show("smaller kept", check(p, 25000, 4));
+    show("smaller used", sys_get_memory_used());
+    a_free(p);
+    return 0;
+}
+
+// A small block grows past 64 KiB into a cached mapping, then within it
+// and past it: the bytes written so far survive every step.
+fn grow() -> i64 {
+    let big: i64 = a_new(1000000);
+    fill(big, 125000, 5);
+    a_free(big);
+    let mut p: i64 = a_new(1000);
+    fill(p, 125, 6);
+    p = a_grow(p, 300000);
+    show("grow to cache", check(p, 125, 6));
+    fill(p, 37500, 7);
+    p = a_grow(p, 900000);
+    show("grow within", check(p, 37500, 7));
+    fill(p, 112500, 8);
+    p = a_grow(p, 3000000);
+    show("grow past", check(p, 112500, 8));
+    show("grow used", sys_get_memory_used());
+    a_free(p);
+    show("end used", sys_get_memory_used());
+    return 0;
+}
+
+fn main() -> i64 {
+    churn();
+    smaller();
+    grow();
+    return 0;
+}
