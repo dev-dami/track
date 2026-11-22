@@ -84,7 +84,9 @@ const NG_CODELEN = 57; // bytes of code before the data (the ELF .text size)
 const NG_COLLECT = 58; // 0, or a vector ng_free_ok / ng_names_ok push the names they would check against NI_CVAR to
 const NG_FREEV = 59;   // name id -> 0 unknown, else ng_free_ok's names for the function's inline body
 const NG_NAMESV = 60;  // name id -> 0 unknown, else ng_list_names_ok's names for the function's whole body
-const NG_SLOTS = 61;
+const NG_BARS = 61;    // ng_stack_bars of the function ng_function is generating, for both passes
+const NG_BINDSTK = 62; // (kind, value) pairs of the arguments ng_bind_args is binding, nested calls above
+const NG_SLOTS = 63;
 
 fn ng(c: i64, slot: i64) -> i64 { return vget(cx(c, CX_GEN), slot); }
 fn ng_set(c: i64, slot: i64, v: i64) -> i64 { return vset(cx(c, CX_GEN), slot, v); }
@@ -1247,8 +1249,8 @@ fn ng_inline_begin(c: i64, f: i64, args: i64) -> i64 {
 // mark for ng_inline_end.
 fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
     let count = list_len(c, args);
-    let vals = vnew();
-    let kinds = vnew();
+    let stk = ng(c, NG_BINDSTK);
+    let base = vlen(stk);
     let mut i: i64 = 0;
     while i < count {
         let a = list_at(c, args, i);
@@ -1262,22 +1264,22 @@ fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
         }
         if !fixed {
             ng_gen(c, a);
-            vpush(kinds, 2);
-            vpush(vals, ng_temp(c));
+            vpush(stk, 2);
+            vpush(stk, ng_temp(c));
         } else if ng_fold(c, a) {
-            vpush(kinds, 1);
-            vpush(vals, ng(c, NG_OPV));
+            vpush(stk, 1);
+            vpush(stk, ng(c, NG_OPV));
         } else if ng_opnd(c, a) == 2 {
-            vpush(kinds, 2);
-            vpush(vals, ng(c, NG_OPV));
+            vpush(stk, 2);
+            vpush(stk, ng(c, NG_OPV));
         } else if nk(c, a) == K_ADDR && ng_opnd(c, na(c, a)) == 2 {
             // `&local` is the local's cell pointer: share its slot
-            vpush(kinds, 2);
-            vpush(vals, ng(c, NG_OPV));
+            vpush(stk, 2);
+            vpush(stk, ng(c, NG_OPV));
         } else {
             ng_gen(c, a);
-            vpush(kinds, 2);
-            vpush(vals, ng_temp(c));
+            vpush(stk, 2);
+            vpush(stk, ng_temp(c));
         }
         i = i + 1;
     }
@@ -1285,15 +1287,17 @@ fn ng_bind_args(c: i64, params: i64, args: i64, assigned: i64) -> i64 {
     let mut j: i64 = 0;
     while j < count {
         let pname = list_at(c, params, j * 2);
-        if vget(kinds, j) == 1 {
+        let v = vget(stk, base + j * 2 + 1);
+        if vget(stk, base + j * 2) == 1 {
             let cb = ng(c, NG_CBIND);
-            vpush(cb, vget(vals, j));
+            vpush(cb, v);
             ng_bind(c, pname, -1 - vlen(cb));
         } else {
-            ng_bind(c, pname, vget(vals, j));
+            ng_bind(c, pname, v);
         }
         j = j + 1;
     }
+    vtrunc(stk, base);
     ng_set(c, NG_INLDEPTH, ng(c, NG_INLDEPTH) + 1);
     return mark;
 }
@@ -5036,7 +5040,7 @@ fn ng_function_pass(c: i64, f: i64, prelude: i64) -> i64 {
     ng_set(c, NG_ACC, -1);
     ng_set(c, NG_ACCLVL, 0);
     ng_set(c, NG_CURFN, f);
-    ng_set(c, NG_NOSTACK, ng_stack_bars(c, ne(c, f), prelude));
+    ng_set(c, NG_NOSTACK, ng(c, NG_BARS));
     vtrunc(ng(c, NG_AUTO), 0);
     vtrunc(ng(c, NG_AUTOBASE), 0);
     vtrunc(ng(c, NG_TEMPS), 0);
@@ -5126,6 +5130,7 @@ fn ng_function(c: i64, f: i64, prelude: i64) -> i64 {
     vtrunc(ng(c, NG_USE), 0);
     vtrunc(ng(c, NG_REG), 0);
     vtrunc(ng(c, NG_PIN), 0);
+    ng_set(c, NG_BARS, ng_stack_bars(c, ne(c, f), prelude));
     ng_function_pass(c, f, prelude);
     let uses = ng(c, NG_USE);
     let nslot = ng(c, NG_NSLOT);
@@ -5322,6 +5327,7 @@ fn generate_native(c: i64) -> i64 {
     ng_set(c, NG_CBIND, vnew());
     ng_set(c, NG_BODYOK, vnew());
     ng_set(c, NG_FREEV, vnew());
+    ng_set(c, NG_BINDSTK, vnew());
     ng_set(c, NG_NAMESV, vnew());
     ng_set(c, NG_EXITS, vnew());
     ng_set(c, NG_NONE, vnew());
