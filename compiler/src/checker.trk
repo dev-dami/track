@@ -2133,9 +2133,14 @@ fn check_expr(c: i64, n: i64) -> i64 {
         }
         return 0;
     }
-    if k == K_INDEX || k == K_RANGE {
+    if k == K_RANGE {
+        // only a `for` header (K_FOR below) or a slice index (K_SLICE)
+        // takes a range; as a value no backend represents it
+        return cfail(c, n, "A range `a..b` is not a value: use it as a `for` loop's iterator (`for i in a..b`) or a slice index (`xs[a..b]`).");
+    }
+    if k == K_INDEX {
         check_borrow(c, na(c, n));
-        if k == K_INDEX && ty_known_scalar(c, infer_type(c, na(c, n))) {
+        if ty_known_scalar(c, infer_type(c, na(c, n))) {
             return cfail(c, n, "Cannot index a value that is not an array, slice or pointer.");
         }
         return check_borrow(c, nb(c, n));
@@ -2217,7 +2222,12 @@ fn check_expr(c: i64, n: i64) -> i64 {
     }
     if k == K_FOR {
         let iter = nb(c, n);
-        check_expr(c, iter);
+        if nk(c, iter) == K_RANGE {
+            check_borrow(c, na(c, iter));
+            check_borrow(c, nb(c, iter));
+        } else {
+            check_expr(c, iter);
+        }
         if nk(c, iter) != K_RANGE && ty_known_scalar(c, infer_type(c, iter)) {
             return cfail(c, iter, "`for` iterates over a range or an array; use `for i in 0..n` to count.");
         }

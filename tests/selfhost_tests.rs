@@ -2939,6 +2939,19 @@ fn for_in_exit_and_div_trap_on_both_runtimes() {
         "for over an integer accepted: {}",
         err
     );
+    // F3: a range bound as a value segfaulted on both backends; it is E0200.
+    fs::write(
+        dir.join("rangeval.trk"),
+        "fn main() -> void { let r = (0-1)..3; for i in r { print(i); } }\n",
+    )
+    .unwrap();
+    let out = run_trackc(&["check", "rangeval.trk"], &dir);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && err.contains("A range `a..b` is not a value"),
+        "range bound as a value accepted: {}",
+        err
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
