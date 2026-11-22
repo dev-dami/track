@@ -2193,13 +2193,7 @@ fn temps_free_fresh_cell_temporaries() {
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(
             stem,
-            "nested"
-                | "print_loop"
-                | "branch"
-                | "discard"
-                | "str_alias"
-                | "str_cell"
-                | "tailr"
+            "nested" | "print_loop" | "branch" | "discard" | "str_alias" | "str_cell" | "tailr"
         );
         let leaks = if all_die {
             "detect_leaks=1"
