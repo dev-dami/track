@@ -3990,7 +3990,7 @@ fn hd_scan_fns(c: i64, n: i64, out: i64) -> i64 {
 // function, and interning it here would renumber later names.
 fn hd_callee_peek(c: i64, name: i64) -> i64 {
     let mut f = ni(c, name, NI_FN);
-    if f < 0 {
+    if f < 0 && is_qualified(c, name) {
         let bytes = text_bytes(name_text(c, name));
         let mut i: i64 = vlen(bytes) - 1;
         while i > 0 {

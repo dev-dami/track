@@ -192,15 +192,15 @@ fn elf_write_file(path: i64, body: i64, code: i64, syms: i64) -> i64 {
     let buf: i64 = alloc(n + 8);
     let mut i: i64 = 0;
     while i < h {
-        memset(buf + i, vget(head, i), 1);
+        store8(buf + i, vget(head, i));
         i = i + 1;
     }
     while i < m {
-        memset(buf + i, vget(body, i - h), 1);
+        store8(buf + i, vget(body, i - h));
         i = i + 1;
     }
     while i < n {
-        memset(buf + i, vget(tail, i - m), 1);
+        store8(buf + i, vget(tail, i - m));
         i = i + 1;
     }
     // open(path, O_WRONLY|O_CREAT|O_TRUNC, 0755)
