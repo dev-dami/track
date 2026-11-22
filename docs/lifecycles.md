@@ -37,6 +37,8 @@ budget is dumped `stack` and lives in a stack cell of the caller (not
 inside a `return` value, whose call may be a tail call); any other is
 `temp-autofree` and freed right after the call, `deep` (drop glue) when
 its children are fresh and the callee only reads it (§3.5).
+L13d landed: cells whose Str fields are static or borrowed, discarded
+cell statements, and native temporaries of inlined consumers are freed.
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors
@@ -465,8 +467,17 @@ temporary (`pl_temp_cell`) is a stack cell when it is a flat literal or
 ret-slot call within the frame budget and not inside a `return` value,
 else freed after the consumer (`G_TEMPS` / `NG_TEMPS`, code `-1 - site`)
 with drop glue when `pl_deep_fresh` holds and the callee only reads it.
-A Str field is never freed by drop glue, and a function returning a cell
-with a literal Str field is not `fresh`, so such results stay heap. ASan-built self-compile
+A Str field is never freed by drop glue (a literal is static, and
+`track_str_free` frees unconditionally). L13d: a non-generic function
+whose every `return` is `pl_deep_fresh` and whose summary result is
+fresh with no unknown part and no cell parameter (a Str field may be
+static or a parameter's) is a fresh cell site too (`LT_GFN`,
+`pl_glue_fns`), so `weight(&make_named(i))` frees the shell; a fresh
+cell call used as a discarded statement is its own consumer and freed
+deep right after it returns. ngen frees only the temporaries pushed
+during the current `ng_call` (a function inlined into itself holds a
+copy of the call node), and a branch condition does not inline a call
+with temporaries. ASan-built self-compile
 of `compiler/src/main.trk`: 771,893 leaked allocations (64.7 MB) before,
 584,001 (56.9 MB) after, 0 errors [observed].
 

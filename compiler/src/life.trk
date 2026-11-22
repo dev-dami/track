@@ -3060,6 +3060,7 @@ const LT_HLENT = 20; // by fn node: bits of the parameters the function only len
 const LT_HSITE = 21; // by node: HK_* of a heap-autofree Str or handle site, else 0
 const LT_CURHK = 22; // HK_* of the site whose uses `pl_use_ok` mode 5 is checking
 const LT_TEMP = 23;  // by node: consumer of a temp-autofree call (L13b), else -1
+const LT_GFN = 24;   // by fn node: 1 when every `return` builds a glue-fresh cell (L13d)
 
 const PS_FLAG = 0;  // by name: `pl_let`'s flag for the local it binds (below), else 0
 const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
@@ -3318,8 +3319,104 @@ fn pl_site_kind(c: i64, n: i64) -> i64 {
     } else if callee <= C_RT0 {
         r = vget(vget(ck(c, CK_LIFE), LT_RTRECS), C_RT0 - callee + LR_RES);
     }
-    if r == O_FRESH && life_tracked(c, call_type(c, name, nb(c, n))) {
+    if (r == O_FRESH || pl_glue_fn(c, callee_fn(c, name))) && life_tracked(c, call_type(c, name, nb(c, n))) {
         return 5;
+    }
+    return 0;
+}
+
+// True when program function `f` returns a cell whose shell, and every
+// child cell drop glue frees, is fresh (LT_GFN, card L13d), even though
+// a Str field may be static or a parameter's (drop glue never frees Str).
+fn pl_glue_fn(c: i64, f: i64) -> bool {
+    let table = ck(c, CK_LIFE);
+    if f < 0 || vlen(table) <= LT_GFN {
+        return false;
+    }
+    let gfn = vget(table, LT_GFN);
+    if gfn == 0 || f >= vlen(gfn) {
+        return false;
+    }
+    return vget(gfn, f) == 1;
+}
+
+// True when every `return` in statement `n` gives a deep-fresh value
+// (`pl_deep_fresh`: a literal whose child cells are fresh, or a fresh
+// call, which LT_GFN may already admit).
+fn pl_glue_rets_ok(c: i64, n: i64) -> bool {
+    if n < 0 {
+        return true;
+    }
+    let k = nk(c, n);
+    if k == K_RETURN {
+        return na(c, n) >= 0 && pl_deep_fresh(c, na(c, n));
+    }
+    if k == K_IF { return pl_glue_rets_ok(c, na(c, n)) && pl_glue_rets_list(c, nb(c, n), 0, 1) && pl_glue_rets_list(c, nc(c, n), 0, 1); }
+    if k == K_WHILE { return pl_glue_rets_list(c, nb(c, n), 0, 1); }
+    if k == K_FOR || k == K_LENS { return pl_glue_rets_list(c, nc(c, n), 0, 1); }
+    if k == K_LET { return pl_glue_rets_ok(c, nd(c, n)); }
+    if k == K_LETD { return pl_glue_rets_ok(c, nc(c, n)); }
+    if k == K_ASSIGN { return pl_glue_rets_ok(c, nb(c, n)); }
+    if k == K_MATCH { return pl_glue_rets_list(c, nb(c, n), 2, 3); }
+    return true;
+}
+
+fn pl_glue_rets_list(c: i64, l: i64, from: i64, step: i64) -> bool {
+    let mut i = from;
+    while i < list_len(c, l) {
+        if !pl_glue_rets_ok(c, list_at(c, l, i)) {
+            return false;
+        }
+        i = i + step;
+    }
+    return true;
+}
+
+// LT_GFN: the least set of non-generic functions whose summary result is
+// fresh with no unknown part, no cell parameter in it (a Str field may
+// still be static or a parameter's), and whose every `return` is
+// deep-fresh. Marks are only ever set, so a member stays valid.
+fn pl_glue_fns(c: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    let gfn = vfill(vnew_cap(node_count(c) + 1), node_count(c), 0);
+    vset(table, LT_GFN, gfn);
+    let items = cx(c, CX_ITEMS);
+    let cand = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let f = vget(items, i);
+        if nk(c, f) == K_FN && list_len(c, nb(c, f)) <= 0 && pl_drop_kind(c, nd(c, f)) != 0 && pl_ends_in_return(c, ne(c, f)) {
+            let at = life_summary(c, na(c, f));
+            if at >= 0 {
+                let res = vget(life_records(c), at + LR_RES);
+                let mut ok = (res & O_FRESH) != 0 && (res & O_UNKNOWN) == 0 && res != O_FRESH;
+                let params = nc(c, f);
+                let mut q: i64 = 0;
+                while ok && q < O_MAXPARAMS && q * 2 < list_len(c, params) {
+                    if ((res >> q) & 1) == 1 && pl_drop_kind(c, list_at(c, params, q * 2 + 1)) != 0 {
+                        ok = false;
+                    }
+                    q = q + 1;
+                }
+                if ok {
+                    vpush(cand, f);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut j: i64 = 0;
+        while j < vlen(cand) {
+            let f = vget(cand, j);
+            if vget(gfn, f) == 0 && pl_glue_rets_list(c, ne(c, f), 0, 1) {
+                vset(gfn, f, 1);
+                changed = true;
+            }
+            j = j + 1;
+        }
     }
     return 0;
 }
@@ -4308,6 +4405,14 @@ fn pl_block(c: i64, p: i64, body: i64) -> i64 {
             // backends emit a statement before the last as a discard.
             pl_temp(c, p, n, n, hk);
             pl_parts(c, p, n);
+        } else if i + 1 < list_len(c, body) && pl_site_kind(c, n) == 5 && pl_drop_kind(c, pl_site_type(c, n)) != 0 {
+            // A discarded fresh cell (L13d): freed right after it returns,
+            // with drop glue (a fresh call's child cells are fresh too).
+            let table = ck(c, CK_LIFE);
+            vset(vget(table, LT_TEMP), n, n);
+            vset(vget(table, LT_DEEP), n, 1);
+            pl_record(c, p, n, PL_TEMP, npos(c, n));
+            pl_parts(c, p, n);
         } else {
             pl_stmt(c, p, body, i, n);
         }
@@ -4469,10 +4574,11 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_TEMP {
+    while vlen(table) <= LT_GFN {
         vpush(table, 0);
     }
     pl_ret_fns(c);
+    pl_glue_fns(c);
     hd_program(c);
     vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
     vset(table, LT_DEEP, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));

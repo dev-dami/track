@@ -118,7 +118,8 @@ const CX_STRCACHE = 21; // string literal pool (unescaped text per literal)
 const CX_STRUCTS = 22;  // struct names in declaration order
 const CX_WARN = 23;     // pending warnings: (pos, code, message) per entry
 const CX_NWARN = 24;    // warnings already printed by flush_warnings
-const CX_SLOTS = 25;
+const CX_QUAL = 25;     // name id -> 1 when the name contains `::`, else 0
+const CX_SLOTS = 26;
 
 fn cx_new() -> i64 {
     let c = vnew_cap(CX_SLOTS);
@@ -135,6 +136,7 @@ fn cx_new() -> i64 {
     vset(c, CX_NAMES, vnew_cap(4096));
     vset(c, CX_HASH, vfill(vnew_cap(16384), 16384, 0));
     vset(c, CX_INFO, vnew_cap(4096 * NI_WIDTH));
+    vset(c, CX_QUAL, vnew_cap(4096));
     vset(c, CX_STACK, vnew_cap(1024));
     vset(c, CX_SB, sb_new());
     vset(c, CX_ITEMS, vnew());
@@ -182,14 +184,13 @@ fn ni_set(c: i64, id: i64, slot: i64, value: i64) -> i64 {
     return vset(cx(c, CX_INFO), id * NI_WIDTH + slot, value);
 }
 
-// FNV-1a over the bytes of a string.
+// FNV-1a over the bytes of a string (read in place: no byte vector).
 fn text_hash(s: i64) -> i64 {
-    let bytes = text_bytes(s);
-    let n = vlen(bytes);
+    let n = text_len(s);
     let mut h: i64 = 2166136261;
     let mut i: i64 = 0;
     while i < n {
-        let b = vget(bytes, i);
+        let b = str_char_at(s, i);
         h = (h | b) - (h & b); // xor
         h = h * 16777619;
         i = i + 1;
@@ -233,6 +234,11 @@ fn intern(c: i64, s: i64) -> i64 {
     }
     let id = vpush(names, s);
     vset(table, slot, id + 1);
+    let mut qual: i64 = 0;
+    if str_contains(s, "::") != 0 {
+        qual = 1;
+    }
+    vpush(cx(c, CX_QUAL), qual);
     let info = cx(c, CX_INFO);
     vfill(info, NI_WIDTH, -1);
     ni_set(c, id, NI_TYPEKIND, 0);
@@ -241,6 +247,45 @@ fn intern(c: i64, s: i64) -> i64 {
     ni_set(c, id, NI_MARK, 0);
     ni_set(c, id, NI_CONSTOK, 0);
     return id;
+}
+
+// The id of the name spelled by `bytes[start..end)` (a byte vector), or
+// -1 when it is not interned yet. Same hash and probe order as `intern`,
+// without building the string.
+fn intern_find_span(c: i64, bytes: i64, start: i64, end: i64) -> i64 {
+    let mut h: i64 = 2166136261;
+    let mut i = start;
+    while i < end {
+        let b = vget(bytes, i);
+        h = (h | b) - (h & b); // xor
+        h = h * 16777619;
+        i = i + 1;
+    }
+    let names = cx(c, CX_NAMES);
+    let table = cx(c, CX_HASH);
+    let mask = vlen(table) - 1;
+    let mut slot = h & mask;
+    while vget(table, slot) != 0 {
+        let id = vget(table, slot) - 1;
+        if span_is(vget(names, id), bytes, start, end) {
+            return id;
+        }
+        slot = (slot + 1) & mask;
+    }
+    return -1;
+}
+
+// Whether string `s` is exactly the bytes `bytes[start..end)`.
+fn span_is(s: i64, bytes: i64, start: i64, end: i64) -> bool {
+    let n = end - start;
+    let mut k: i64 = 0;
+    while k < n {
+        if str_char_at(s, k) != vget(bytes, start + k) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return str_char_at(s, n) == 0;
 }
 
 // ---------------------------------------------------------------- lists

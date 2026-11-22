@@ -75,6 +75,8 @@ fn rt_module_source_0(b: i64) -> i64 {
     sb_line(b, "const SYS_MREMAP = 25;");
     sb_line(b, "const SYS_MADVISE = 28;");
     sb_line(b, "const MADV_POPULATE_WRITE = 23;");
+    sb_line(b, "const MADV_HUGEPAGE = 14;");
+    sb_line(b, "const RT_HUGE = 2097152;");
     sb_line(b, "const RT_POP_MIN = 65536;");
     sb_line(b, "const RT_POP_MAX = 2097152;");
     sb_line(b, "const SYS_PIPE = 22;");
@@ -169,6 +171,14 @@ fn rt_module_source_0(b: i64) -> i64 {
     sb_line(b, "");
     sb_line(b, "fn rt_page_up(n: i64) -> i64 { return (n + 4095) & (0 - 4096); }");
     sb_line(b, "");
+    sb_line(b, "// Ask for 2 MiB pages on a mapping big enough to hold one.");
+    sb_line(b, "fn rt_huge(p: i64, len: i64) -> i64 {");
+    sb_line(b, "    if len >= RT_HUGE {");
+    sb_line(b, "        syscall6(SYS_MADVISE, p, len, MADV_HUGEPAGE, 0, 0, 0);");
+    sb_line(b, "    }");
+    sb_line(b, "    return 0;");
+    sb_line(b, "}");
+    sb_line(b, "");
     sb_line(b, "// Fault in [from, to) now, in one call: the pages are about to be written.");
     sb_line(b, "fn rt_prefault(from: i64, to: i64) -> i64 {");
     sb_line(b, "    if to > from {");
@@ -198,6 +208,7 @@ fn rt_module_source_0(b: i64) -> i64 {
     sb_line(b, "    if cur + bsize > rs(RS_HEAP_END) || cur == 0 {");
     sb_line(b, "        if cur == 0 || cur + bsize > rs(RS_ARENA_END) {");
     sb_line(b, "            cur = rt_mmap(RT_ARENA);");
+    sb_line(b, "            rt_huge(cur, RT_ARENA);");
     sb_line(b, "            rs_set(RS_ARENA_END, cur + RT_ARENA);");
     sb_line(b, "            rs_set(RS_HEAP_END, cur);");
     sb_line(b, "        }");
@@ -220,6 +231,7 @@ fn rt_module_source_0(b: i64) -> i64 {
     sb_line(b, "        }");
     sb_line(b, "    } else {");
     sb_line(b, "        big = rt_mmap(len);");
+    sb_line(b, "        rt_huge(big, len);");
     sb_line(b, "        rt_prefault(big, big + len);");
     sb_line(b, "        store64(big, len);");
     sb_line(b, "    }");
@@ -355,6 +367,7 @@ fn rt_module_source_0(b: i64) -> i64 {
     sb_line(b, "        if q < 0 && q > -4096 {");
     sb_line(b, "            rt_oom(\"\\nTrack Runtime Error: Out of memory allocation failure!\\n\");");
     sb_line(b, "        }");
+    sb_line(b, "        rt_huge(q, len);");
     sb_line(b, "        rt_prefault(q + old, q + len);");
     sb_line(b, "        store64(q, len);");
     sb_line(b, "        return q + 16;");

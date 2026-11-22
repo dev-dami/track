@@ -101,6 +101,8 @@ fn load_module(c: i64, path: i64) -> i64 {
     let f = add_source(c, path, src);
     let first = lex_file(c, f);
     let items = parse_file(c, first);
+    // the AST keeps positions, not token indices: reuse the token space
+    vtrunc(cx(c, CX_TOKS), first * TK_WIDTH);
     let dir = path_dir(path);
     let all = cx(c, CX_ITEMS);
     let files = cx(c, CX_ITEMFILE);
@@ -131,7 +133,9 @@ fn load_module(c: i64, path: i64) -> i64 {
 fn load_embedded_module(c: i64, path: i64, src: i64) -> i64 {
     vpush(cx(c, CX_MODS), path);
     let f = add_source(c, path, src);
-    let items = parse_file(c, lex_file(c, f));
+    let first = lex_file(c, f);
+    let items = parse_file(c, first);
+    vtrunc(cx(c, CX_TOKS), first * TK_WIDTH);
     let all = cx(c, CX_ITEMS);
     let files = cx(c, CX_ITEMFILE);
     let mut i: i64 = 0;

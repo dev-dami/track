@@ -1,0 +1,27 @@
+// L13d: a fresh cell whose Str field aliases a string the caller keeps is
+// freed at its consumer, but the string itself is never freed: drop glue
+// does not touch Str fields.
+struct Named { name: Str, n: i64 }
+
+fn make_named(s: Str, n: i64) -> Named {
+    return Named { name: s, n: n };
+}
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn main() -> void {
+    let keep = Named { name: int_to_str(12345), n: 0 };
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        total = total + weight(&make_named(keep.name, i));
+        total = total + weight(&Named { name: keep.name, n: 1 });
+        make_named(keep.name, i);
+        i = i + 1;
+    }
+    print(total);
+    print(keep.name);
+    print(sys_get_memory_used());
+}

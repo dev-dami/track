@@ -400,5 +400,5 @@ fn field_candidates(c: i64, field: i64) -> i64 {
 }
 
 fn is_qualified(c: i64, name: i64) -> bool {
-    return str_contains(name_text(c, name), "::") != 0;
+    return vget(cx(c, CX_QUAL), name) == 1;
 }

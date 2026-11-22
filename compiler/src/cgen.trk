@@ -445,7 +445,7 @@ fn gen_call_rs(c: i64, n: i64, args_list: i64, rs: i64) -> i64 {
     }
     let consumer = life_temp_of(c, n);
     if consumer == n {
-        emit(c, text_cat3(hd_free_name(life_auto_handle(c, n)), "(", text_cat(t, ");")));
+        gen_free_temp(c, t, gen_temp_code(c, n));
         return "0";
     }
     if consumer >= 0 {

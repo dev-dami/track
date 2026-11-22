@@ -3065,7 +3065,8 @@ fn ng_branch(c: i64, n: i64, sense: bool, list: i64) -> i64 {
     if k == K_UN && na(c, n) == OP_NOT {
         return ng_branch(c, nb(c, n), !sense, list);
     }
-    if k == K_CALL {
+    if k == K_CALL && !ng_has_temps(c, n) {
+        // A call with temporaries goes through ng_call, which frees them.
         let f = ng_call_target(c, n);
         if f >= 0 {
             let mark = ng_inline_begin(c, f, nb(c, n));
@@ -3557,11 +3558,14 @@ fn ng_libc_call(c: i64, nr: i64) -> i64 {
 // result is kept for its consumer, or freed here when it is a discarded
 // statement.
 fn ng_call(c: i64, n: i64, args: i64) -> i64 {
+    // Only temporaries pushed while this call's arguments were made are
+    // its own: an inlined body of the same function holds a copy of `n`
+    // whose frees sit on one branch only (card L13d).
+    let mut i = vlen(ng(c, NG_TEMPS));
     ng_call_body(c, n, args);
     let b = ncode(c);
     let temps = ng(c, NG_TEMPS);
     let mut saved = false;
-    let mut i: i64 = 0;
     while i < vlen(temps) {
         if vget(temps, i) == n {
             if !saved {
@@ -3582,8 +3586,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     }
     let consumer = life_temp_of(c, n);
     if consumer == n {
-        x_mov_rr(b, 7, 0);
-        ng_call_regs(c, intern(c, hd_free_name(life_auto_handle(c, n))), 1);
+        ng_free_temp(c, gen_temp_code(c, n));
         return x_mov_rax_imm(b, 0);
     }
     if consumer >= 0 {
@@ -5224,8 +5227,9 @@ fn ng_entry(c: i64) -> i64 {
     return x_bytes2(b, 15, 5); // syscall
 }
 
-// Generate the ELF image (byte vector) for the loaded, checked program, or
-// report undefined functions and return 0.
+// Generate the code+data body (byte vector, entry at offset 0) of the ELF
+// image for the loaded, checked program, or report undefined functions
+// and return 0. elf_write_file adds the headers.
 fn generate_native(c: i64) -> i64 {
     let state = vfill(vnew_cap(NG_SLOTS), NG_SLOTS, 0);
     vset(c, CX_GEN, state);
@@ -5350,5 +5354,5 @@ fn generate_native(c: i64) -> i64 {
         vpush(b, vget(data, d));
         d = d + 1;
     }
-    return elf_image(b, 0);
+    return b;
 }

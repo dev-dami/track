@@ -21,10 +21,11 @@ fn elf_u16(b: i64, v: i64) -> i64 {
     return x_byte(b, v >> 8);
 }
 
-// Build the executable image from the code+data `body` (byte vector) with
-// the entry point at body offset `entry`.
-fn elf_image(body: i64, entry: i64) -> i64 {
-    let b = vnew_cap(vlen(body) + ELF_HEADERS + 16);
+// The ELF and program headers (ELF_HEADERS bytes) of the executable whose
+// code+data `body` (byte vector) has the entry point at body offset
+// `entry`. The body follows the headers in the file (elf_write_file).
+fn elf_headers(body: i64, entry: i64) -> i64 {
+    let b = vnew_cap(ELF_HEADERS);
     // e_ident
     x_byte(b, 127);
     x_byte(b, 69);
@@ -67,22 +68,23 @@ fn elf_image(body: i64, entry: i64) -> i64 {
         z = z + 1;
     }
     x_u64(b, 16);
-    let mut i: i64 = 0;
-    let n = vlen(body);
-    while i < n {
-        vpush(b, vget(body, i));
-        i = i + 1;
-    }
     return b;
 }
 
-// Write the byte vector to `path` with mode 0755. Returns 0 on success.
-fn elf_write_file(path: i64, bytes: i64) -> i64 {
-    let n = vlen(bytes);
+// Write the executable with code+data `body` (byte vector, entry at
+// offset 0) to `path` with mode 0755. Returns 0 on success.
+fn elf_write_file(path: i64, body: i64) -> i64 {
+    let head = elf_headers(body, 0);
+    let h = vlen(head);
+    let n = h + vlen(body);
     let buf: i64 = alloc(n + 8);
     let mut i: i64 = 0;
+    while i < h {
+        memset(buf + i, vget(head, i), 1);
+        i = i + 1;
+    }
     while i < n {
-        memset(buf + i, vget(bytes, i), 1);
+        memset(buf + i, vget(body, i - h), 1);
         i = i + 1;
     }
     // open(path, O_WRONLY|O_CREAT|O_TRUNC, 0755)
