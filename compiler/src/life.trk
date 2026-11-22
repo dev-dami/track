@@ -3423,6 +3423,18 @@ fn pl_flat_words(c: i64, t: i64) -> i64 {
     return pl_max(count, 1);
 }
 
+// True when the ret-slot entry for result type `t` writes every word of
+// its cell before anything reads it (card L14): a struct literal stores
+// the tag and every field, a tuple literal every element, and `return
+// g(..)` hands the cell to an entry of the same type. Only an empty tuple
+// leaves its one word unwritten. The allocating wrapper then skips zeroing.
+fn pl_rs_full(c: i64, t: i64) -> bool {
+    if pl_flat_words(c, t) <= 0 {
+        return false;
+    }
+    return pl_drop_kind(c, t) != 2 || list_len(c, na(c, t)) > 0;
+}
+
 // True when function node `f` has a ret-slot entry (card L10): its
 // result is exactly `fresh`, of a flat struct or tuple type, and every
 // `return` builds a literal or calls a ret-slot function.
