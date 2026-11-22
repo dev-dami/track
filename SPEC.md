@@ -176,8 +176,9 @@ NUL-terminated byte pointers, references as the referenced value, tuples as
 pointers to word arrays, enums as their discriminant, values of unions
 with payload variants as heap cells `[tag, payload...]`, structs as
 `[name hash, fields...]`, and arrays as `[length, elements...]`. Arithmetic wraps,
-shift amounts are taken modulo 64, `>>` is logical, and integer division by
-zero traps (stdout is flushed, then `SIGFPE`). Both compilers share this model and the runtime in
+shift amounts are taken modulo 64, `>>` is logical, and `/` or `%` by zero, or of
+`INT64_MIN` by `-1` (the one quotient that does not fit), traps: stdout is flushed,
+then `SIGFPE` (shell status 136) on every backend. Both compilers share this model and the runtime in
 `runtime/track_runtime.c`; see [docs/bootstrap.md](docs/bootstrap.md).
 
 ## 12. Diagnostics & Error Reporting

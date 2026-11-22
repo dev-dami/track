@@ -2309,3 +2309,40 @@ fn for_in_exit_and_div_trap_on_both_runtimes() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// K3c: `INT64_MIN / -1` (and `% -1`) traps like a zero divisor on every
+/// backend and runtime: what was printed is flushed, then SIGFPE. Native
+/// once took the hardware idiv fault and lost the buffered output.
+#[test]
+fn int64_min_div_minus_one_flushes_on_every_backend() {
+    use std::os::unix::process::ExitStatusExt;
+    let dir = scratch("k3c_divmin");
+    for (stem, want) in [
+        ("divmin_flush", "-7\n0\n-9223372036854775807\n"),
+        ("divmin_mod_flush", "0\n"),
+    ] {
+        let src = repo().join(format!("tests/native/{}.trk", stem));
+        for mode in ["", "--rt=track", "--native"] {
+            let exe = dir.join(format!("{}{}", stem, mode.replace(['-', '='], "_")));
+            let mut args = vec!["build"];
+            if !mode.is_empty() {
+                args.push(mode);
+            }
+            args.extend([src.to_str().unwrap(), "-o", exe.to_str().unwrap()]);
+            let out = run_trackc(&args, &dir);
+            assert!(out.status.success(), "{} {}: build failed", stem, mode);
+            let out = Command::new(&exe).output().unwrap();
+            assert_eq!(
+                (
+                    String::from_utf8_lossy(&out.stdout).to_string(),
+                    out.status.signal()
+                ),
+                (want.to_string(), Some(8)),
+                "{} {}: output lost or wrong signal",
+                stem,
+                mode
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}

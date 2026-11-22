@@ -69,8 +69,9 @@ pub fn eval_const(consts: &HashMap<String, i64>, expr: &Expr) -> Option<i64> {
                 BinOp::Add => Some(l.wrapping_add(r)),
                 BinOp::Sub => Some(l.wrapping_sub(r)),
                 BinOp::Mul => Some(l.wrapping_mul(r)),
-                BinOp::Div if r != 0 => Some(l.wrapping_div(r)),
-                BinOp::Mod if r != 0 => Some(l.wrapping_rem(r)),
+                // 0 and INT64_MIN / -1 trap at run time: no folded value.
+                BinOp::Div => l.checked_div(r),
+                BinOp::Mod => l.checked_rem(r),
                 BinOp::BitAnd => Some(l & r),
                 BinOp::BitOr => Some(l | r),
                 BinOp::Shl => Some(l.wrapping_shl((r & 63) as u32)),
@@ -486,6 +487,78 @@ impl<'a> FnContext<'a> {
         }
     }
 
+    /// `lhs / rhs` (or `%`) with trackc's trap semantics: a zero divisor or
+    /// `INT64_MIN / -1` calls `track_trap_div`, which flushes stdout and
+    /// raises SIGFPE (Cranelift's own sdiv trap is a SIGILL that loses the
+    /// buffered output). A known divisor other than 0 and -1 needs no check;
+    /// otherwise one unsigned compare, `rhs + 1 <= 1`, guards the fast path.
+    fn checked_divrem(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        is_div: bool,
+        lhs: Value,
+        rhs: Value,
+        divisor: Option<i64>,
+    ) -> Value {
+        let op = |builder: &mut FunctionBuilder| {
+            if is_div {
+                builder.ins().sdiv(lhs, rhs)
+            } else {
+                builder.ins().srem(lhs, rhs)
+            }
+        };
+        if divisor.is_some_and(|d| d != 0 && d != -1) {
+            return op(builder);
+        }
+        let rare_block = builder.create_block();
+        let neg_block = builder.create_block();
+        let trap_block = builder.create_block();
+        let fast_block = builder.create_block();
+        let merge = builder.create_block();
+        let result = builder.append_block_param(merge, W);
+        builder.set_cold_block(rare_block);
+        builder.set_cold_block(neg_block);
+        builder.set_cold_block(trap_block);
+
+        let biased = builder.ins().iadd_imm(rhs, 1);
+        let rare = builder
+            .ins()
+            .icmp_imm(IntCC::UnsignedLessThanOrEqual, biased, 1);
+        builder.ins().brif(rare, rare_block, &[], fast_block, &[]);
+        self.filled = true;
+
+        // rhs is 0 or -1: trap on 0 and on INT64_MIN / -1.
+        self.switch_to(builder, rare_block);
+        let zero = builder.ins().icmp_imm(IntCC::Equal, rhs, 0);
+        let min = builder.ins().icmp_imm(IntCC::Equal, lhs, i64::MIN);
+        let bad = builder.ins().bor(zero, min);
+        builder.ins().brif(bad, trap_block, &[], neg_block, &[]);
+        self.filled = true;
+
+        // x / -1 == -x and x % -1 == 0 for every other x.
+        self.switch_to(builder, neg_block);
+        let v = if is_div {
+            builder.ins().ineg(lhs)
+        } else {
+            builder.ins().iconst(W, 0)
+        };
+        self.jump(builder, merge, &[v]);
+
+        self.switch_to(builder, trap_block);
+        let t = self
+            .call_named(builder, module, "track_trap_div", &[])
+            .unwrap_or_else(|| builder.ins().iconst(W, 0));
+        self.jump(builder, merge, &[t]);
+
+        self.switch_to(builder, fast_block);
+        let v = op(builder);
+        self.jump(builder, merge, &[v]);
+
+        self.switch_to(builder, merge);
+        result
+    }
+
     /// Normalise a value to a full word (booleans and narrow parameters).
     fn word(&self, builder: &mut FunctionBuilder, v: Value) -> Value {
         let ty = builder.func.dfg.value_type(v);
@@ -840,8 +913,10 @@ impl<'a> FnContext<'a> {
                     BinOp::Add => builder.ins().iadd(lhs, rhs),
                     BinOp::Sub => builder.ins().isub(lhs, rhs),
                     BinOp::Mul => builder.ins().imul(lhs, rhs),
-                    BinOp::Div => builder.ins().sdiv(lhs, rhs),
-                    BinOp::Mod => builder.ins().srem(lhs, rhs),
+                    BinOp::Div | BinOp::Mod => {
+                        let divisor = eval_const(self.consts, right);
+                        self.checked_divrem(builder, module, *op == BinOp::Div, lhs, rhs, divisor)
+                    }
                     BinOp::Eq => self.bool_word(builder, IntCC::Equal, lhs, rhs),
                     BinOp::Neq => self.bool_word(builder, IntCC::NotEqual, lhs, rhs),
                     BinOp::Lt => self.bool_word(builder, IntCC::SignedLessThan, lhs, rhs),
