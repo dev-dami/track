@@ -13,6 +13,7 @@
 #
 #   scripts/bootstrap.sh               # from the C seed
 #   scripts/bootstrap.sh --no-native   # skip the native fixed point
+#   (--from-seed is accepted for old callers; the seed is the only route)
 #
 # Artifacts go to build/bootstrap/ (override with BOOTSTRAP_DIR); the native
 # stages go to $BOOTSTRAP_DIR/selfhost unless SELFHOST_DIR is set.
@@ -24,7 +25,7 @@ for arg in "$@"; do
         --from-seed) ;;
         --no-native) native=0 ;;
         -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "usage: $0 [--no-native]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--no-native] [--from-seed]" >&2; exit 2 ;;
     esac
 done
 

@@ -33,6 +33,16 @@ jobs:
           env PATH=/usr/bin:/bin "$TRACKC" check --deny-warnings compiler/src/main.trk
           env PATH=/usr/bin:/bin "$TRACKC" check --deny-warnings tools/yard/main.trk
 
+      - name: Every compiler source checks; yard checks and builds the compiler package
+        run: |
+          for f in compiler/src/*.trk; do
+            env PATH=/usr/bin:/bin "$TRACKC" check "$f" || { echo "check failed: $f"; exit 1; }
+          done
+          mkdir -p build
+          env PATH=/usr/bin:/bin "$TRACKC" build --native tools/yard/main.trk -o build/yard
+          (cd compiler && env PATH=/usr/bin:/bin TRACKC="$TRACKC" ../build/yard check)
+          (cd compiler && env PATH=/usr/bin:/bin TRACKC="$TRACKC" ../build/yard build)
+
       - name: Test suite (tests/run.sh)
         run: env PATH=/usr/bin:/bin tests/run.sh -j "$(nproc)" -K
 
