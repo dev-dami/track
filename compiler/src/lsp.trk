@@ -3,11 +3,12 @@
 //
 // Diagnostics come from trackc's own front end. The front end stops at the
 // first error by exiting the process (`fail_at`), so the server never runs
-// it in-process: each analysis re-runs this executable as
-// `trackc lsp --check <buffer-file> <path>` (lsp_check_child), which loads
-// the unsaved buffer under its real path, so imports resolve beside it,
-// and prints the usual diagnostics. The server parses them back. A crash
-// or exit in the checker costs one child process, never the server.
+// it in-process: each analysis writes the buffer and its path to a scratch
+// directory and re-runs this executable as `trackc lsp --check <tag>`
+// (lsp_check_child), which loads the unsaved buffer under its real path,
+// so imports resolve beside it, and prints the usual diagnostics. The
+// server parses them back. A crash or exit in the checker costs one child
+// process, never the server.
 
 import "base";
 import "ast";
@@ -514,8 +515,8 @@ fn lsp_update(s: i64, uri: i64, text: i64) -> i64 {
     return lsp_notify("textDocument/publishDiagnostics", sb_text(diags));
 }
 
-// `trackc lsp --check <buffer-file> <path>`: the front end of `trackc check`
-// on the buffer, loaded as `path`. Prints `#syms` and the root module's
+// `trackc lsp --check <tag>`: the front end of `trackc check` on the
+// scratch buffer, loaded under the document's path. Prints `#syms` and the root module's
 // completion symbols to stdout once it parses, diagnostics to stderr.
 fn lsp_check_child(tag: i64) -> i64 {
     let c = cx_new();
