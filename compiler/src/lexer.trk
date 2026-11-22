@@ -341,10 +341,15 @@ fn lex_file(c: i64, f: i64) -> i64 {
     let n = vlen(bytes);
     let mut i: i64 = 0;
     while i < n {
-        let b = vget(bytes, i);
-        let b2 = byte_at(bytes, i + 1);
-        if is_space_byte(b) {
+        let mut b = vget(bytes, i);
+        while is_space_byte(b) {
+            // whitespace runs: no lookahead byte needed
             i = i + 1;
+            b = byte_at(bytes, i);
+        }
+        let b2 = byte_at(bytes, i + 1);
+        if i >= n {
+            // trailing whitespace
         } else if b == 47 && b2 == 47 {
             while i < n && vget(bytes, i) != 10 {
                 i = i + 1;
