@@ -2708,6 +2708,10 @@ fn life_warnings(c: i64) -> i64 {
 //                  (L9) frees the old cell at each `x = v` and the last one
 //                  when the block is left (end, or `return`). `deep` (dump)
 //                  marks sites whose free also runs drop glue.
+//   temp-autofree  a fresh Str or handle call that is an argument of a
+//                  call which only lends it, or a discarded statement
+//                  (L13b, `pl_call_args`); freed right after that call.
+//                  ENDS is the consuming call's line.
 //   heap           everything else, including anything uncertain.
 // ENDS is the position of the last mention of `x` (stack and autofree),
 // the `return` (ret-slot), or -1 (heap: no end is planned).
