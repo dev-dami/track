@@ -182,14 +182,13 @@ fn ni_set(c: i64, id: i64, slot: i64, value: i64) -> i64 {
     return vset(cx(c, CX_INFO), id * NI_WIDTH + slot, value);
 }
 
-// FNV-1a over the bytes of a string.
+// FNV-1a over the bytes of a string (read in place: no byte vector).
 fn text_hash(s: i64) -> i64 {
-    let bytes = text_bytes(s);
-    let n = vlen(bytes);
+    let n = text_len(s);
     let mut h: i64 = 2166136261;
     let mut i: i64 = 0;
     while i < n {
-        let b = vget(bytes, i);
+        let b = str_char_at(s, i);
         h = (h | b) - (h & b); // xor
         h = h * 16777619;
         i = i + 1;
