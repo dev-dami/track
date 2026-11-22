@@ -336,6 +336,14 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "    return 0;");
     sb_line(b, "}");
     sb_line(b, "");
+    sb_line(b, "/* Free a string the compiler proved fresh (docs/lifecycles.md §3.5): a");
+    sb_line(b, " * runtime result the caller owns, never a literal. str_free stays a no-op");
+    sb_line(b, " * because user code may pass it either. */");
+    sb_line(b, "tk_w track_str_free(tk_w s) {");
+    sb_line(b, "    if (s) free(TK_PTR(s));");
+    sb_line(b, "    return 0;");
+    sb_line(b, "}");
+    sb_line(b, "");
     sb_line(b, "tk_w str_len(tk_w s) { return s ? (tk_w)strlen(TK_STR(s)) : 0; }");
     sb_line(b, "");
     sb_line(b, "tk_w str_eq(tk_w a, tk_w b) {");
@@ -730,6 +738,16 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "    return c->data[--c->len];");
     sb_line(b, "}");
     sb_line(b, "");
+    sb_line(b, "/* Free a collection and its storage (fresh handles only, §3.5). */");
+    sb_line(b, "tk_w track_i64_collection_free(tk_w h) {");
+    sb_line(b, "    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);");
+    sb_line(b, "    if (c) {");
+    sb_line(b, "        free(c->data);");
+    sb_line(b, "        free(c);");
+    sb_line(b, "    }");
+    sb_line(b, "    return 0;");
+    sb_line(b, "}");
+    sb_line(b, "");
     sb_line(b, "/* Shrink to `len` elements (no-op when already shorter). */");
     sb_line(b, "tk_w track_i64_collection_truncate(tk_w h, tk_w len) {");
     sb_line(b, "    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);");
@@ -797,6 +815,16 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "tk_w track_sb_str(tk_w h) {");
     sb_line(b, "    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);");
     sb_line(b, "    return TK_WORD(b ? tk_dup_n(b->data, b->len) : tk_dup(\"\"));");
+    sb_line(b, "}");
+    sb_line(b, "");
+    sb_line(b, "/* Free a string builder and its buffer (fresh handles only, §3.5). */");
+    sb_line(b, "tk_w track_sb_free(tk_w h) {");
+    sb_line(b, "    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);");
+    sb_line(b, "    if (b) {");
+    sb_line(b, "        free(b->data);");
+    sb_line(b, "        free(b);");
+    sb_line(b, "    }");
+    sb_line(b, "    return 0;");
     sb_line(b, "}");
     sb_line(b, "");
     sb_line(b, "tk_w track_sb_clear(tk_w h) {");
@@ -945,6 +973,7 @@ fn runtime_prototypes(b: i64) -> i64 {
     sb_line(b, "tk_w read_line(void);");
     sb_line(b, "tk_w str_from_literal(tk_w);");
     sb_line(b, "tk_w str_free(tk_w);");
+    sb_line(b, "tk_w track_str_free(tk_w);");
     sb_line(b, "tk_w str_len(tk_w);");
     sb_line(b, "tk_w str_eq(tk_w, tk_w);");
     sb_line(b, "tk_w str_concat(tk_w, tk_w);");
@@ -1007,6 +1036,7 @@ fn runtime_prototypes(b: i64) -> i64 {
     sb_line(b, "tk_w track_i64_collection_get(tk_w, tk_w);");
     sb_line(b, "tk_w track_i64_collection_set(tk_w, tk_w, tk_w);");
     sb_line(b, "tk_w track_i64_collection_pop(tk_w);");
+    sb_line(b, "tk_w track_i64_collection_free(tk_w);");
     sb_line(b, "tk_w track_i64_collection_truncate(tk_w, tk_w);");
     sb_line(b, "tk_w track_sb_new(void);");
     sb_line(b, "tk_w track_sb_push(tk_w, tk_w);");
@@ -1014,6 +1044,7 @@ fn runtime_prototypes(b: i64) -> i64 {
     sb_line(b, "tk_w track_sb_push_int(tk_w, tk_w);");
     sb_line(b, "tk_w track_sb_len(tk_w);");
     sb_line(b, "tk_w track_sb_str(tk_w);");
+    sb_line(b, "tk_w track_sb_free(tk_w);");
     sb_line(b, "tk_w track_sb_clear(tk_w);");
     sb_line(b, "tk_w track_array_get(tk_w, tk_w);");
     sb_line(b, "tk_w track_array_set(tk_w, tk_w, tk_w);");
@@ -1060,6 +1091,7 @@ fn register_runtime(c: i64) -> i64 {
     ni_set(c, intern(c, "read_line"), NI_EXTERN, 0);
     ni_set(c, intern(c, "str_from_literal"), NI_EXTERN, 1);
     ni_set(c, intern(c, "str_free"), NI_EXTERN, 1);
+    ni_set(c, intern(c, "track_str_free"), NI_EXTERN, 1);
     ni_set(c, intern(c, "str_len"), NI_EXTERN, 1);
     ni_set(c, intern(c, "str_eq"), NI_EXTERN, 2);
     ni_set(c, intern(c, "str_concat"), NI_EXTERN, 2);
@@ -1122,6 +1154,7 @@ fn register_runtime(c: i64) -> i64 {
     ni_set(c, intern(c, "track_i64_collection_get"), NI_EXTERN, 2);
     ni_set(c, intern(c, "track_i64_collection_set"), NI_EXTERN, 3);
     ni_set(c, intern(c, "track_i64_collection_pop"), NI_EXTERN, 1);
+    ni_set(c, intern(c, "track_i64_collection_free"), NI_EXTERN, 1);
     ni_set(c, intern(c, "track_i64_collection_truncate"), NI_EXTERN, 2);
     ni_set(c, intern(c, "track_sb_new"), NI_EXTERN, 0);
     ni_set(c, intern(c, "track_sb_push"), NI_EXTERN, 2);
@@ -1129,6 +1162,7 @@ fn register_runtime(c: i64) -> i64 {
     ni_set(c, intern(c, "track_sb_push_int"), NI_EXTERN, 2);
     ni_set(c, intern(c, "track_sb_len"), NI_EXTERN, 1);
     ni_set(c, intern(c, "track_sb_str"), NI_EXTERN, 1);
+    ni_set(c, intern(c, "track_sb_free"), NI_EXTERN, 1);
     ni_set(c, intern(c, "track_sb_clear"), NI_EXTERN, 1);
     ni_set(c, intern(c, "track_array_get"), NI_EXTERN, 2);
     ni_set(c, intern(c, "track_array_set"), NI_EXTERN, 3);

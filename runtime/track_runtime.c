@@ -330,6 +330,14 @@ tk_w str_free(tk_w s) {
     return 0;
 }
 
+/* Free a string the compiler proved fresh (docs/lifecycles.md §3.5): a
+ * runtime result the caller owns, never a literal. str_free stays a no-op
+ * because user code may pass it either. */
+tk_w track_str_free(tk_w s) {
+    if (s) free(TK_PTR(s));
+    return 0;
+}
+
 tk_w str_len(tk_w s) { return s ? (tk_w)strlen(TK_STR(s)) : 0; }
 
 tk_w str_eq(tk_w a, tk_w b) {
@@ -724,6 +732,16 @@ tk_w track_i64_collection_pop(tk_w h) {
     return c->data[--c->len];
 }
 
+/* Free a collection and its storage (fresh handles only, §3.5). */
+tk_w track_i64_collection_free(tk_w h) {
+    TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);
+    if (c) {
+        free(c->data);
+        free(c);
+    }
+    return 0;
+}
+
 /* Shrink to `len` elements (no-op when already shorter). */
 tk_w track_i64_collection_truncate(tk_w h, tk_w len) {
     TrackI64Collection *c = (TrackI64Collection *)TK_PTR(h);
@@ -791,6 +809,16 @@ tk_w track_sb_len(tk_w h) {
 tk_w track_sb_str(tk_w h) {
     TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);
     return TK_WORD(b ? tk_dup_n(b->data, b->len) : tk_dup(""));
+}
+
+/* Free a string builder and its buffer (fresh handles only, §3.5). */
+tk_w track_sb_free(tk_w h) {
+    TrackStrBuf *b = (TrackStrBuf *)TK_PTR(h);
+    if (b) {
+        free(b->data);
+        free(b);
+    }
+    return 0;
 }
 
 tk_w track_sb_clear(tk_w h) {

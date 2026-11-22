@@ -1,0 +1,41 @@
+// L13: a collection or Vec handle that dies in its block is freed there.
+fn sum_squares(n: i64) -> i64 {
+    let v: i64 = track_i64_collection_new(n);
+    let mut i: i64 = 0;
+    while i < n {
+        track_i64_collection_push(v, i * i);
+        i = i + 1;
+    }
+    let mut total: i64 = 0;
+    let mut k: i64 = 0;
+    while k < track_i64_collection_len(v) {
+        total = total + track_i64_collection_get(v, k);
+        k = k + 1;
+    }
+    return total;
+}
+
+fn vec_total(n: i64) -> i64 {
+    let v: i64 = vec_init(4);
+    let mut i: i64 = 0;
+    while i < n {
+        vec_push(v, i);
+        i = i + 1;
+    }
+    let mut total: i64 = 0;
+    while vec_len(v) > 0 {
+        total = total + vec_pop(v);
+    }
+    return total;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut r: i64 = 0;
+    while r < 50 {
+        total = total + sum_squares(1000) + vec_total(100);
+        r = r + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

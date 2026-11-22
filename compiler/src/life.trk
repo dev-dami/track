@@ -1705,6 +1705,7 @@ fn rt_summaries(c: i64) -> i64 {
     rt(c, "str_from_literal", "r", "f");
     rt(c, "str_concat", "rr", "f");
     rt(c, "str_free", "s", "-");
+    rt(c, "track_str_free", "s", "-");
     rt(c, "str_find", "rr", "-");
     rt(c, "str_contains", "rr", "-");
     rt(c, "str_to_int", "r", "-");
@@ -1715,7 +1716,7 @@ fn rt_summaries(c: i64) -> i64 {
     rt(c, "str_substr", "rnn", "f");
     rt(c, "str_trim", "r", "f");
     rt(c, "str_char_at", "rn", "-");
-    rt(c, "track_str_bytes", "r", "0");
+    rt(c, "track_str_bytes", "r", "f"); // a new collection of the bytes
     rt(c, "path_basename", "r", "f");
     rt(c, "path_ext", "r", "f");
     rt(c, "path_join", "rr", "f");
@@ -1743,6 +1744,7 @@ fn rt_summaries(c: i64) -> i64 {
     rt(c, "track_i64_collection_set", "mns", "-");
     rt(c, "track_i64_collection_pop", "m", "0");
     rt(c, "track_i64_collection_truncate", "mn", "-");
+    rt(c, "track_i64_collection_free", "s", "-");
     rt(c, "track_sb_new", "", "f");
     rt(c, "track_sb_push", "mr", "-");
     rt(c, "track_sb_push_byte", "mn", "-");
@@ -1750,6 +1752,7 @@ fn rt_summaries(c: i64) -> i64 {
     rt(c, "track_sb_len", "r", "-");
     rt(c, "track_sb_str", "r", "f");
     rt(c, "track_sb_clear", "m", "-");
+    rt(c, "track_sb_free", "s", "-");
     // files and io
     rt(c, "read", "", "-");
     rt(c, "read_line", "", "f");
@@ -2722,6 +2725,11 @@ const LT_SITES = 14; // [fn node, site node, PL_*, ends pos]*, in walk order
 const LT_DEEP = 15;  // by node: 1 when a heap-autofree site's free may run drop glue
 const LT_CURTY = 16; // type of the site whose uses `pl_use_ok` mode 3 is checking
 const LT_RSFN = 17;  // by fn node: 1 when it has a ret-slot entry (card L10)
+const LT_HKIND = 18; // by name id: HK_* of a runtime function whose result is fresh
+const LT_HFN = 19;   // by fn node: HK_* when every `return` is a fresh call of that kind
+const LT_HLENT = 20; // by fn node: bits of the parameters the function only lends (L13)
+const LT_HSITE = 21; // by node: HK_* of a heap-autofree Str or handle site, else 0
+const LT_CURHK = 22; // HK_* of the site whose uses `pl_use_ok` mode 5 is checking
 
 const PS_FLAG = 0;  // by name: `pl_let`'s flag for the local it binds (below), else 0
 const PS_BOUND = 1; // scope stack: (name, previous flag) pairs
@@ -3204,6 +3212,237 @@ fn pl_ret_fns(c: i64) -> i64 {
     return 0;
 }
 
+// ------------------------------------------- fresh Str and handles (L13)
+//
+// docs/lifecycles.md §3.5. A `let x = f(..)` whose call returns a fresh
+// runtime object the caller owns (a Str, a Vec, an i64 collection or a
+// string builder) is heap-autofree when every later mention of `x` lends
+// it to a call that neither keeps nor frees it (mode 5 of `pl_use_ok`),
+// and every `x = v` makes a fresh object of the same kind. The backends
+// free it with the kind's runtime free function where cells are freed
+// (block end, `return`, reassignment). The proof is the origin alone:
+// there is no runtime check, so anything uncertain is never freed.
+
+const HK_STR = 1;  // track_str_free
+const HK_VEC = 2;  // vec_free
+const HK_COLL = 3; // track_i64_collection_free
+const HK_SB = 4;   // track_sb_free
+
+fn hd_free_name(kind: i64) -> i64 {
+    if kind == HK_STR { return "track_str_free"; }
+    if kind == HK_VEC { return "vec_free"; }
+    if kind == HK_COLL { return "track_i64_collection_free"; }
+    return "track_sb_free";
+}
+
+fn hd_kind_text(kind: i64) -> i64 {
+    if kind == HK_STR { return "str"; }
+    if kind == HK_VEC { return "vec"; }
+    if kind == HK_COLL { return "collection"; }
+    return "builder";
+}
+
+fn hd_kind(c: i64, kinds: i64, name: i64, kind: i64) -> i64 {
+    let id = name_find(c, name);
+    if id >= 0 && id < vlen(kinds) {
+        vset(kinds, id, kind);
+    }
+    return 0;
+}
+
+// The runtime functions whose result is a new object the caller owns,
+// checked against runtime/track_runtime.c and compiler/rt: every Str one
+// returns a malloc'd (C) or rt_malloc'd (Track runtime) copy, never a
+// literal, and every handle a new record with its own storage.
+fn hd_kinds(c: i64) -> i64 {
+    let kinds = vfill(vnew_cap(name_count(c) + 1), name_count(c), 0);
+    hd_kind(c, kinds, "str_from_literal", HK_STR);
+    hd_kind(c, kinds, "str_concat", HK_STR);
+    hd_kind(c, kinds, "int_to_str", HK_STR);
+    hd_kind(c, kinds, "str_substr", HK_STR);
+    hd_kind(c, kinds, "str_trim", HK_STR);
+    hd_kind(c, kinds, "path_basename", HK_STR);
+    hd_kind(c, kinds, "path_ext", HK_STR);
+    hd_kind(c, kinds, "path_join", HK_STR);
+    hd_kind(c, kinds, "track_sb_str", HK_STR);
+    hd_kind(c, kinds, "read_line", HK_STR);
+    hd_kind(c, kinds, "file_read_all", HK_STR);
+    hd_kind(c, kinds, "track_file_read", HK_STR);
+    hd_kind(c, kinds, "env_get", HK_STR);
+    hd_kind(c, kinds, "os_arg", HK_STR);
+    hd_kind(c, kinds, "vec_init", HK_VEC);
+    hd_kind(c, kinds, "track_i64_collection_new", HK_COLL);
+    hd_kind(c, kinds, "track_str_bytes", HK_COLL);
+    hd_kind(c, kinds, "track_sb_new", HK_SB);
+    return kinds;
+}
+
+// HK_* of the fresh object call `v` returns, or 0: a runtime function the
+// table marks fresh, or a program function whose every `return` is such a
+// call (LT_HFN).
+fn hd_call_kind(c: i64, v: i64) -> i64 {
+    if v < 0 || nk(c, v) != K_CALL {
+        return 0;
+    }
+    let name = na(c, v);
+    if is_qualified(c, name) && variant_disc(c, name) >= 0 {
+        return 0;
+    }
+    let table = ck(c, CK_LIFE);
+    let callee = life_callee(c, name);
+    if callee <= C_RT0 {
+        if vget(vget(table, LT_RTRECS), C_RT0 - callee + LR_RES) != O_FRESH {
+            return 0;
+        }
+        let kinds = vget(table, LT_HKIND);
+        let mut id = name;
+        if id >= vlen(kinds) || vget(kinds, id) == 0 {
+            id = last_segment(c, name);
+        }
+        if id < 0 || id >= vlen(kinds) {
+            return 0;
+        }
+        return vget(kinds, id);
+    }
+    let f = callee_fn(c, name);
+    let hfn = vget(table, LT_HFN);
+    if f < 0 || f >= vlen(hfn) {
+        return 0;
+    }
+    return vget(hfn, f);
+}
+
+// True when argument `i` of call `n` may be the Str or handle local being
+// checked (`&local` when `is_addr`): the callee neither keeps it nor frees
+// it. Runtime functions follow the table (an element a call returns is a
+// word the free never touches, so a derived result is fine); program
+// functions need the parameter lent (LT_HLENT) or, for tracked types, a
+// summary `pl_arg_ok` accepts.
+fn hd_arg_ok(c: i64, n: i64, i: i64, is_addr: bool) -> bool {
+    let name = na(c, n);
+    if is_qualified(c, name) && variant_disc(c, name) >= 0 {
+        return false;
+    }
+    let callee = life_callee(c, name);
+    if callee <= C_RT0 {
+        let recs = vget(ck(c, CK_LIFE), LT_RTRECS);
+        let at = C_RT0 - callee;
+        if i >= vget(recs, at + LR_NP) {
+            return false;
+        }
+        let pe = vget(recs, at + LR_PARAMS + i * 2 + 1);
+        return pe != 0 && (pe & (E_ESC | E_RET)) == 0;
+    }
+    let f = callee_fn(c, name);
+    let lent = vget(ck(c, CK_LIFE), LT_HLENT);
+    if !is_addr && f >= 0 && f < vlen(lent) && i < O_MAXPARAMS && ((vget(lent, f) >> i) & 1) == 1 {
+        return true;
+    }
+    return callee >= 0 && pl_arg_ok(c, n, i, is_addr, false);
+}
+
+// HK_* when every `return` in statement list `l` (from `from`, every
+// `step`) is a call of one fresh kind; `cur` is the kind seen so far (0
+// none yet), -1 when one does not qualify.
+fn hd_rets_list(c: i64, l: i64, from: i64, step: i64, cur: i64) -> i64 {
+    let mut k = cur;
+    let mut i = from;
+    while i < list_len(c, l) && k >= 0 {
+        k = hd_rets(c, list_at(c, l, i), k);
+        i = i + step;
+    }
+    return k;
+}
+
+fn hd_rets(c: i64, n: i64, cur: i64) -> i64 {
+    if n < 0 || cur < 0 {
+        return cur;
+    }
+    let k = nk(c, n);
+    if k == K_RETURN {
+        let kind = hd_call_kind(c, na(c, n));
+        if kind == 0 || (cur != 0 && cur != kind) {
+            return -1;
+        }
+        return kind;
+    }
+    if k == K_IF { return hd_rets_list(c, nc(c, n), 0, 1, hd_rets_list(c, nb(c, n), 0, 1, cur)); }
+    if k == K_WHILE { return hd_rets_list(c, nb(c, n), 0, 1, cur); }
+    if k == K_FOR || k == K_LENS { return hd_rets_list(c, nc(c, n), 0, 1, cur); }
+    if k == K_MATCH { return hd_rets_list(c, nb(c, n), 2, 3, cur); }
+    return cur;
+}
+
+// LT_HKIND, LT_HFN and LT_HLENT for the program. LT_HFN is the least
+// fixpoint (kinds are only ever set, so a member's kind stays valid);
+// LT_HLENT the greatest: every parameter starts lent and loses it when a
+// mention is not a lent argument (mode 6), until nothing changes, so a
+// parameter passed on to itself or a lending partner stays lent.
+fn hd_program(c: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    vset(table, LT_HKIND, hd_kinds(c));
+    let nn = node_count(c);
+    let hfn = vfill(vnew_cap(nn + 1), nn, 0);
+    let lent = vfill(vnew_cap(nn + 1), nn, 0);
+    vset(table, LT_HFN, hfn);
+    vset(table, LT_HLENT, lent);
+    let items = cx(c, CX_ITEMS);
+    let mut i: i64 = 0;
+    while i < vlen(items) {
+        let f = vget(items, i);
+        if nk(c, f) == K_FN {
+            let np = list_len(c, nc(c, f)) / 2;
+            if np > 0 && np < O_MAXPARAMS {
+                vset(lent, f, (1 << np) - 1);
+            }
+        }
+        i = i + 1;
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut j: i64 = 0;
+        while j < vlen(items) {
+            let f = vget(items, j);
+            if nk(c, f) == K_FN {
+                if vget(hfn, f) == 0 && pl_ends_in_return(c, ne(c, f)) {
+                    let kind = hd_rets_list(c, ne(c, f), 0, 1, 0);
+                    if kind > 0 {
+                        vset(hfn, f, kind);
+                        changed = true;
+                    }
+                }
+                let params = nc(c, f);
+                let mut bits = vget(lent, f);
+                let mut q: i64 = 0;
+                while q * 2 < list_len(c, params) && bits != 0 {
+                    if ((bits >> q) & 1) == 1 && !pl_rest_ok(c, ne(c, f), 0, list_at(c, params, q * 2), 6) {
+                        bits = bit_clear(bits, 1 << q);
+                        changed = true;
+                    }
+                    q = q + 1;
+                }
+                vset(lent, f, bits);
+            }
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
+// The HK_* of heap-autofree site `n`, or 0 for cells and other sites.
+fn life_auto_handle(c: i64, n: i64) -> i64 {
+    let table = ck(c, CK_LIFE);
+    if vlen(table) <= LT_HSITE || n < 0 {
+        return 0;
+    }
+    let sites = vget(table, LT_HSITE);
+    if sites == 0 || n >= vlen(sites) {
+        return 0;
+    }
+    return vget(sites, n);
+}
+
 fn pl_uses_ok(c: i64, l: i64, name: i64, mode: i64) -> bool {
     let mut i: i64 = 0;
     while i < list_len(c, l) {
@@ -3242,9 +3481,13 @@ fn pl_is_name(c: i64, n: i64, name: i64) -> bool {
 // destructuring, matching, and lending to a parameter that mutates. Mode
 // 4 (stack, rewritten in place, card L10) is mode 1 except that every
 // `name = v` must build a flat struct literal or call a ret-slot function,
-// which cgen writes into the cell `name` already has. In every mode but 0,
-// `return f(.., name)` and `return f(.., &name)` escape, as ngen refuses
-// them (card L11).
+// which cgen writes into the cell `name` already has. In every mode but 0
+// and 6, `return f(.., name)` and `return f(.., &name)` escape, as ngen
+// refuses them (card L11). Mode 5 (a fresh Str or handle, card L13) only
+// lends `name` to calls `hd_arg_ok` allows, and every `name = v` makes a
+// fresh object of the site's kind (LT_CURHK); mode 6 (a lent parameter)
+// is mode 5 with no assignment at all and `return f(.., name)` allowed,
+// since nothing is freed in that frame.
 fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     let k = nk(c, n);
     if k == K_INT || k == K_STR || k == K_BOOL { return true; }
@@ -3258,18 +3501,18 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     }
     if k == K_TINDEX {
         if pl_is_name(c, na(c, n), name) {
-            return mode != 3 || pl_member_kept(c, n);
+            return mode < 5 && (mode != 3 || pl_member_kept(c, n));
         }
         return pl_use_ok(c, na(c, n), name, mode);
     }
-    if k == K_INDEX && mode > 0 && pl_is_name(c, na(c, n), name) {
+    if k == K_INDEX && mode > 0 && mode < 5 && pl_is_name(c, na(c, n), name) {
         // Element read or (as an assignment target) write: the cell stays put.
         return pl_use_ok(c, nb(c, n), name, mode);
     }
     if k == K_INDEX || k == K_RANGE { return pl_use_ok(c, na(c, n), name, mode) && pl_use_ok(c, nb(c, n), name, mode); }
     if k == K_SLICE { return pl_use_ok(c, na(c, n), name, mode) && pl_use_opt(c, nb(c, n), name, mode) && pl_use_opt(c, nc(c, n), name, mode); }
     if k == K_FIELD {
-        if mode > 0 && pl_is_name(c, na(c, n), name) {
+        if mode > 0 && mode < 5 && pl_is_name(c, na(c, n), name) {
             return mode != 3 || pl_member_kept(c, n);
         }
         return pl_use_ok(c, na(c, n), name, mode);
@@ -3295,11 +3538,18 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
         while i < list_len(c, args) {
             let a = list_at(c, args, i);
             if pl_is_name(c, a, name) {
-                if !pl_arg_ok(c, n, i, false, mode == 3) {
+                if mode >= 5 {
+                    if !hd_arg_ok(c, n, i, false) {
+                        return false;
+                    }
+                } else if !pl_arg_ok(c, n, i, false, mode == 3) {
                     return false;
                 }
             } else if nk(c, a) == K_ADDR && pl_is_name(c, na(c, a), name) {
-                if !pl_arg_ok(c, n, i, true, mode == 3) {
+                if mode == 6 || (mode == 5 && !hd_arg_ok(c, n, i, true)) {
+                    return false;
+                }
+                if mode < 5 && !pl_arg_ok(c, n, i, true, mode == 3) {
                     return false;
                 }
             } else if !pl_use_ok(c, a, name, mode) {
@@ -3314,7 +3564,7 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     if k == K_WHILE { return pl_use_ok(c, na(c, n), name, mode) && pl_uses_ok(c, nb(c, n), name, mode); }
     if k == K_FOR { return pl_use_ok(c, nb(c, n), name, mode) && pl_uses_ok(c, nc(c, n), name, mode); }
     if k == K_RETURN {
-        if mode > 0 && pl_call_takes(c, na(c, n), name) {
+        if mode > 0 && mode != 6 && pl_call_takes(c, na(c, n), name) {
             return false;
         }
         return pl_use_opt(c, na(c, n), name, mode);
@@ -3337,6 +3587,9 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
             if mode == 3 && !pl_deep_fresh(c, nb(c, n)) {
                 return false;
             }
+            if mode == 6 || (mode == 5 && hd_call_kind(c, nb(c, n)) != vget(ck(c, CK_LIFE), LT_CURHK)) {
+                return false;
+            }
             return pl_use_ok(c, nb(c, n), name, mode);
         }
         return pl_use_ok(c, na(c, n), name, mode) && pl_use_ok(c, nb(c, n), name, mode);
@@ -3344,7 +3597,7 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
     if k == K_LET { return pl_use_ok(c, nd(c, n), name, mode); }
     if k == K_LETD {
         if pl_is_name(c, nc(c, n), name) && nk(c, na(c, n)) != P_IDENT {
-            return mode != 3;
+            return mode != 3 && mode < 5;
         }
         return pl_use_ok(c, nc(c, n), name, mode);
     }
@@ -3495,7 +3748,8 @@ fn pl_cell_fits(c: i64, p: i64, v: i64) -> bool {
 // `name` is bound with.
 fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
     let kind = pl_site_kind(c, v);
-    if kind == 0 {
+    let hk = hd_call_kind(c, v);
+    if kind == 0 && (hk == 0 || body < 0 || i + 1 >= list_len(c, body)) {
         pl_walk(c, p, v);
         return 0;
     }
@@ -3507,6 +3761,18 @@ fn pl_let(c: i64, p: i64, body: i64, i: i64, name: i64, v: i64) -> i64 {
         vset(p, PS_WORDS, vget(p, PS_WORDS) + pl_cell_words(c, v));
     } else if body >= 0 && (kind == 4 || pl_drop_kind(c, pl_site_type(c, v)) != 0) && pl_rest_ok(c, body, i + 1, name, 2) {
         place = PL_AUTO;
+    }
+    if place == PL_HEAP && hk > 0 && body >= 0 && i + 1 < list_len(c, body) {
+        vset(ck(c, CK_LIFE), LT_CURHK, hk);
+        if pl_rest_ok(c, body, i + 1, name, 5) {
+            place = PL_AUTO;
+            vset(vget(ck(c, CK_LIFE), LT_HSITE), v, hk);
+        }
+    }
+    if kind == 0 && place != PL_AUTO {
+        // A handle call that stays unfreed is no cell site.
+        pl_walk(c, p, v);
+        return 0;
     }
     let mut ends: i64 = -1;
     if place != PL_HEAP {
@@ -3736,12 +4002,14 @@ fn life_place_program(c: i64) -> i64 {
         life_program(c);
     }
     let table = ck(c, CK_LIFE);
-    while vlen(table) <= LT_RSFN {
+    while vlen(table) <= LT_CURHK {
         vpush(table, 0);
     }
     pl_ret_fns(c);
+    hd_program(c);
     vset(table, LT_PLACE, vfill(vnew_cap(node_count(c) + 1), node_count(c), PL_NONE));
     vset(table, LT_DEEP, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
+    vset(table, LT_HSITE, vfill(vnew_cap(node_count(c) + 1), node_count(c), 0));
     vset(table, LT_SITES, vnew_cap(256));
     let p = vfill(vnew_cap(PS_WIDTH), PS_WIDTH, 0);
     vset(p, PS_FLAG, vfill(vnew_cap(name_count(c) + 1), name_count(c), 0));
@@ -3812,7 +4080,11 @@ fn life_place_dump(c: i64) -> i64 {
         sb_add(b, "  L");
         sb_int(b, life_line(c, npos(c, n)));
         sb_add(b, " ");
-        sb_add(b, pl_kind_text(pl_site_kind(c, n)));
+        if life_auto_handle(c, n) > 0 {
+            sb_add(b, hd_kind_text(life_auto_handle(c, n)));
+        } else {
+            sb_add(b, pl_kind_text(pl_site_kind(c, n)));
+        }
         sb_add(b, " ");
         sb_add(b, pl_place_text(vget(sites, i + 2)));
         if life_auto_deep(c, n) {

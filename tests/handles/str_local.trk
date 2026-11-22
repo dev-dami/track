@@ -1,0 +1,22 @@
+// L13: a fresh Str (str_concat, str_substr) that dies in its block is
+// freed there, and its reassignments free the previous string.
+fn label(n: i64) -> i64 {
+    let s: Str = str_concat("item-", "x");
+    let t: Str = str_substr(&s, 0, 4);
+    return str_len(&s) + str_len(&t) + n;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000 {
+        total = total + label(i);
+        let mut acc: Str = str_concat("a", "b");
+        acc = str_concat(&acc, "c");
+        acc = str_concat(&acc, "d");
+        total = total + str_len(&acc);
+        i = i + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

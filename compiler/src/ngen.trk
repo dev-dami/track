@@ -636,6 +636,12 @@ fn ng_frees_keep(c: i64, from: i64) -> i64 {
 
 fn ng_free_slot(c: i64, k: i64, site: i64) -> i64 {
     ng_load(c, k);
+    let hk = life_auto_handle(c, site);
+    if hk > 0 {
+        // A fresh Str or runtime handle (card L13): its kind's free.
+        x_mov_rr(ncode(c), 7, 0);
+        return ng_call_regs(c, intern(c, hd_free_name(hk)), 1);
+    }
     if life_auto_deep(c, site) {
         return ng_drop(c, pl_site_type(c, site), 0);
     }

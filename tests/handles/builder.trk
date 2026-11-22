@@ -1,0 +1,25 @@
+// L13: a string builder finished into a Str: both the builder and the
+// finished string die in the block and are freed.
+fn render(n: i64) -> i64 {
+    let b: i64 = track_sb_new();
+    let mut i: i64 = 0;
+    while i < n {
+        track_sb_push(b, "x");
+        track_sb_push_int(b, i);
+        track_sb_push_byte(b, 44);
+        i = i + 1;
+    }
+    let text: Str = track_sb_str(b);
+    return str_len(text) + 0;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut r: i64 = 0;
+    while r < 200 {
+        total = total + render(r);
+        r = r + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}
