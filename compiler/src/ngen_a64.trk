@@ -1,0 +1,1190 @@
+// ngen_a64.trk — aarch64 backend: lifts the x86-64 code ngen emits to A64.
+//
+// ngen lowers the checked AST to x86-64 (x64.trk); this backend decodes
+// that code — a small, fixed subset of x86-64 — one instruction at a time
+// and emits an equivalent A64 sequence (a64.trk), so every construct,
+// prim, inlining and register allocation ngen has works on aarch64 too.
+// The x86 machine state maps onto A64 registers:
+//
+//   rax rcx rdx rbx rsp rbp rsi rdi r8  r9  r10 r11 r12 r13 r14 r15
+//   x0  x1  x2  x19 x28 x29 x20 x21 x22 x23 x24 x25 x26 x27 x9  x10
+//
+// x28 is the emulated stack pointer (push = str [x28, #-8]!), so the
+// real SP keeps its 16-byte alignment. `call` pushes its return address
+// and branches; `ret` pops and branches. x13..x17 are scratch: x16 an
+// address, x17 a value, x14 a second value, x15 an immediate, x13 an
+// offset. xmm0..7 map to v0..7 (the string-scan idiom only).
+//
+// Flags: a flag-setting x86 instruction gets the flag-setting A64 form
+// only when a later instruction reads the flags before they are set
+// again (a short look-ahead); the condition codes then map by what set
+// them (subtract-style carry, add-style carry, logic, multiply overflow).
+//
+// System calls: `syscall` branches to one stub (a64_sys_stub) that maps
+// x86-64 Linux numbers and argument shapes to aarch64 Linux (`svc #0`,
+// number in x8, args x0..x5). This stub is the per-OS seam: Apple
+// Silicon and Windows on ARM replace it.
+//
+// Interface: a64_translate(body, code_len, out) -> A64 body (code + the
+// unchanged data) or 0 after printing an error; vget(out, 0) is the A64
+// code length. The entry point stays at offset 0.
+
+import "base";
+import "x64";
+import "a64";
+import "elf";
+
+// decoded instruction fields
+const AD_LEN = 0;
+const AD_OP = 1;     // opcode: byte, or 256 + byte after 0x0f
+const AD_W = 2;      // REX.W
+const AD_REG = 3;    // ModRM reg (with REX.R), or the register of +r forms
+const AD_MOD = 4;    // ModRM mod (3: register operand)
+const AD_RM = 5;     // register operand when mod == 3
+const AD_BASE = 6;   // memory base (-1 none, -2 rip)
+const AD_IDX = 7;    // memory index (-1 none)
+const AD_SCALE = 8;  // index shift
+const AD_DISP = 9;
+const AD_IMM = 10;
+const AD_P66 = 11;   // operand-size prefix
+const AD_REX = 12;   // REX byte (0 none)
+const AD_TGT = 13;   // branch / rip-relative target (x86 code offset)
+const AD_SLOTS = 14;
+
+// translation state
+const AT_W = 0;      // A64 words
+const AT_FX = 1;     // fixups: (word, kind, x86 target)
+const AT_CODE = 2;   // x86 body
+const AT_N = 3;      // x86 code length
+const AT_D = 4;      // current instruction
+const AT_D2 = 5;     // look-ahead scratch
+const AT_FK = 6;     // what set the flags (FK_*)
+const AT_LIVE = 7;   // flags of the current instruction are read later
+const AT_AR = 8;     // mem_addr result: base register
+const AT_AO = 9;     // mem_addr result: offset
+const AT_POS = 10;   // x86 offset of the current instruction
+const AT_SLOTS = 11;
+
+const AFK_SUB = 0;
+const AFK_ADD = 1;
+const AFK_LOGIC = 2;
+const AFK_MUL = 3;
+
+// fixup kinds
+const AFX_B = 1;     // b / bl imm26
+const AFX_BC = 2;    // b.cond imm19
+const AFX_ADRP = 3;  // adrp + add pair
+const AFX_STUB = -1; // target: the system call stub
+
+// ALU kinds
+const AK_ADDK = 0;
+const AK_ORK = 1;
+const AK_ANDK = 4;
+const AK_SUBK = 5;
+const AK_XORK = 6;
+const AK_CMPK = 7;
+const AK_TESTK = 8;
+
+const AX16 = 16;
+const AX17 = 17;
+
+fn a64_reg(r: i64) -> i64 {
+    if r == 3 { return 19; }
+    if r == 4 { return 28; }
+    if r == 5 { return 29; }
+    if r == 6 { return 20; }
+    if r == 7 { return 21; }
+    if r >= 8 && r <= 13 { return r + 14; }
+    if r == 14 { return 9; }
+    if r == 15 { return 10; }
+    return r;
+}
+
+fn ax_dg(d: i64, f: i64) -> i64 { return vget(d, f); }
+fn ax_ds(d: i64, f: i64, v: i64) -> i64 { return vset(d, f, v); }
+fn ax_tg(t: i64, f: i64) -> i64 { return vget(t, f); }
+fn ax_tw(t: i64) -> i64 { return vget(t, AT_W); }
+
+fn ax_byte_at(code: i64, p: i64) -> i64 { return vget(code, p) & 255; }
+
+fn ax_s8(v: i64) -> i64 {
+    if v >= 128 { return v - 256; }
+    return v;
+}
+
+fn ax_s32(v: i64) -> i64 {
+    if v >= 2147483648 { return v - 4294967296; }
+    return v;
+}
+
+fn ax_le32(code: i64, p: i64) -> i64 {
+    return ax_byte_at(code, p) + ax_byte_at(code, p + 1) * 256 + ax_byte_at(code, p + 2) * 65536 + ax_byte_at(code, p + 3) * 16777216;
+}
+
+fn ax_le64(code: i64, p: i64) -> i64 {
+    return ax_le32(code, p) + (ax_le32(code, p + 4) << 32);
+}
+
+fn ax_op_has_modrm(op: i64, p66: i64) -> bool {
+    if op < 256 {
+        if op < 64 {
+            let lo = op & 7;
+            return lo <= 3;
+        }
+        if op == 99 || op == 105 || op == 107 { return true; }
+        if op >= 128 && op <= 143 { return true; }
+        if op == 192 || op == 193 || op == 198 || op == 199 { return true; }
+        if op >= 208 && op <= 211 { return true; }
+        if op == 246 || op == 247 || op == 254 || op == 255 { return true; }
+        return false;
+    }
+    let b = op - 256;
+    if b == 31 || b == 175 || b == 182 || b == 183 || b == 190 || b == 191 || b == 188 || b == 189 { return true; }
+    if b >= 64 && b <= 79 { return true; }
+    if b >= 144 && b <= 159 { return true; }
+    if p66 == 1 && (b == 111 || b == 116 || b == 215 || b == 239 || b == 127) { return true; }
+    return false;
+}
+
+// Immediate bytes after the ModRM/SIB/displacement.
+fn ax_op_imm_size(op: i64, d: i64) -> i64 {
+    if op < 64 && (op & 7) == 4 { return 1; }
+    if op < 64 && (op & 7) == 5 {
+        if ax_dg(d, AD_P66) == 1 { return 2; }
+        return 4;
+    }
+    if op == 105 || op == 129 || op == 199 {
+        if ax_dg(d, AD_P66) == 1 { return 2; }
+        return 4;
+    }
+    if op == 107 || op == 128 || op == 131 || op == 192 || op == 193 || op == 198 || op == 168 { return 1; }
+    if op == 247 && (ax_dg(d, AD_REG) & 7) <= 1 { return 4; }
+    if op == 246 && (ax_dg(d, AD_REG) & 7) <= 1 { return 1; }
+    if op == 169 { return 4; }
+    return 0;
+}
+
+// Decode the instruction at `pos` into d. False when it is outside the
+// supported subset.
+fn a64_decode(code: i64, pos: i64, n: i64, d: i64) -> bool {
+    let mut p = pos;
+    let mut i: i64 = 0;
+    while i < AD_SLOTS {
+        vset(d, i, 0);
+        i = i + 1;
+    }
+    ax_ds(d, AD_BASE, -1);
+    ax_ds(d, AD_IDX, -1);
+    ax_ds(d, AD_MOD, -1);
+    ax_ds(d, AD_RM, -1);
+    while p < n && ax_byte_at(code, p) == 102 {
+        ax_ds(d, AD_P66, 1);
+        p = p + 1;
+    }
+    let mut rex: i64 = 0;
+    if p < n && ax_byte_at(code, p) >= 64 && ax_byte_at(code, p) <= 79 {
+        rex = ax_byte_at(code, p);
+        p = p + 1;
+    }
+    ax_ds(d, AD_REX, rex);
+    let rw = (rex >> 3) & 1;
+    let rr = (rex >> 2) & 1;
+    let rx = (rex >> 1) & 1;
+    let rb = rex & 1;
+    ax_ds(d, AD_W, rw);
+    if p >= n { return false; }
+    let mut op = ax_byte_at(code, p);
+    p = p + 1;
+    if op == 15 {
+        if p >= n { return false; }
+        op = 256 + ax_byte_at(code, p);
+        p = p + 1;
+    }
+    ax_ds(d, AD_OP, op);
+    if ax_op_has_modrm(op, ax_dg(d, AD_P66)) {
+        if p >= n { return false; }
+        let m = ax_byte_at(code, p);
+        p = p + 1;
+        let md = m >> 6;
+        let rm = m & 7;
+        ax_ds(d, AD_REG, ((m >> 3) & 7) + 8 * rr);
+        ax_ds(d, AD_MOD, md);
+        let mut rip = false;
+        if md == 3 {
+            ax_ds(d, AD_RM, rm + 8 * rb);
+        } else {
+            if rm == 4 {
+                let s = ax_byte_at(code, p);
+                p = p + 1;
+                ax_ds(d, AD_SCALE, s >> 6);
+                let ix = ((s >> 3) & 7) + 8 * rx;
+                if ix != 4 {
+                    ax_ds(d, AD_IDX, ix);
+                }
+                if (s & 7) == 5 && md == 0 {
+                    ax_ds(d, AD_BASE, -1);
+                    ax_ds(d, AD_DISP, ax_s32(ax_le32(code, p)));
+                    p = p + 4;
+                } else {
+                    ax_ds(d, AD_BASE, (s & 7) + 8 * rb);
+                }
+            } else if rm == 5 && md == 0 {
+                ax_ds(d, AD_BASE, -2);
+                ax_ds(d, AD_DISP, ax_s32(ax_le32(code, p)));
+                p = p + 4;
+                rip = true;
+            } else {
+                ax_ds(d, AD_BASE, rm + 8 * rb);
+            }
+            if md == 1 {
+                ax_ds(d, AD_DISP, ax_s8(ax_byte_at(code, p)));
+                p = p + 1;
+            } else if md == 2 {
+                ax_ds(d, AD_DISP, ax_s32(ax_le32(code, p)));
+                p = p + 4;
+            }
+        }
+        let k = ax_op_imm_size(op, d);
+        if k == 1 {
+            ax_ds(d, AD_IMM, ax_s8(ax_byte_at(code, p)));
+        } else if k == 2 {
+            ax_ds(d, AD_IMM, ax_byte_at(code, p) + 256 * ax_byte_at(code, p + 1));
+        } else if k == 4 {
+            ax_ds(d, AD_IMM, ax_s32(ax_le32(code, p)));
+        }
+        p = p + k;
+        if rip {
+            ax_ds(d, AD_TGT, p + ax_dg(d, AD_DISP));
+        }
+        ax_ds(d, AD_LEN, p - pos);
+        return p <= n;
+    }
+    if op >= 80 && op <= 95 {
+        ax_ds(d, AD_REG, (op & 7) + 8 * rb);
+    } else if op >= 184 && op <= 191 {
+        ax_ds(d, AD_REG, (op & 7) + 8 * rb);
+        if rw == 1 {
+            ax_ds(d, AD_IMM, ax_le64(code, p));
+            p = p + 8;
+        } else {
+            ax_ds(d, AD_IMM, ax_le32(code, p));
+            p = p + 4;
+        }
+    } else if op == 232 || op == 233 || (op >= 384 && op <= 399) {
+        ax_ds(d, AD_TGT, p + 4 + ax_s32(ax_le32(code, p)));
+        p = p + 4;
+    } else if op == 235 || (op >= 112 && op <= 127) {
+        ax_ds(d, AD_TGT, p + 1 + ax_s8(ax_byte_at(code, p)));
+        p = p + 1;
+    } else if op == 194 {
+        ax_ds(d, AD_IMM, ax_byte_at(code, p) + 256 * ax_byte_at(code, p + 1));
+        p = p + 2;
+    } else if !(op == 144 || op == 153 || op == 195 || op == 201 || op == 204 || op == 261 || op == 267) {
+        return false;
+    }
+    ax_ds(d, AD_LEN, p - pos);
+    return p <= n;
+}
+
+// 0: no flag effect, 1: reads flags, 2: sets them, 3: ends the block
+fn a64_flag_use(d: i64) -> i64 {
+    let op = ax_dg(d, AD_OP);
+    let sub = ax_dg(d, AD_REG) & 7;
+    if (op >= 112 && op <= 127) || (op >= 384 && op <= 399) || (op >= 400 && op <= 415) || (op >= 320 && op <= 335) {
+        return 1;
+    }
+    if op < 64 && (op & 7) <= 5 {
+        if (op >> 3) == 2 || (op >> 3) == 3 { return 1; }
+        return 2;
+    }
+    if op == 128 || op == 129 || op == 131 {
+        if sub == 2 || sub == 3 { return 1; }
+        return 2;
+    }
+    if op == 132 || op == 133 || op == 168 || op == 169 || op == 105 || op == 107 || op == 431 || op == 444 || op == 445 {
+        return 2;
+    }
+    if op == 192 || op == 193 || (op >= 208 && op <= 211) { return 2; }
+    if op == 246 || op == 247 {
+        if sub == 2 { return 0; }
+        return 2;
+    }
+    if op == 232 || op == 233 || op == 235 || op == 195 || op == 194 || op == 261 || op == 204 || op == 267 {
+        return 3;
+    }
+    return 0;
+}
+
+// Are the flags set by the instruction ending at `p` read later?
+fn a64_flags_live(t: i64, p: i64) -> bool {
+    let d = ax_tg(t, AT_D2);
+    let code = ax_tg(t, AT_CODE);
+    let n = ax_tg(t, AT_N);
+    let mut q = p;
+    let mut k: i64 = 0;
+    while k < 24 && q < n {
+        if !a64_decode(code, q, n, d) {
+            return true;
+        }
+        let u = a64_flag_use(d);
+        if u == 1 { return true; }
+        if u == 2 || u == 3 { return false; }
+        q = q + ax_dg(d, AD_LEN);
+        k = k + 1;
+    }
+    return true;
+}
+
+fn ax_fixup(t: i64, at: i64, kind: i64, target: i64) -> i64 {
+    let fx = ax_tg(t, AT_FX);
+    vpush(fx, at);
+    vpush(fx, kind);
+    return vpush(fx, target);
+}
+
+fn a64_fail(t: i64, what: i64) -> bool {
+    let code = ax_tg(t, AT_CODE);
+    let pos = ax_tg(t, AT_POS);
+    let mut s = text_cat3("trackc: aarch64: ", what, " at x86 offset ");
+    s = text_cat(s, text_of_int(pos));
+    s = text_cat(s, ":");
+    let mut i: i64 = 0;
+    while i < 8 && pos + i < ax_tg(t, AT_N) {
+        s = text_cat3(s, " ", text_of_int(ax_byte_at(code, pos + i)));
+        i = i + 1;
+    }
+    err(text_cat(s, "\n"));
+    return false;
+}
+
+// x86 condition (low nibble of jcc/setcc/cmovcc) -> A64 condition, given
+// what set the flags; -1 when there is no equivalent.
+fn a64_cond(xcc: i64, fk: i64) -> i64 {
+    if fk == AFK_MUL {
+        if xcc == 0 { return A_NE; }
+        if xcc == 1 { return A_EQ; }
+        return -1;
+    }
+    if xcc == 4 { return A_EQ; }
+    if xcc == 5 { return A_NE; }
+    if xcc == 8 { return A_MI; }
+    if xcc == 9 { return A_PL; }
+    if xcc == 12 { return A_LT; }
+    if xcc == 13 { return A_GE; }
+    if xcc == 14 { return A_LE; }
+    if xcc == 15 { return A_GT; }
+    if xcc == 0 { return A_VS; }
+    if xcc == 1 { return A_VC; }
+    if fk == AFK_LOGIC {
+        // CF = 0: below-or-equal is ZF, above is !ZF
+        if xcc == 6 { return A_EQ; }
+        if xcc == 7 { return A_NE; }
+        return -1;
+    }
+    if fk == AFK_ADD {
+        if xcc == 2 { return A_HS; }
+        if xcc == 3 { return A_LO; }
+        return -1;
+    }
+    if xcc == 2 { return A_LO; }
+    if xcc == 3 { return A_HS; }
+    if xcc == 6 { return A_LS; }
+    if xcc == 7 { return A_HI; }
+    return -1;
+}
+
+// A register holding v (xzr for 0), loaded into `tmp` otherwise.
+fn ax_imm_reg(t: i64, sf: i64, v: i64, tmp: i64) -> i64 {
+    if v == 0 { return A_ZR; }
+    a_mov_imm(ax_tw(t), sf, tmp, v);
+    return tmp;
+}
+
+// Address of the memory operand as (AT_AR register, AT_AO offset) with a
+// single-instruction access form at `size`; may use x16 and x13.
+fn ax_mem_addr(t: i64, d: i64, size: i64) -> i64 {
+    let w = ax_tw(t);
+    let base = ax_dg(d, AD_BASE);
+    let idx = ax_dg(d, AD_IDX);
+    let disp = ax_dg(d, AD_DISP);
+    if base == -2 {
+        let at = a_adrp(w, AX16, 0);
+        a_addi(w, 1, AX16, AX16, 0);
+        ax_fixup(t, at, AFX_ADRP, ax_dg(d, AD_TGT));
+        vset(t, AT_AR, AX16);
+        return vset(t, AT_AO, 0);
+    }
+    if idx < 0 {
+        if base < 0 {
+            a_mov_imm(w, 1, AX16, disp);
+            vset(t, AT_AR, AX16);
+            return vset(t, AT_AO, 0);
+        }
+        if a_mem_fits(size, disp) {
+            vset(t, AT_AR, a64_reg(base));
+            return vset(t, AT_AO, disp);
+        }
+        a_mov_imm(w, 1, AX16, disp);
+        a_add(w, 1, AX16, AX16, a64_reg(base));
+        vset(t, AT_AR, AX16);
+        return vset(t, AT_AO, 0);
+    }
+    if base >= 0 {
+        a_alu_r(w, A_ADDR, 1, AX16, a64_reg(base), a64_reg(idx), 0, ax_dg(d, AD_SCALE));
+    } else {
+        a_lsl_i(w, 1, AX16, a64_reg(idx), ax_dg(d, AD_SCALE));
+    }
+    vset(t, AT_AR, AX16);
+    if a_mem_fits(size, disp) {
+        return vset(t, AT_AO, disp);
+    }
+    a_mov_imm(w, 1, 13, disp);
+    a_add(w, 1, AX16, AX16, 13);
+    return vset(t, AT_AO, 0);
+}
+
+// Full address of the memory operand into rd.
+fn ax_lea_into(t: i64, d: i64, rd: i64) -> i64 {
+    let w = ax_tw(t);
+    ax_mem_addr(t, d, 0);
+    let r = ax_tg(t, AT_AR);
+    let o = ax_tg(t, AT_AO);
+    if o > 0 {
+        return a_addi(w, 1, rd, r, o);
+    }
+    if o < 0 {
+        return a_subi(w, 1, rd, r, 0 - o);
+    }
+    if r != rd {
+        return a_mov(w, 1, rd, r);
+    }
+    return 0;
+}
+
+fn ax_mem_op(t: i64, d: i64, size: i64, opc: i64, rt: i64) -> i64 {
+    ax_mem_addr(t, d, size);
+    return a_mem(ax_tw(t), size, opc, rt, ax_tg(t, AT_AR), ax_tg(t, AT_AO));
+}
+
+// operand size of a non-byte instruction: 1 (16-bit), 2 or 3
+fn ax_op_size(d: i64) -> i64 {
+    if ax_dg(d, AD_W) == 1 { return 3; }
+    if ax_dg(d, AD_P66) == 1 { return 1; }
+    return 2;
+}
+
+// A register holding the r/m operand's value (loaded into tmp from memory).
+fn ax_rm_val(t: i64, d: i64, size: i64, tmp: i64) -> i64 {
+    if ax_dg(d, AD_MOD) == 3 {
+        return a64_reg(ax_dg(d, AD_RM));
+    }
+    ax_mem_op(t, d, size, 1, tmp);
+    return tmp;
+}
+
+// A byte register code is usable (no ah/ch/dh/bh).
+fn ax_reg8_ok(d: i64, r: i64) -> bool {
+    return ax_dg(d, AD_REX) != 0 || r < 4;
+}
+
+// rd = a op b (b a register, or the immediate imm when use_imm); CMP and
+// TEST only set flags. Sets AT_FK when the flags are wanted.
+fn ax_alu_apply(t: i64, k: i64, sf: i64, rd: i64, a: i64, b: i64, imm: i64, use_imm: bool) -> bool {
+    let w = ax_tw(t);
+    let live = ax_tg(t, AT_LIVE) == 1 || k == AK_CMPK || k == AK_TESTK;
+    let mut rb = b;
+    if use_imm {
+        let mut v = imm;
+        if sf == 0 {
+            v = imm & 4294967295;
+            if v >= 2147483648 && v - 4294967296 >= -4095 {
+                v = v - 4294967296;
+            }
+        }
+        if (k == AK_ADDK && !live) || k == AK_SUBK || k == AK_CMPK {
+            let mut kk = k;
+            let mut av = v;
+            if v < 0 && v >= -4095 {
+                av = 0 - v;
+                if k == AK_ADDK { kk = AK_SUBK; } else if k == AK_SUBK { kk = AK_ADDK; } else { kk = 100; }
+            }
+            if av >= 0 && av <= 4095 {
+                if kk == AK_CMPK {
+                    a_cmpi(w, sf, a, av);
+                } else if kk == 100 {
+                    a_cmni(w, sf, a, av);
+                } else if kk == AK_ADDK {
+                    if live { a_arith_i(w, A_ADDSI, sf, rd, a, av); } else { a_addi(w, sf, rd, a, av); }
+                } else {
+                    if live { a_arith_i(w, A_SUBSI, sf, rd, a, av); } else { a_subi(w, sf, rd, a, av); }
+                }
+                vset(t, AT_FK, AFK_SUB);
+                return true;
+            }
+        }
+        rb = ax_imm_reg(t, sf, imm, 15);
+    }
+    if k == AK_ADDK {
+        if live {
+            a_alu_r(w, A_ADDSR, sf, rd, a, rb, 0, 0);
+            vset(t, AT_FK, AFK_ADD);
+        } else {
+            a_add(w, sf, rd, a, rb);
+        }
+    } else if k == AK_SUBK {
+        if live { a_alu_r(w, A_SUBSR, sf, rd, a, rb, 0, 0); } else { a_sub(w, sf, rd, a, rb); }
+        vset(t, AT_FK, AFK_SUB);
+    } else if k == AK_CMPK {
+        a_cmp(w, sf, a, rb);
+        vset(t, AT_FK, AFK_SUB);
+    } else if k == AK_ANDK {
+        if live { a_alu_r(w, A_ANDSR, sf, rd, a, rb, 0, 0); } else { a_and(w, sf, rd, a, rb); }
+        vset(t, AT_FK, AFK_LOGIC);
+    } else if k == AK_TESTK {
+        a_tst(w, sf, a, rb);
+        vset(t, AT_FK, AFK_LOGIC);
+    } else if k == AK_ORK || k == AK_XORK {
+        if k == AK_ORK { a_orr(w, sf, rd, a, rb); } else { a_eor(w, sf, rd, a, rb); }
+        if live {
+            a_cmpi(w, sf, rd, 0);
+            vset(t, AT_FK, AFK_SUB);
+        }
+    } else {
+        return a64_fail(t, "unsupported ALU operation");
+    }
+    return true;
+}
+
+// op r/m, (reg | imm)
+fn ax_alu_rm(t: i64, k: i64, d: i64, use_imm: bool) -> bool {
+    let size = ax_op_size(d);
+    if size == 1 {
+        return a64_fail(t, "16-bit ALU operation");
+    }
+    let sf = size - 2;
+    let mut b: i64 = 0;
+    if !use_imm {
+        b = a64_reg(ax_dg(d, AD_REG));
+    }
+    if ax_dg(d, AD_MOD) == 3 {
+        let r = a64_reg(ax_dg(d, AD_RM));
+        return ax_alu_apply(t, k, sf, r, r, b, ax_dg(d, AD_IMM), use_imm);
+    }
+    ax_mem_addr(t, d, size);
+    let ar = ax_tg(t, AT_AR);
+    let ao = ax_tg(t, AT_AO);
+    a_mem(ax_tw(t), size, 1, AX17, ar, ao);
+    if !ax_alu_apply(t, k, sf, AX17, AX17, b, ax_dg(d, AD_IMM), use_imm) {
+        return false;
+    }
+    if k != AK_CMPK && k != AK_TESTK {
+        a_mem(ax_tw(t), size, 0, AX17, ar, ao);
+    }
+    return true;
+}
+
+// op reg, r/m
+fn ax_alu_reg(t: i64, k: i64, d: i64) -> bool {
+    let size = ax_op_size(d);
+    if size == 1 {
+        return a64_fail(t, "16-bit ALU operation");
+    }
+    let r = a64_reg(ax_dg(d, AD_REG));
+    let b = ax_rm_val(t, d, size, 14);
+    return ax_alu_apply(t, k, size - 2, r, r, b, 0, false);
+}
+
+fn ax_shift_op(t: i64, d: i64, sub: i64, count_kind: i64) -> bool {
+    let w = ax_tw(t);
+    let size = ax_op_size(d);
+    if size == 1 {
+        return a64_fail(t, "16-bit shift");
+    }
+    let sf = size - 2;
+    if sub != 4 && sub != 5 && sub != 7 {
+        return a64_fail(t, "unsupported shift");
+    }
+    let mut r = AX17;
+    let mem = ax_dg(d, AD_MOD) != 3;
+    if mem {
+        ax_mem_addr(t, d, size);
+        a_mem(w, size, 1, AX17, ax_tg(t, AT_AR), ax_tg(t, AT_AO));
+    } else {
+        r = a64_reg(ax_dg(d, AD_RM));
+    }
+    if count_kind == 2 {
+        if sub == 4 { a_lslv(w, sf, r, r, 1); }
+        if sub == 5 { a_lsrv(w, sf, r, r, 1); }
+        if sub == 7 { a_asrv(w, sf, r, r, 1); }
+    } else {
+        let mut s: i64 = 1;
+        if count_kind == 0 {
+            s = ax_dg(d, AD_IMM) & (a_bits(sf) - 1);
+        }
+        if s == 0 {
+            return true;
+        }
+        if sub == 4 { a_lsl_i(w, sf, r, r, s); }
+        if sub == 5 { a_lsr_i(w, sf, r, r, s); }
+        if sub == 7 { a_asr_i(w, sf, r, r, s); }
+    }
+    if mem {
+        a_mem(w, size, 0, AX17, ax_tg(t, AT_AR), ax_tg(t, AT_AO));
+    }
+    if ax_tg(t, AT_LIVE) == 1 {
+        a_cmpi(w, sf, r, 0);
+        vset(t, AT_FK, AFK_SUB);
+    }
+    return true;
+}
+
+// group 3 (f7): test imm, not, neg, div, idiv
+fn ax_group3(t: i64, d: i64) -> bool {
+    let w = ax_tw(t);
+    let sub = ax_dg(d, AD_REG) & 7;
+    let size = ax_op_size(d);
+    if size == 1 {
+        return a64_fail(t, "16-bit group-3 operation");
+    }
+    let sf = size - 2;
+    if sub == 0 {
+        return ax_alu_rm(t, AK_TESTK, d, true);
+    }
+    if sub == 2 || sub == 3 {
+        if ax_dg(d, AD_MOD) != 3 {
+            return a64_fail(t, "not/neg of memory");
+        }
+        let r = a64_reg(ax_dg(d, AD_RM));
+        if sub == 2 {
+            a_mvn(w, sf, r, r);
+        } else if ax_tg(t, AT_LIVE) == 1 {
+            a_negs(w, sf, r, r);
+            vset(t, AT_FK, AFK_SUB);
+        } else {
+            a_neg(w, sf, r, r);
+        }
+        return true;
+    }
+    if (sub == 4 || sub == 5) && sf == 1 {
+        // rdx:rax = rax * src
+        let s = ax_rm_val(t, d, size, 14);
+        if sub == 5 { a_smulh(w, 13, 0, s); } else { a_umulh(w, 13, 0, s); }
+        a_mul(w, 1, 0, 0, s);
+        a_mov(w, 1, 2, 13);
+        return true;
+    }
+    if sub == 6 || sub == 7 {
+        let s = ax_rm_val(t, d, size, 14);
+        if sub == 7 { a_sdiv(w, sf, AX17, 0, s); } else { a_udiv(w, sf, AX17, 0, s); }
+        a_msub(w, sf, 2, AX17, s, 0);
+        a_mov(w, sf, 0, AX17);
+        return true;
+    }
+    return a64_fail(t, "unsupported group-3 operation");
+}
+
+fn ax_mov_store(t: i64, d: i64, size: i64, rs: i64) -> i64 {
+    return ax_mem_op(t, d, size, 0, rs);
+}
+
+// The current instruction's branch target: an x86 code offset.
+fn ax_branch_to(t: i64, at: i64, kind: i64, d: i64) -> i64 {
+    return ax_fixup(t, at, kind, ax_dg(d, AD_TGT));
+}
+
+// pmovmskb rd32, vn: one bit per byte lane (lanes are 0x00 or 0xff).
+fn ax_pmovmskb(t: i64, rd: i64, vn: i64) -> i64 {
+    let w = ax_tw(t);
+    a_umovd(w, AX17, vn, 0);
+    a_umovd(w, 14, vn, 1);
+    a_mov_imm(w, 1, 15, 0 - 9205322385119247871);  // 0x8040201008040201
+    a_mov_imm(w, 1, AX16, 72340172838076673);   // 0x0101010101010101
+    a_and(w, 1, AX17, AX17, 15);
+    a_mul(w, 1, AX17, AX17, AX16);
+    a_lsr_i(w, 1, AX17, AX17, 56);
+    a_and(w, 1, 14, 14, 15);
+    a_mul(w, 1, 14, 14, AX16);
+    a_lsr_i(w, 1, 14, 14, 56);
+    return a_alu_r(w, A_ORRR, 0, rd, AX17, 14, 0, 8);
+}
+
+// Translate the decoded instruction d.
+fn a64_insn(t: i64, d: i64) -> bool {
+    let w = ax_tw(t);
+    let op = ax_dg(d, AD_OP);
+    let reg = ax_dg(d, AD_REG);
+    let sub = reg & 7;
+    let md = ax_dg(d, AD_MOD);
+    let size = ax_op_size(d);
+    let sf = ax_dg(d, AD_W);
+    // classic ALU: 00-3f
+    if op < 64 && (op & 7) <= 5 {
+        let k = op >> 3;
+        if k == 2 || k == 3 {
+            return a64_fail(t, "adc/sbb");
+        }
+        let form = op & 7;
+        if form == 1 { return ax_alu_rm(t, k, d, false); }
+        if form == 3 { return ax_alu_reg(t, k, d); }
+        return a64_fail(t, "byte or accumulator ALU form");
+    }
+    if op == 129 || op == 131 {
+        if sub == 2 || sub == 3 {
+            return a64_fail(t, "adc/sbb");
+        }
+        return ax_alu_rm(t, sub, d, true);
+    }
+    if op == 133 {
+        return ax_alu_rm(t, AK_TESTK, d, false);
+    }
+    if op == 137 {
+        // mov r/m, r
+        if md == 3 {
+            a_mov(w, size - 2, a64_reg(ax_dg(d, AD_RM)), a64_reg(reg));
+            return true;
+        }
+        ax_mov_store(t, d, size, a64_reg(reg));
+        return true;
+    }
+    if op == 136 {
+        // mov r/m8, r8
+        if !ax_reg8_ok(d, reg) {
+            return a64_fail(t, "high byte register");
+        }
+        if md == 3 {
+            if !ax_reg8_ok(d, ax_dg(d, AD_RM)) {
+                return a64_fail(t, "high byte register");
+            }
+            a_bfi0(w, a64_reg(ax_dg(d, AD_RM)), a64_reg(reg), 8);
+            return true;
+        }
+        ax_mov_store(t, d, 0, a64_reg(reg));
+        return true;
+    }
+    if op == 139 {
+        if size == 1 {
+            return a64_fail(t, "16-bit load");
+        }
+        if md == 3 {
+            a_mov(w, size - 2, a64_reg(reg), a64_reg(ax_dg(d, AD_RM)));
+            return true;
+        }
+        ax_mem_op(t, d, size, 1, a64_reg(reg));
+        return true;
+    }
+    if op == 141 {
+        ax_lea_into(t, d, a64_reg(reg));
+        if sf == 0 {
+            a_uxt(w, a64_reg(reg), a64_reg(reg), 32);
+        }
+        return true;
+    }
+    if op == 199 || op == 198 {
+        if sub != 0 {
+            return a64_fail(t, "mov imm group");
+        }
+        let mut v = ax_dg(d, AD_IMM);
+        let mut sz = size;
+        if op == 198 {
+            sz = 0;
+            v = v & 255;
+        } else if sz == 2 {
+            v = v & 4294967295;
+        } else if sz == 1 {
+            v = v & 65535;
+        }
+        if md == 3 {
+            a_mov_imm(w, sf, a64_reg(ax_dg(d, AD_RM)), v);
+            return true;
+        }
+        ax_mem_addr(t, d, sz);
+        let ar = ax_tg(t, AT_AR);
+        let ao = ax_tg(t, AT_AO);
+        let r = ax_imm_reg(t, 1, v, AX17);
+        a_mem(w, sz, 0, r, ar, ao);
+        return true;
+    }
+    if op >= 184 && op <= 191 {
+        a_mov_imm(w, sf, a64_reg(reg), ax_dg(d, AD_IMM));
+        return true;
+    }
+    if op >= 80 && op <= 87 {
+        let r = a64_reg(reg);
+        if r == 28 {
+            a_mov(w, 1, AX17, 28);
+            a_push(w, AX17, 28);
+            return true;
+        }
+        a_push(w, r, 28);
+        return true;
+    }
+    if op >= 88 && op <= 95 {
+        let r = a64_reg(reg);
+        if r == 28 {
+            return a64_fail(t, "pop rsp");
+        }
+        a_pop(w, r, 28);
+        return true;
+    }
+    if op == 232 {
+        a_adr(w, AX17, 12);
+        a_push(w, AX17, 28);
+        ax_branch_to(t, a_b(w, 0), AFX_B, d);
+        return true;
+    }
+    if op == 233 || op == 235 {
+        ax_branch_to(t, a_b(w, 0), AFX_B, d);
+        return true;
+    }
+    if (op >= 112 && op <= 127) || (op >= 384 && op <= 399) {
+        let cc = a64_cond(op & 15, ax_tg(t, AT_FK));
+        if cc < 0 {
+            return a64_fail(t, "condition without an A64 equivalent");
+        }
+        ax_branch_to(t, a_bcond(w, cc, 0), AFX_BC, d);
+        return true;
+    }
+    if op == 195 || op == 194 {
+        a_pop(w, AX17, 28);
+        if op == 194 && ax_dg(d, AD_IMM) > 0 {
+            a_addi(w, 1, 28, 28, ax_dg(d, AD_IMM));
+        }
+        a_br(w, AX17);
+        return true;
+    }
+    if op == 201 {
+        a_mov(w, 1, 28, 29);
+        a_pop(w, 29, 28);
+        return true;
+    }
+    if op == 144 || op == 287 {
+        return true;
+    }
+    if op == 204 || op == 267 {
+        a_brk(w, 0);
+        return true;
+    }
+    if op == 153 {
+        if sf == 1 { a_asr_i(w, 1, 2, 0, 63); } else { a_asr_i(w, 0, 2, 0, 31); }
+        return true;
+    }
+    if op == 261 {
+        ax_fixup(t, a_bl(w, 0), AFX_B, AFX_STUB);
+        return true;
+    }
+    if op == 192 || op == 193 {
+        return ax_shift_op(t, d, sub, 0);
+    }
+    if op == 208 || op == 209 {
+        return ax_shift_op(t, d, sub, 1);
+    }
+    if op == 210 || op == 211 {
+        return ax_shift_op(t, d, sub, 2);
+    }
+    if op == 247 {
+        return ax_group3(t, d);
+    }
+    if op == 431 || op == 105 || op == 107 {
+        if size == 1 {
+            return a64_fail(t, "16-bit imul");
+        }
+        let fs = size - 2;
+        let rd = a64_reg(reg);
+        let mut a = rd;
+        let mut b: i64 = 0;
+        if op == 431 {
+            b = ax_rm_val(t, d, size, 14);
+        } else {
+            a = ax_rm_val(t, d, size, 14);
+            b = ax_imm_reg(t, fs, ax_dg(d, AD_IMM), 15);
+        }
+        if ax_tg(t, AT_LIVE) == 1 {
+            if fs == 0 {
+                return a64_fail(t, "32-bit imul overflow check");
+            }
+            a_smulh(w, 13, a, b);
+            a_mul(w, 1, rd, a, b);
+            a_alu_r(w, A_SUBSR, 1, A_ZR, 13, rd, 2, 63);
+            vset(t, AT_FK, AFK_MUL);
+            return true;
+        }
+        a_mul(w, fs, rd, a, b);
+        return true;
+    }
+    if op == 438 || op == 439 || op == 446 || op == 447 || op == 99 {
+        let rd = a64_reg(reg);
+        let mut bits: i64 = 8;
+        if op == 439 || op == 447 { bits = 16; }
+        if op == 99 { bits = 32; }
+        let signed = op == 446 || op == 447 || op == 99;
+        if md == 3 {
+            let rs = ax_dg(d, AD_RM);
+            if bits == 8 && !ax_reg8_ok(d, rs) {
+                return a64_fail(t, "high byte register");
+            }
+            if !signed {
+                a_uxt(w, rd, a64_reg(rs), bits);
+            } else if sf == 1 {
+                a_sxt(w, rd, a64_reg(rs), bits);
+            } else {
+                a_bfm(w, A_SBFM, 0, rd, a64_reg(rs), 0, bits - 1);
+            }
+            return true;
+        }
+        let mut lsize: i64 = 0;
+        if bits == 16 { lsize = 1; }
+        if bits == 32 { lsize = 2; }
+        let mut opc: i64 = 1;
+        if signed {
+            opc = 2;
+            if sf == 0 { opc = 3; }
+        }
+        ax_mem_op(t, d, lsize, opc, rd);
+        return true;
+    }
+    if op >= 400 && op <= 415 {
+        let cc = a64_cond(op & 15, ax_tg(t, AT_FK));
+        if cc < 0 {
+            return a64_fail(t, "condition without an A64 equivalent");
+        }
+        a_cset(w, 0, AX17, cc);
+        if md == 3 {
+            if !ax_reg8_ok(d, ax_dg(d, AD_RM)) {
+                return a64_fail(t, "high byte register");
+            }
+            a_bfi0(w, a64_reg(ax_dg(d, AD_RM)), AX17, 8);
+            return true;
+        }
+        ax_mov_store(t, d, 0, AX17);
+        return true;
+    }
+    if op >= 320 && op <= 335 {
+        let cc = a64_cond(op & 15, ax_tg(t, AT_FK));
+        if cc < 0 || size == 1 {
+            return a64_fail(t, "cmov");
+        }
+        let rd = a64_reg(reg);
+        let b = ax_rm_val(t, d, size, 14);
+        a_csel(w, size - 2, rd, b, rd, cc);
+        return true;
+    }
+    if op == 444 {
+        if ax_tg(t, AT_LIVE) == 1 || size == 1 {
+            return a64_fail(t, "bsf with live flags");
+        }
+        let s = ax_rm_val(t, d, size, 14);
+        a_rbit(w, size - 2, AX17, s);
+        a_clz(w, size - 2, a64_reg(reg), AX17);
+        return true;
+    }
+    if ax_dg(d, AD_P66) == 1 && op >= 256 {
+        let v = reg & 7;
+        if op == 495 && md == 3 {
+            a_eor16(w, v, v, ax_dg(d, AD_RM) & 7);
+            return true;
+        }
+        if op == 367 && md != 3 {
+            ax_lea_into(t, d, AX16);
+            a_ldrq(w, v, AX16, 0);
+            return true;
+        }
+        if op == 372 && md == 3 {
+            a_cmeq16(w, v, v, ax_dg(d, AD_RM) & 7);
+            return true;
+        }
+        if op == 471 && md == 3 {
+            ax_pmovmskb(t, a64_reg(reg), ax_dg(d, AD_RM) & 7);
+            return true;
+        }
+    }
+    return a64_fail(t, "unsupported instruction");
+}
+
+// One system-call case: x86 number `xn` -> aarch64 number `an`; `shape`
+// 0 as is, 1 path call -> *at(AT_FDCWD, ...), 2 stat -> newfstatat,
+// 3 pipe -> pipe2, 4 fork -> clone(SIGCHLD), 5 path call -> *at(AT_FDCWD,
+// ..., 0).
+fn ax_sys_case(w: i64, done: i64, xn: i64, an: i64, shape: i64) -> i64 {
+    a_cmpi(w, 1, AX16, xn);
+    let skip = a_bcond(w, A_NE, 0);
+    if shape == 1 || shape == 2 || shape == 5 {
+        a_mov(w, 1, 3, 2);
+        a_mov(w, 1, 2, 1);
+        a_mov(w, 1, 1, 0);
+        a_movn(w, 1, 0, 99, 0);  // AT_FDCWD (-100)
+        if shape == 2 || shape == 5 {
+            a_movz(w, 1, 3, 0, 0);
+        }
+    }
+    if shape == 3 {
+        a_movz(w, 1, 1, 0, 0);
+    }
+    if shape == 4 {
+        a_movz(w, 1, 0, 17, 0);
+        a_movz(w, 1, 1, 0, 0);
+        a_movz(w, 1, 2, 0, 0);
+        a_movz(w, 1, 3, 0, 0);
+        a_movz(w, 1, 4, 0, 0);
+    }
+    a_movz(w, 1, 8, an, 0);
+    a_svc(w, 0);
+    if shape == 2 {
+        // x86-64 st_mode is at 24, aarch64's at 16 (st_size is at 48 in both)
+        a_cbnz(w, 1, 0, 3);
+        a_mem(w, 2, 1, 15, 20, 16);
+        a_mem(w, 2, 0, 15, 20, 24);
+    }
+    ax_fixup_local(w, done, a_b(w, 0));
+    return a_patch_here(w, skip);
+}
+
+// pending jumps to the stub's exit, patched by a64_sys_stub
+fn ax_fixup_local(w: i64, list: i64, at: i64) -> i64 { return vpush(list, at); }
+
+// x86-64 Linux `syscall` on aarch64 Linux: rax = number, rdi rsi rdx r10
+// r8 r9 = arguments, rax = result; rdx is preserved.
+fn a64_sys_stub(w: i64) -> i64 {
+    let done = vnew();
+    a_mov(w, 1, AX16, 0);
+    a_mov(w, 1, AX17, 2);
+    a_mov(w, 1, 0, 21);
+    a_mov(w, 1, 1, 20);
+    a_mov(w, 1, 3, 24);
+    a_mov(w, 1, 4, 22);
+    a_mov(w, 1, 5, 23);
+    ax_sys_case(w, done, 0, 63, 0);    // read
+    ax_sys_case(w, done, 1, 64, 0);    // write
+    ax_sys_case(w, done, 2, 56, 1);    // open -> openat
+    ax_sys_case(w, done, 3, 57, 0);    // close
+    ax_sys_case(w, done, 4, 79, 2);    // stat -> newfstatat
+    ax_sys_case(w, done, 5, 80, 0);    // fstat (layout differs; size at 48)
+    ax_sys_case(w, done, 8, 62, 0);    // lseek
+    ax_sys_case(w, done, 9, 222, 0);   // mmap
+    ax_sys_case(w, done, 10, 226, 0);  // mprotect
+    ax_sys_case(w, done, 11, 215, 0);  // munmap
+    ax_sys_case(w, done, 12, 214, 0);  // brk
+    ax_sys_case(w, done, 21, 48, 5);   // access -> faccessat
+    ax_sys_case(w, done, 22, 59, 3);   // pipe -> pipe2
+    ax_sys_case(w, done, 25, 216, 0);  // mremap
+    ax_sys_case(w, done, 28, 233, 0);  // madvise
+    ax_sys_case(w, done, 33, 24, 0);   // dup2 -> dup3 (flags 0)
+    ax_sys_case(w, done, 35, 101, 0);  // nanosleep
+    ax_sys_case(w, done, 39, 172, 0);  // getpid
+    ax_sys_case(w, done, 41, 198, 0);  // socket
+    ax_sys_case(w, done, 42, 203, 0);  // connect
+    ax_sys_case(w, done, 43, 202, 0);  // accept
+    ax_sys_case(w, done, 44, 206, 0);  // sendto
+    ax_sys_case(w, done, 45, 207, 0);  // recvfrom
+    ax_sys_case(w, done, 49, 200, 0);  // bind
+    ax_sys_case(w, done, 50, 201, 0);  // listen
+    ax_sys_case(w, done, 54, 208, 0);  // setsockopt
+    ax_sys_case(w, done, 57, 220, 4);  // fork -> clone
+    ax_sys_case(w, done, 59, 221, 0);  // execve
+    ax_sys_case(w, done, 60, 93, 0);   // exit
+    ax_sys_case(w, done, 61, 260, 0);  // wait4
+    ax_sys_case(w, done, 62, 129, 0);  // kill
+    ax_sys_case(w, done, 79, 17, 0);   // getcwd
+    ax_sys_case(w, done, 80, 49, 0);   // chdir
+    ax_sys_case(w, done, 83, 34, 1);   // mkdir -> mkdirat
+    ax_sys_case(w, done, 87, 35, 5);   // unlink -> unlinkat(.., 0)
+    ax_sys_case(w, done, 91, 52, 0);   // fchmod
+    ax_sys_case(w, done, 217, 61, 0);  // getdents64
+    ax_sys_case(w, done, 228, 113, 0); // clock_gettime
+    ax_sys_case(w, done, 231, 94, 0);  // exit_group
+    ax_sys_case(w, done, 318, 278, 0); // getrandom
+    a_movn(w, 1, 0, 37, 0);         // -ENOSYS
+    let mut i: i64 = 0;
+    while i < vlen(done) {
+        a_patch_here(w, vget(done, i));
+        i = i + 1;
+    }
+    a_mov(w, 1, 2, AX17);
+    return a_ret(w);
+}
+
+// Translate the x86-64 body (code_len code bytes, then data) to A64.
+fn a64_translate(body: i64, n: i64, out: i64) -> i64 {
+    let t = vfill(vnew_cap(AT_SLOTS), AT_SLOTS, 0);
+    let w = vnew_cap(n);
+    vset(t, AT_W, w);
+    vset(t, AT_FX, vnew());
+    vset(t, AT_CODE, body);
+    vset(t, AT_N, n);
+    let d = vfill(vnew_cap(AD_SLOTS), AD_SLOTS, 0);
+    vset(t, AT_D, d);
+    vset(t, AT_D2, vfill(vnew_cap(AD_SLOTS), AD_SLOTS, 0));
+    let map = vfill(vnew_cap(n + 1), n + 1, -1);
+    a_mov_sp(w, 28, A_SP); // the emulated rsp starts at the entry stack
+    let mut pos: i64 = 0;
+    while pos < n {
+        vset(t, AT_POS, pos);
+        if !a64_decode(body, pos, n, d) {
+            a64_fail(t, "cannot decode");
+            return 0;
+        }
+        vset(map, pos, vlen(w));
+        let len = ax_dg(d, AD_LEN);
+        vset(t, AT_LIVE, 0);
+        if a64_flag_use(d) == 2 && a64_flags_live(t, pos + len) {
+            vset(t, AT_LIVE, 1);
+        }
+        if !a64_insn(t, d) {
+            return 0;
+        }
+        pos = pos + len;
+    }
+    vset(map, n, vlen(w));
+    let stub = vlen(w);
+    a64_sys_stub(w);
+    while vlen(w) % 4 != 0 {
+        a_nop(w);
+    }
+    let code_bytes = vlen(w) * 4;
+    let origin = ELF_BASE + ELF_HEADERS;
+    let fx = ax_tg(t, AT_FX);
+    let mut i: i64 = 0;
+    while i < vlen(fx) {
+        let at = vget(fx, i);
+        let kind = vget(fx, i + 1);
+        let tgt = vget(fx, i + 2);
+        let mut dest: i64 = -1;   // target word
+        let mut addr: i64 = -1;   // target absolute address
+        if tgt == AFX_STUB {
+            dest = stub;
+        } else if tgt >= 0 && tgt < n {
+            dest = vget(map, tgt);
+        } else if tgt >= n && tgt < vlen(body) + 16 {
+            addr = origin + code_bytes + tgt - n;
+        }
+        if dest < 0 && addr < 0 {
+            err(text_cat3("trackc: aarch64: bad target ", text_of_int(tgt), "\n"));
+            return 0;
+        }
+        if kind == AFX_ADRP {
+            if addr < 0 {
+                addr = origin + dest * 4;
+            }
+            a_patch_adrp_add(w, at, origin + at * 4, addr);
+        } else {
+            if dest < 0 {
+                err("trackc: aarch64: branch into data\n");
+                return 0;
+            }
+            if kind == AFX_BC && !a_fits_bcond(dest - at) {
+                err("trackc: aarch64: conditional branch out of range\n");
+                return 0;
+            }
+            a_patch_branch(w, at, dest);
+        }
+        i = i + 3;
+    }
+    let b = vnew_cap(code_bytes + vlen(body) - n);
+    a64_bytes(w, b);
+    let mut k = n;
+    while k < vlen(body) {
+        vpush(b, vget(body, k));
+        k = k + 1;
+    }
+    vset(out, 0, code_bytes);
+    return b;
+}

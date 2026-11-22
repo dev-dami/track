@@ -24,6 +24,7 @@ import "symbols";
 import "checker";
 import "life";
 import "ngen";
+import "ngen_a64";
 import "runtime_trk";
 import "lsp";
 
@@ -111,6 +112,25 @@ fn front_end(path: i64) -> i64 {
     return load_checked(path, false);
 }
 
+// `--arch aarch64`: emit an aarch64 Linux executable (default x86-64).
+fn arch_aarch64() -> bool {
+    let mut i: i64 = 2;
+    while i < arg_count() - 1 {
+        if text_eq(arg_text(i), "--arch") {
+            if text_eq(arg_text(i + 1), "aarch64") {
+                return true;
+            }
+            if text_eq(arg_text(i + 1), "x86_64") {
+                return false;
+            }
+            err(text_cat3("trackc: unknown --arch '", arg_text(i + 1), "' (x86_64, aarch64)\n"));
+            quit(2);
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // Value following `-o`, or 0.
 fn output_flag() -> i64 {
     let mut i: i64 = 2;
@@ -168,6 +188,8 @@ fn file_arg_index() -> i64 {
         let a = arg_text(i);
         if text_eq(a, "-o") {
             i = i + 2;
+        } else if text_eq(a, "--arch") {
+            i = i + 2;
         } else if text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") || text_eq(a, "--place") || text_eq(a, "-g") || text_eq(a, "--symbols") {
             i = i + 1;
         } else {
@@ -183,7 +205,7 @@ fn file_arg_index() -> i64 {
 fn build_native(path: i64, exe: i64) -> i64 {
     let c = load_checked(path, true);
     life_place_program(c); // stack cells (ngen `ng_site_cell`)
-    let body = generate_native(c);
+    let mut body = generate_native(c);
     if body == 0 {
         quit(1);
     }
@@ -196,7 +218,20 @@ fn build_native(path: i64, exe: i64) -> i64 {
         err(text_cat3("trackc: cannot create directory '", dir, "'\n"));
         quit(1);
     }
-    if elf_write_file(exe, body, native_code_len(c), syms) != 0 {
+    let mut code_len = native_code_len(c);
+    let mut mach = ELF_X86_64;
+    if arch_aarch64() {
+        // temporary selector until `--target` lands: lift to A64 (ngen_a64)
+        let out_len = vfill(vnew(), 1, 0);
+        body = a64_translate(body, code_len, out_len);
+        if body == 0 {
+            quit(1);
+        }
+        code_len = vget(out_len, 0);
+        syms = 0;
+        mach = ELF_AARCH64;
+    }
+    if elf_write_file_m(exe, body, code_len, syms, mach) != 0 {
         err(text_cat3("trackc: cannot write '", exe, "'\n"));
         quit(1);
     }
