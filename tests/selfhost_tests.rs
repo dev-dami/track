@@ -534,7 +534,7 @@ fn track_runtime_matches_the_c_runtime() {
         })
         .collect();
     programs.push(repo().join("compiler/rt/tests/rt_smoke.trk"));
-    for name in ["rt_alloc", "rt_memlimit", "rt_memlimit_realloc"] {
+    for name in ["rt_alloc", "rt_memlimit", "rt_memlimit_realloc", "sb_spare"] {
         programs.push(repo().join(format!("tests/native/{}.trk", name)));
     }
     programs.sort();

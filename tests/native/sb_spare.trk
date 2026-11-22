@@ -1,0 +1,35 @@
+// Large builders and their strings, freed every round, come back as spare
+// blocks (compiler/rt/vec.trk rt_free_keep): sizes grow and shrink across
+// rounds so a spare is sometimes too small (grown) and holds stale bytes
+// from a longer string. Every byte of each result is checked.
+fn check(s: i64, round: i64, n: i64) -> i64 {
+    let mut sum: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        sum = sum * 31 + str_char_at(s, i);
+        sum = sum & 1048575;
+        i = i + 1;
+    }
+    return sum + str_len(s) * 7 + round;
+}
+
+fn main() -> void {
+    let sizes = [70000, 300000, 90000, 500000, 66000, 500001, 1000, 200000];
+    let mut total: i64 = 0;
+    let mut round: i64 = 0;
+    while round < 8 {
+        let n: i64 = sizes[round];
+        let b: i64 = track_sb_new();
+        let mut i: i64 = 0;
+        while track_sb_len(b) < n {
+            track_sb_push_int(b, i * (round + 3));
+            track_sb_push_byte(b, 97 + (i % 26));
+            i = i + 1;
+        }
+        let text: i64 = track_sb_str(b);
+        total = total + check(text, round, str_len(text));
+        print(str_len(text));
+        round = round + 1;
+    }
+    print(total);
+}
