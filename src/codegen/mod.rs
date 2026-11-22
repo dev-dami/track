@@ -96,6 +96,19 @@ pub fn eval_const(consts: &HashMap<String, i64>, expr: &Expr) -> Option<i64> {
     }
 }
 
+/// Whether `expr` reads a name bound as a local, in the shapes eval_const
+/// folds (it folds nothing else).
+fn mentions_local<V>(expr: &Expr, locals: &HashMap<String, V>) -> bool {
+    match expr {
+        Expr::Variable(name) => locals.contains_key(name),
+        Expr::UnaryOp { expr, .. } => mentions_local(expr, locals),
+        Expr::BinaryOp { left, right, .. } => {
+            mentions_local(left, locals) || mentions_local(right, locals)
+        }
+        _ => false,
+    }
+}
+
 /// Assign discriminants to enum variants: an explicit `= value` sets the
 /// discriminant, otherwise it is one more than the previous variant.
 pub fn enum_discriminants(
@@ -928,7 +941,13 @@ impl<'a> FnContext<'a> {
                     BinOp::Sub => builder.ins().isub(lhs, rhs),
                     BinOp::Mul => builder.ins().imul(lhs, rhs),
                     BinOp::Div | BinOp::Mod => {
-                        let divisor = eval_const(self.consts, right);
+                        // A local or parameter shadows a constant of the same
+                        // name: such a divisor is only known at run time.
+                        let divisor = if mentions_local(right, &self.var_map) {
+                            None
+                        } else {
+                            eval_const(self.consts, right)
+                        };
                         self.checked_divrem(builder, module, *op == BinOp::Div, lhs, rhs, divisor)
                     }
                     BinOp::Eq => self.bool_word(builder, IntCC::Equal, lhs, rhs),

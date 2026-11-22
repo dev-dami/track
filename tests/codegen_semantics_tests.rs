@@ -383,6 +383,12 @@ fn division_by_zero_flushes_and_raises_sigfpe() {
             "fn main()->i64{ print(2); print(9 / 0); return 0; }",
             "2\n",
         ),
+        (
+            // A parameter shadowing a constant is the run-time divisor.
+            "shadowz",
+            "const TWO = 2; const ONE = 1 < 2; fn d(TWO: i64) -> i64 { return 7 / TWO; } fn e(ONE: i64) -> i64 { return 7 % (ONE + 1); } fn main()->i64{ print(3); print(e(1)); print(d(0)); return 0; }",
+            "3\n1\n",
+        ),
     ];
     for (name, src, want) in cases {
         let (out, sig) = run_signal(name, src);
