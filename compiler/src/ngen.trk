@@ -4442,14 +4442,25 @@ fn ng_acc_carried(c: i64, f: i64) -> i64 {
 // position that never carries a temporary, any value that cannot point
 // into a carried parameter's cell. Anything else in a carried position (a
 // different parameter, a field of one, a local, a literal) keeps the call.
+// A local may alias a carried cell, so a value that mentions one counts
+// as pointing into it unless it is a scalar.
 fn ng_acc_args_ok(c: i64, f: i64, call: i64) -> bool {
     let carried = ng_acc_carried(c, f);
     if vlen(carried) == 0 {
         return true;
     }
+    let bound = vnew();
+    if !ng_list_bound(c, ne(c, f), bound) {
+        return false;
+    }
     let params = nc(c, f);
     let names = vnew();
     let mut k: i64 = 0;
+    while k < vlen(bound) {
+        vpush(names, vget(bound, k));
+        k = k + 1;
+    }
+    k = 0;
     while k < vlen(carried) {
         vpush(names, list_at(c, params, vget(carried, k) * 2));
         k = k + 1;
@@ -4461,12 +4472,12 @@ fn ng_acc_args_ok(c: i64, f: i64, call: i64) -> bool {
         let t = ng_acc_temp_arg(c, call, a);
         let own = list_at(c, params, j * 2);
         if t >= 0 {
-            if !ng_acc_fresh_ok(c, f, t, names) {
+            if !ng_acc_fresh_ok(c, f, t, names, bound) {
                 return false;
             }
-        } else if nk(c, a) == K_VAR && na(c, a) == own && !ng_list_binds(c, ne(c, f), own) {
+        } else if nk(c, a) == K_VAR && na(c, a) == own && !ng_vhas(bound, own) {
             // pass-through
-        } else if ng_vhas(carried, j) || !ng_acc_safe(c, f, a, names) {
+        } else if ng_vhas(carried, j) || !ng_acc_safe(c, f, a, names, bound) {
             return false;
         }
         j = j + 1;
@@ -4475,8 +4486,9 @@ fn ng_acc_args_ok(c: i64, f: i64, call: i64) -> bool {
 }
 
 // True when fresh cell `e` (a call, struct, tuple or array literal) holds
-// nothing that can point into the cells of parameters `names`.
-fn ng_acc_fresh_ok(c: i64, f: i64, e: i64, names: i64) -> bool {
+// nothing that can point into the cells of `names` (carried parameters and
+// `bound`, the locals of f).
+fn ng_acc_fresh_ok(c: i64, f: i64, e: i64, names: i64, bound: i64) -> bool {
     let k = nk(c, e);
     let mut l: i64 = -1;
     let mut step: i64 = 1;
@@ -4496,7 +4508,7 @@ fn ng_acc_fresh_ok(c: i64, f: i64, e: i64, names: i64) -> bool {
         return !ng_mentions(c, e, names);
     }
     while i < list_len(c, l) {
-        if !ng_acc_safe(c, f, list_at(c, l, i), names) {
+        if !ng_acc_safe(c, f, list_at(c, l, i), names, bound) {
             return false;
         }
         i = i + step;
@@ -4504,10 +4516,10 @@ fn ng_acc_fresh_ok(c: i64, f: i64, e: i64, names: i64) -> bool {
     return true;
 }
 
-// True when value `e` cannot point into the cells of parameters `names`:
-// it does not mention them, is a scalar read of them, or is a fresh cell
-// built from such values.
-fn ng_acc_safe(c: i64, f: i64, e: i64, names: i64) -> bool {
+// True when value `e` cannot point into the cells of `names`: it does not
+// mention them, is a scalar read of a parameter, or is a fresh cell built
+// from such values.
+fn ng_acc_safe(c: i64, f: i64, e: i64, names: i64, bound: i64) -> bool {
     if !ng_mentions(c, e, names) {
         return true;
     }
@@ -4519,39 +4531,40 @@ fn ng_acc_safe(c: i64, f: i64, e: i64, names: i64) -> bool {
         return true;
     }
     if k == K_BIN || (k == K_UN && na(c, e) == OP_NEG) {
-        return ng_acc_scalar(c, f, nb(c, e));
+        return ng_acc_scalar(c, f, nb(c, e), bound);
     }
     if k == K_VAR || k == K_FIELD {
-        return ng_acc_scalar(c, f, e);
+        return ng_acc_scalar(c, f, e, bound);
     }
     if k == K_ADDR {
         let t = na(c, e);
         let tk = nk(c, t);
-        return (tk == K_CALL || tk == K_SINIT || tk == K_TUPLE || tk == K_ARRAY) && ng_acc_fresh_ok(c, f, t, names);
+        return (tk == K_CALL || tk == K_SINIT || tk == K_TUPLE || tk == K_ARRAY) && ng_acc_fresh_ok(c, f, t, names, bound);
     }
     if k == K_CALL || k == K_SINIT || k == K_TUPLE || k == K_ARRAY {
-        return ng_acc_fresh_ok(c, f, e, names);
+        return ng_acc_fresh_ok(c, f, e, names, bound);
     }
     return false;
 }
 
-// True when read chain `e` (a parameter of `f` and its fields) has a
-// primitive type, following the declared types.
-fn ng_acc_scalar(c: i64, f: i64, e: i64) -> bool {
-    let t = ng_acc_chain_type(c, f, e);
+// True when read chain `e` (a parameter of `f` no local in `bound`
+// shadows, and its fields) has a primitive type, following the declared
+// types.
+fn ng_acc_scalar(c: i64, f: i64, e: i64, bound: i64) -> bool {
+    let t = ng_acc_chain_type(c, f, e, bound);
     return t >= 0 && nk(c, t) == T_PRIM;
 }
 
-fn ng_acc_chain_type(c: i64, f: i64, e: i64) -> i64 {
+fn ng_acc_chain_type(c: i64, f: i64, e: i64, bound: i64) -> i64 {
     let k = nk(c, e);
     if k == K_VAR {
+        if ng_vhas(bound, na(c, e)) {
+            return -1;
+        }
         let params = nc(c, f);
         let mut i: i64 = 0;
         while i < list_len(c, params) {
             if list_at(c, params, i) == na(c, e) {
-                if ng_list_binds(c, ne(c, f), na(c, e)) {
-                    return -1;
-                }
                 return list_at(c, params, i + 1);
             }
             i = i + 2;
@@ -4561,7 +4574,7 @@ fn ng_acc_chain_type(c: i64, f: i64, e: i64) -> i64 {
     if k != K_FIELD {
         return -1;
     }
-    let mut t = ng_acc_chain_type(c, f, na(c, e));
+    let mut t = ng_acc_chain_type(c, f, na(c, e), bound);
     while t >= 0 && (nk(c, t) == T_REF || nk(c, t) == T_PTR) {
         t = na(c, t);
     }
@@ -4579,27 +4592,36 @@ fn ng_acc_chain_type(c: i64, f: i64, e: i64) -> i64 {
     return list_at(c, nb(c, decl), idx * 2 + 1);
 }
 
-// True when statement list `l` (or a block nested in it) may bind `name`.
-fn ng_list_binds(c: i64, l: i64, name: i64) -> bool {
+// Push onto `out` the names statement list `l` (and the blocks nested in
+// it) binds; false when it has a binding form this scan does not follow.
+// A binding inside an expression is out of scope at every statement-level
+// accumulator return (card F1), so it is not looked for.
+fn ng_list_bound(c: i64, l: i64, out: i64) -> bool {
     let mut i: i64 = 0;
     while i < list_len(c, l) {
         let n = list_at(c, l, i);
         let k = nk(c, n);
-        if k == K_LETD || k == K_MATCH || (k == K_LET && na(c, n) == name) {
-            return true;
+        if k == K_LETD || k == K_MATCH {
+            return false;
         }
-        if k == K_FOR && (na(c, n) == name || ng_list_binds(c, nc(c, n), name)) {
-            return true;
+        if k == K_LET {
+            vpush(out, na(c, n));
         }
-        if k == K_WHILE && ng_list_binds(c, nb(c, n), name) {
-            return true;
+        if k == K_FOR {
+            vpush(out, na(c, n));
+            if !ng_list_bound(c, nc(c, n), out) {
+                return false;
+            }
         }
-        if k == K_IF && (ng_list_binds(c, nb(c, n), name) || ng_list_binds(c, nc(c, n), name)) {
-            return true;
+        if k == K_WHILE && !ng_list_bound(c, nb(c, n), out) {
+            return false;
+        }
+        if k == K_IF && !(ng_list_bound(c, nb(c, n), out) && ng_list_bound(c, nc(c, n), out)) {
+            return false;
         }
         i = i + 1;
     }
-    return false;
+    return true;
 }
 
 // True when body `l` of `f` has an accumulator return and the scan below

@@ -19,13 +19,17 @@ fn pf
   L52 call temp-autofree deep ends L52
 fn pl
   L61 str temp-autofree ends L61
-fn main
-  L66 str temp-autofree ends L66
-  L67 str temp-autofree ends L67
+fn sh
   L68 call temp-autofree deep ends L68
-  L69 call temp-autofree deep ends L69
-  L70 call temp-autofree deep ends L70
-  L70 call temp-autofree deep ends L70
-  L71 call stack ends L71
-  L71 str temp-autofree ends L71
-  L72 str temp-autofree ends L72
+fn main
+  L73 str temp-autofree ends L73
+  L74 str temp-autofree ends L74
+  L75 call temp-autofree deep ends L75
+  L76 call temp-autofree deep ends L76
+  L77 call temp-autofree deep ends L77
+  L77 call temp-autofree deep ends L77
+  L78 call stack ends L78
+  L78 str temp-autofree ends L78
+  L79 str temp-autofree ends L79
+  L80 call temp-autofree deep ends L80
+  L80 call temp-autofree deep ends L80

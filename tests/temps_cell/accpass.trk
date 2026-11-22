@@ -61,6 +61,13 @@ fn pl(n: i64, s: &Str) -> i64 {
     return str_len(s) + pl(n - 1, &int_to_str(n * 11));
 }
 
+// a local that aliases a carried parameter, passed on
+fn sh(n: i64, a: &Box, b: &Box) -> i64 {
+    if n == 0 { return a.r.v + b.r.v; }
+    let a = b;
+    return a.r.v + sh(n - 1, a, &mk(n));
+}
+
 fn main() -> void {
     let before = sys_get_memory_used();
     print(ps(3000, &int_to_str(5)));
@@ -70,5 +77,6 @@ fn main() -> void {
     print(sw(3000, &mk(5), &mk(6)));
     print(pf(3000, &mkn(5), &int_to_str(5)));
     print(pl(3000, &int_to_str(5)));
+    print(sh(3000, &mk(1), &mk(2)));
     print(sys_get_memory_used() - before);
 }
