@@ -118,7 +118,8 @@ const CX_STRCACHE = 21; // string literal pool (unescaped text per literal)
 const CX_STRUCTS = 22;  // struct names in declaration order
 const CX_WARN = 23;     // pending warnings: (pos, code, message) per entry
 const CX_NWARN = 24;    // warnings already printed by flush_warnings
-const CX_SLOTS = 25;
+const CX_QUAL = 25;     // name id -> 1 when the name contains `::`, else 0
+const CX_SLOTS = 26;
 
 fn cx_new() -> i64 {
     let c = vnew_cap(CX_SLOTS);
@@ -135,6 +136,7 @@ fn cx_new() -> i64 {
     vset(c, CX_NAMES, vnew_cap(4096));
     vset(c, CX_HASH, vfill(vnew_cap(16384), 16384, 0));
     vset(c, CX_INFO, vnew_cap(4096 * NI_WIDTH));
+    vset(c, CX_QUAL, vnew_cap(4096));
     vset(c, CX_STACK, vnew_cap(1024));
     vset(c, CX_SB, sb_new());
     vset(c, CX_ITEMS, vnew());
@@ -232,6 +234,11 @@ fn intern(c: i64, s: i64) -> i64 {
     }
     let id = vpush(names, s);
     vset(table, slot, id + 1);
+    let mut qual: i64 = 0;
+    if str_contains(s, "::") != 0 {
+        qual = 1;
+    }
+    vpush(cx(c, CX_QUAL), qual);
     let info = cx(c, CX_INFO);
     vfill(info, NI_WIDTH, -1);
     ni_set(c, id, NI_TYPEKIND, 0);
