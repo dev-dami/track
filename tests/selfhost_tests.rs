@@ -1658,11 +1658,24 @@ fn handles_free_fresh_values() {
             rel,
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(run_exe(&exe), (want.clone(), Some(0)), "{}: C output differs", rel);
+        assert_eq!(
+            run_exe(&exe),
+            (want.clone(), Some(0)),
+            "{}: C output differs",
+            rel
+        );
         let nat = dir.join(format!("{}_nat", stem));
-        let out = run_trackc(&["build", "--native", &rel, "-o", nat.to_str().unwrap()], &root);
+        let out = run_trackc(
+            &["build", "--native", &rel, "-o", nat.to_str().unwrap()],
+            &root,
+        );
         assert!(out.status.success(), "{}: native build failed", rel);
-        assert_eq!(run_exe(&nat), (want, Some(0)), "{}: native output differs", rel);
+        assert_eq!(
+            run_exe(&nat),
+            (want, Some(0)),
+            "{}: native output differs",
+            rel
+        );
         let plan = run_trackc(&["life", "--place", &rel], &root);
         let got = String::from_utf8_lossy(&plan.stdout).into_owned();
         let golden = root.join(format!("tests/handles/{}.place", stem));
@@ -1688,15 +1701,42 @@ fn handles_free_fresh_values() {
         }
     }
     for (line, why) in [
-        ("L4 str heap-autofree ends L6", "a str_concat result that dies locally is freed"),
-        ("L14 str heap-autofree ends L17", "a Str reassigned fresh strings is freed"),
-        ("L7 str heap-autofree ends L10", "an int_to_str in a loop is freed each iteration"),
-        ("L4 builder heap-autofree ends L12", "a builder finished into a Str is freed"),
-        ("L12 str heap-autofree ends L13", "the finished Str is freed"),
-        ("L3 collection heap-autofree ends L12", "a collection that dies locally is freed"),
-        ("L19 vec heap-autofree ends L27", "a Vec that dies locally is freed"),
+        (
+            "L4 str heap-autofree ends L6",
+            "a str_concat result that dies locally is freed",
+        ),
+        (
+            "L14 str heap-autofree ends L17",
+            "a Str reassigned fresh strings is freed",
+        ),
+        (
+            "L7 str heap-autofree ends L10",
+            "an int_to_str in a loop is freed each iteration",
+        ),
+        (
+            "L4 builder heap-autofree ends L12",
+            "a builder finished into a Str is freed",
+        ),
+        (
+            "L12 str heap-autofree ends L13",
+            "the finished Str is freed",
+        ),
+        (
+            "L3 collection heap-autofree ends L12",
+            "a collection that dies locally is freed",
+        ),
+        (
+            "L19 vec heap-autofree ends L27",
+            "a Vec that dies locally is freed",
+        ),
     ] {
-        assert!(plans.contains(line), "{}: missing `{}` in\n{}", why, line, plans);
+        assert!(
+            plans.contains(line),
+            "{}: missing `{}` in\n{}",
+            why,
+            line,
+            plans
+        );
     }
     for (prog, kept) in [
         ("str_kept", "L4 "),
@@ -1708,7 +1748,9 @@ fn handles_free_fresh_values() {
         let block = plans.split(&format!("{}:\n", prog)).nth(1).unwrap_or("");
         let block = block.split(":\n").next().unwrap_or("");
         assert!(
-            !block.lines().any(|l| l.trim_start().starts_with(kept.trim_end()) && l.contains("autofree")),
+            !block
+                .lines()
+                .any(|l| l.trim_start().starts_with(kept.trim_end()) && l.contains("autofree")),
             "{}: a returned, stored or aliased value at `{}` must not be freed:\n{}",
             prog,
             kept,
