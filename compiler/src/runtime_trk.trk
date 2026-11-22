@@ -75,6 +75,7 @@ fn rt_module_source_0(b: i64) -> i64 {
     sb_line(b, "const SYS_MREMAP = 25;");
     sb_line(b, "const SYS_MADVISE = 28;");
     sb_line(b, "const MADV_POPULATE_WRITE = 23;");
+    sb_line(b, "const MADV_HUGEPAGE = 14;");
     sb_line(b, "const RT_POP_MIN = 65536;");
     sb_line(b, "const RT_POP_MAX = 2097152;");
     sb_line(b, "const SYS_PIPE = 22;");
@@ -198,6 +199,7 @@ fn rt_module_source_0(b: i64) -> i64 {
     sb_line(b, "    if cur + bsize > rs(RS_HEAP_END) || cur == 0 {");
     sb_line(b, "        if cur == 0 || cur + bsize > rs(RS_ARENA_END) {");
     sb_line(b, "            cur = rt_mmap(RT_ARENA);");
+    sb_line(b, "            syscall6(SYS_MADVISE, cur, RT_ARENA, MADV_HUGEPAGE, 0, 0, 0);");
     sb_line(b, "            rs_set(RS_ARENA_END, cur + RT_ARENA);");
     sb_line(b, "            rs_set(RS_HEAP_END, cur);");
     sb_line(b, "        }");

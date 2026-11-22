@@ -57,6 +57,7 @@ const SYS_MUNMAP = 11;
 const SYS_MREMAP = 25;
 const SYS_MADVISE = 28;
 const MADV_POPULATE_WRITE = 23;
+const MADV_HUGEPAGE = 14;
 const RT_POP_MIN = 65536;
 const RT_POP_MAX = 2097152;
 const SYS_PIPE = 22;
@@ -180,6 +181,7 @@ fn rt_block(size: i64, zero: bool) -> i64 {
     if cur + bsize > rs(RS_HEAP_END) || cur == 0 {
         if cur == 0 || cur + bsize > rs(RS_ARENA_END) {
             cur = rt_mmap(RT_ARENA);
+            syscall6(SYS_MADVISE, cur, RT_ARENA, MADV_HUGEPAGE, 0, 0, 0);
             rs_set(RS_ARENA_END, cur + RT_ARENA);
             rs_set(RS_HEAP_END, cur);
         }

@@ -5191,8 +5191,9 @@ fn ng_entry(c: i64) -> i64 {
     return x_bytes2(b, 15, 5); // syscall
 }
 
-// Generate the ELF image (byte vector) for the loaded, checked program, or
-// report undefined functions and return 0.
+// Generate the code+data body (byte vector, entry at offset 0) of the ELF
+// image for the loaded, checked program, or report undefined functions
+// and return 0. elf_write_file adds the headers.
 fn generate_native(c: i64) -> i64 {
     let state = vfill(vnew_cap(NG_SLOTS), NG_SLOTS, 0);
     vset(c, CX_GEN, state);
@@ -5317,5 +5318,5 @@ fn generate_native(c: i64) -> i64 {
         vpush(b, vget(data, d));
         d = d + 1;
     }
-    return elf_image(b, 0);
+    return b;
 }
