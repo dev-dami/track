@@ -470,6 +470,7 @@ impl LinearChecker {
         for stmt in program {
             match stmt {
                 Expr::ConstDef { name, value } => {
+                    const_divrem_ok(&self.const_values, value)?;
                     if let Some(v) = crate::codegen::eval_const(&self.const_values, value) {
                         self.const_values.insert(name.clone(), v);
                         self.type_info.consts.insert(name.clone(), v);
@@ -1842,4 +1843,30 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
     }
 
     distances[a_chars.len()][b_chars.len()]
+}
+
+/// A constant whose `/` or `%` has known operands that trap at run time
+/// (a zero divisor, INT64_MIN / -1) is E0200, with trackc's text.
+fn const_divrem_ok(consts: &HashMap<String, i64>, expr: &Expr) -> Result<(), String> {
+    match expr {
+        Expr::UnaryOp { expr, .. } => const_divrem_ok(consts, expr),
+        Expr::BinaryOp { op, left, right } => {
+            const_divrem_ok(consts, left)?;
+            const_divrem_ok(consts, right)?;
+            if !matches!(op, BinOp::Div | BinOp::Mod) {
+                return Ok(());
+            }
+            let eval = crate::codegen::eval_const;
+            match (eval(consts, left), eval(consts, right)) {
+                (Some(_), Some(0)) => {
+                    Err("error[E0200]: division by zero in a constant expression".to_string())
+                }
+                (Some(i64::MIN), Some(-1)) => {
+                    Err("error[E0200]: division overflow in a constant expression".to_string())
+                }
+                _ => Ok(()),
+            }
+        }
+        _ => Ok(()),
+    }
 }

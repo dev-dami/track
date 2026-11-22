@@ -326,6 +326,9 @@ fn ng_site_cell(c: i64, n: i64, count: i64) -> i64 {
     }
     if !ng_stack_site(c, n) {
         ng_cell(c, count);
+        if nk(c, n) == K_CALL {
+            return 0; // `Enum::V(..)`: ng_call registers the temporary
+        }
         return ng_temp_cell(c, n);
     }
     let b = ncode(c);
@@ -4370,13 +4373,15 @@ fn ng_for(c: i64, n: i64) -> i64 {
     return x_mov_rax_imm(b, 0);
 }
 
-// `return x + f(args)` in f itself: an accumulator-recursion return.
+// `return x + f(args)` in f itself: an accumulator-recursion return. Not
+// when the plan frees an argument temporary after the call: the back edge
+// replaces the call, so nothing would free it.
 fn ng_is_acc_return(c: i64, f: i64, value: i64) -> bool {
     if value < 0 || nk(c, value) != K_BIN || na(c, value) != OP_ADD {
         return false;
     }
     let call = nc(c, value);
-    if nk(c, call) != K_CALL || ng_call_target(c, call) != f {
+    if nk(c, call) != K_CALL || ng_call_target(c, call) != f || ng_has_temps(c, call) {
         return false;
     }
     return list_len(c, nb(c, call)) * 2 == list_len(c, nc(c, f));

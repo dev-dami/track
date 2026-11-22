@@ -784,6 +784,10 @@ fn gen_site_cell(c: i64, n: i64, words: i64) -> i64 {
     if life_place_of(c, n) == PL_AUTO {
         return gen_cell_note(c, words, " /* heap-autofree */");
     }
+    if nk(c, n) == K_CALL {
+        // `Enum::V(..)`: gen_call_rs registers the temporary
+        return gen_cell(c, words);
+    }
     return gen_temp_cell(c, n, gen_cell(c, words));
 }
 

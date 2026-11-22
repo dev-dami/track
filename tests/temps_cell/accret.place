@@ -1,0 +1,7 @@
+fn mk
+  L5 struct heap ends -
+  L5 struct heap ends -
+fn acc
+  L6 call temp-autofree deep ends L6
+fn main
+  L7 call temp-autofree deep ends L7
