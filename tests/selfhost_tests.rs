@@ -1658,7 +1658,11 @@ fn ret_slots_write_caller_cells() {
         let want = fs::read_to_string(root.join(format!("tests/retslot/{}.out", stem))).unwrap();
         assert_eq!(run_exe(&exe), (want, Some(0)), "{}: output differs", rel);
         let c = fs::read_to_string(exe.with_extension("c")).unwrap();
-        assert!(c.contains("__rs("), "{}: no ret-slot entry in emitted C", rel);
+        assert!(
+            c.contains("__rs("),
+            "{}: no ret-slot entry in emitted C",
+            rel
+        );
         let plan = run_trackc(&["life", "--place", &rel], &root);
         let got = String::from_utf8_lossy(&plan.stdout).into_owned();
         let golden = root.join(format!("tests/retslot/{}.place", stem));
@@ -1679,12 +1683,18 @@ fn ret_slots_write_caller_cells() {
             "L16 call stack ends L22",
             "`acc = f(&acc)` writes acc's own cell",
         ),
-        ("L14 call stack ends L20", "`acc = f(acc)` writes acc's own cell"),
+        (
+            "L14 call stack ends L20",
+            "`acc = f(acc)` writes acc's own cell",
+        ),
         (
             "L13 call heap ends -",
             "a ret-slot result stored into a collection is heap",
         ),
-        ("L20 call stack ends L22", "a ret-slot result in a stack slot"),
+        (
+            "L20 call stack ends L22",
+            "a ret-slot result in a stack slot",
+        ),
         (
             "L21 call heap-autofree deep ends L26",
             "a local also reassigned a heap-only cell stays heap-autofree",
