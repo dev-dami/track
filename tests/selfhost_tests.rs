@@ -1513,7 +1513,13 @@ fn autofree_frees_heap_cells() {
     let root = repo();
     let update = env::var("UPDATE_LIFE").is_ok();
     let dir = scratch("autofree");
-    let stems = ["die_param", "early_return", "moved_field", "nested", "returned"];
+    let stems = [
+        "die_param",
+        "early_return",
+        "moved_field",
+        "nested",
+        "returned",
+    ];
     let mut plans = String::new();
     for stem in stems {
         let rel = format!("tests/autofree/{}.trk", stem);
@@ -1557,16 +1563,19 @@ fn autofree_frees_heap_cells() {
             "L22 struct heap-autofree deep ends L27",
             "a nested literal reassigned fresh cells runs drop glue",
         ),
-        (
-            "L7 struct heap ends -",
-            "a returned cell is never freed",
-        ),
+        ("L7 struct heap ends -", "a returned cell is never freed"),
         (
             "L13 struct heap ends -",
             "a cell stored into a returned cell is never freed",
         ),
     ] {
-        assert!(plans.contains(line), "{}: missing `{}` in\n{}", why, line, plans);
+        assert!(
+            plans.contains(line),
+            "{}: missing `{}` in\n{}",
+            why,
+            line,
+            plans
+        );
     }
     let asan = Command::new("gcc")
         .args(["-fsanitize=address", "-x", "c", "-", "-o"])
@@ -1575,7 +1584,11 @@ fn autofree_frees_heap_cells() {
         .spawn()
         .and_then(|mut child| {
             use std::io::Write;
-            child.stdin.take().unwrap().write_all(b"int main(void){return 0;}")?;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"int main(void){return 0;}")?;
             child.wait()
         })
         .map(|s| s.success())
