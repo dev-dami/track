@@ -2159,12 +2159,15 @@ fn temps_free_fresh_temporaries() {
 /// cells whose Str fields are static or borrowed (only the shell is
 /// freed), discarded cell statements, and native inlining (a self tail
 /// call's copy, a branch condition) that must still free the temporary.
+/// accret: a native accumulator return (`x + f(&fresh)`) keeps its call so
+/// the temporary is freed.
 #[test]
 fn temps_free_fresh_cell_temporaries() {
     let root = repo();
     let update = env::var("UPDATE_LIFE").is_ok();
     let dir = scratch("temps_cell");
     let stems = [
+        "accret",
         "alias",
         "branch",
         "discard",
@@ -2275,7 +2278,7 @@ fn temps_free_fresh_cell_temporaries() {
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(
             stem,
-            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr"
+            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr" | "accret"
         );
         // str_alias keeps `keep.name` alive to the end of main and drop glue never
         // frees Str, so LSan may report that one string depending on what the C
