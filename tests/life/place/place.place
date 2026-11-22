@@ -7,4 +7,4 @@ fn main
   L24 struct heap ends -
   L24 struct heap ends -
   L26 call heap ends -
-  L28 call heap ends -
+  L28 str heap-autofree ends L29

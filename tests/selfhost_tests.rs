@@ -1397,8 +1397,8 @@ fn life_place_dumps_match_goldens() {
             "a value passed to an esc param is heap",
         ),
         (
-            "L28 call heap ends -",
-            "a fresh Str is not auto-freed until phase 2 (L13)",
+            "L28 str heap-autofree ends L29",
+            "a fresh Str that dies in this frame is auto-freed (L13)",
         ),
     ] {
         assert!(
