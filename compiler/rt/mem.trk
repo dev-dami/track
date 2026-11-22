@@ -35,11 +35,16 @@ const RS_FREE = 256;              // free-list heads, one per size class (64)
 const RS_SOCK = 768;              // struct sockaddr_in
 const RS_STAT = 1024;             // struct stat (144 bytes)
 const RS_EXECV = 2048;            // argv for execve: 4 words
+const RS_LC_N = 4096;             // freed large blocks kept for reuse
+const RS_LC_BYTES = 4104;         // their total mapping length
+const RS_LC_SLOTS = 4112;         // RT_LC_MAX mapping addresses, oldest first
 
 const RT_OUT_CAP = 65536;
 const RT_ARENA = 67108864;        // grow the heap 64 MiB at a time
 const RT_SMALL_MAX = 65528;        // larger payloads get a mapping of their own
 const RT_LARGE_TAG = 64;          // header class of such a block
+const RT_LC_MAX = 16;             // large-block cache: at most this many ...
+const RT_LC_CAP = 134217728;      // ... holding at most 128 MiB of mappings
 
 const SYS_READ = 0;
 const SYS_WRITE = 1;
@@ -124,8 +129,13 @@ fn track_runtime_init(argc: i64, argv: i64) -> i64 {
 //
 // Large blocks get a mapping of their own, sized to the page, with class
 // RT_LARGE_TAG and the mapping length in the word before the header.
-// Growing one is an mremap that moves pages, not bytes; freeing one gives
-// it back to the kernel.
+// Growing one is an mremap that moves pages, not bytes. Freeing one keeps
+// the mapping (already faulted in) in a small cache, the large-block
+// cache, for the next large request: best fit, so a cached block may
+// serve a smaller request, whose later growth then needs no syscall.
+// The cache holds at most RT_LC_MAX blocks and RT_LC_CAP bytes; past
+// either bound the oldest blocks go back to the kernel. Cached blocks
+// are not in use: RS_USED never counts them.
 //
 // trackc --native inlines the arena bump path for constant sizes
 // (ngen.trk ng_alloc_const): keep RS_HEAP, RS_HEAP_END, RS_FREE, RS_USED,
@@ -152,13 +162,7 @@ fn rt_prefault(from: i64, to: i64) -> i64 {
 // Payload of at least `size` bytes; zeroed when `zero` is true.
 fn rt_block(size: i64, zero: bool) -> i64 {
     if size > RT_SMALL_MAX {
-        // [mapping length][header][payload ...], already zero.
-        let len = rt_page_up(size + 16);
-        let big = rt_mmap(len);
-        rt_prefault(big, big + len);
-        store64(big, len);
-        store64(big + 8, (size << 8) | RT_LARGE_TAG);
-        return big + 16;
+        return rt_large(size, zero);
     }
     let k = rt_class(size + 8);
     let slot = RS_FREE + 8 * k;
@@ -184,6 +188,85 @@ fn rt_block(size: i64, zero: bool) -> i64 {
     rs_set(RS_HEAP, cur + bsize);
     store64(cur, k);
     return cur + 8;
+}
+
+// Large block: [mapping length][header][payload ...]. A cached mapping
+// is reused when one is big enough (zeroed up to `size` when `zero`);
+// otherwise a fresh one, already zero, is mapped and faulted in.
+fn rt_large(size: i64, zero: bool) -> i64 {
+    let len = rt_page_up(size + 16);
+    let mut big = rt_lc_take(len);
+    if big != 0 {
+        if zero {
+            memset(big + 16, 0, size);
+        }
+    } else {
+        big = rt_mmap(len);
+        rt_prefault(big, big + len);
+        store64(big, len);
+    }
+    store64(big + 8, (size << 8) | RT_LARGE_TAG);
+    return big + 16;
+}
+
+// The smallest cached mapping of at least `len` bytes, taken out of the
+// cache; 0 when none is big enough.
+fn rt_lc_take(len: i64) -> i64 {
+    let n = rs(RS_LC_N);
+    let mut best: i64 = -1;
+    let mut best_len: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let m = load64(RT_BASE + RS_LC_SLOTS + 8 * i);
+        let l = load64(m);
+        if l >= len && (best < 0 || l < best_len) {
+            best = i;
+            best_len = l;
+        }
+        i = i + 1;
+    }
+    if best < 0 {
+        return 0;
+    }
+    let m = load64(RT_BASE + RS_LC_SLOTS + 8 * best);
+    rt_lc_remove(best);
+    return m;
+}
+
+// Drop cache slot `i`, keeping the others in age order.
+fn rt_lc_remove(i: i64) -> i64 {
+    let n = rs(RS_LC_N);
+    let at = RT_BASE + RS_LC_SLOTS;
+    rs_set(RS_LC_BYTES, rs(RS_LC_BYTES) - load64(load64(at + 8 * i)));
+    let mut j = i;
+    while j + 1 < n {
+        store64(at + 8 * j, load64(at + 8 * j + 8));
+        j = j + 1;
+    }
+    rs_set(RS_LC_N, n - 1);
+    return 0;
+}
+
+// Keep the freed mapping `m` for reuse, unmapping the oldest cached
+// blocks past the cache's bounds (or `m` itself when it alone is past
+// the byte bound).
+fn rt_lc_put(m: i64) -> i64 {
+    let len = load64(m);
+    if len > RT_LC_CAP {
+        syscall6(SYS_MUNMAP, m, len, 0, 0, 0, 0);
+        return 0;
+    }
+    while rs(RS_LC_N) == RT_LC_MAX || rs(RS_LC_BYTES) + len > RT_LC_CAP {
+        let old = load64(RT_BASE + RS_LC_SLOTS);
+        let old_len = load64(old);
+        rt_lc_remove(0);
+        syscall6(SYS_MUNMAP, old, old_len, 0, 0, 0, 0);
+    }
+    let n = rs(RS_LC_N);
+    store64(RT_BASE + RS_LC_SLOTS + 8 * n, m);
+    rs_set(RS_LC_N, n + 1);
+    rs_set(RS_LC_BYTES, rs(RS_LC_BYTES) + len);
+    return 0;
 }
 
 // Fault in the arena ahead of the bump pointer, past at least `need`.
@@ -219,7 +302,7 @@ fn rt_free(p: i64) -> i64 {
     }
     let k = load64(p - 8) & 255;
     if k == RT_LARGE_TAG {
-        syscall6(SYS_MUNMAP, p - 16, load64(p - 16), 0, 0, 0, 0);
+        rt_lc_put(p - 16);
         return 0;
     }
     let slot = RS_FREE + 8 * k;
