@@ -2064,6 +2064,128 @@ fn temps_free_fresh_temporaries() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Fresh cell temporaries (card L13c, docs/lifecycles.md §3.5): a fresh
+/// struct, tuple or array passed straight to a call that only lends it
+/// lives in a stack cell when it is flat and fits the frame, else it is
+/// freed right after that call (with drop glue when its children are
+/// fresh). One kept by the callee or returned by the outer call is never
+/// freed. Every program in tests/temps_cell/ prints its `<stem>.out` with
+/// both backends and plans as its `<stem>.place` golden (`UPDATE_LIFE=1`
+/// rewrites them); where gcc has AddressSanitizer the C builds run clean,
+/// with leak checks for the programs whose temporaries all die.
+#[test]
+fn temps_free_fresh_cell_temporaries() {
+    let root = repo();
+    let update = env::var("UPDATE_LIFE").is_ok();
+    let dir = scratch("temps_cell");
+    let stems = ["alias", "kept", "nested", "print_loop", "str_cell"];
+    let mut plans = String::new();
+    for stem in stems {
+        let rel = format!("tests/temps_cell/{}.trk", stem);
+        let want =
+            fs::read_to_string(root.join(format!("tests/temps_cell/{}.out", stem))).unwrap();
+        let exe = dir.join(stem);
+        let out = run_trackc(&["build", &rel, "-o", exe.to_str().unwrap()], &root);
+        assert!(out.status.success(), "{}: build failed", rel);
+        assert_eq!(run_exe(&exe), (want.clone(), Some(0)), "{}: C output", rel);
+        let nat = dir.join(format!("{}_nat", stem));
+        let out = run_trackc(
+            &["build", "--native", &rel, "-o", nat.to_str().unwrap()],
+            &root,
+        );
+        assert!(out.status.success(), "{}: native build failed", rel);
+        assert_eq!(run_exe(&nat), (want, Some(0)), "{}: native output", rel);
+        let plan = run_trackc(&["life", "--place", &rel], &root);
+        let got = String::from_utf8_lossy(&plan.stdout).into_owned();
+        let golden = root.join(format!("tests/temps_cell/{}.place", stem));
+        if update {
+            fs::write(&golden, &got).unwrap();
+        }
+        let want = fs::read_to_string(&golden)
+            .unwrap_or_else(|_| panic!("missing golden {}", golden.display()));
+        assert_eq!(got, want, "{}: placement plan differs", rel);
+        plans.push_str(&format!("{}:\n{}", stem, got));
+    }
+    for (stem, line) in [
+        ("print_loop", "L33 call stack ends L33"),
+        ("print_loop", "L34 struct stack ends L34"),
+        ("print_loop", "L35 call temp-autofree deep ends L35"),
+        ("print_loop", "L36 struct temp-autofree deep ends L36"),
+        ("print_loop", "L37 tuple stack ends L37"),
+        ("nested", "L26 call stack ends L26"),
+        ("str_cell", "L18 struct stack ends L18"),
+    ] {
+        assert!(plans.contains(line), "{}: missing `{}` in\n{}", stem, line, plans);
+    }
+    let nested = plans.split("nested:\n").nth(1).unwrap_or("");
+    assert_eq!(
+        nested.matches("call temp-autofree deep").count(),
+        3,
+        "every nested fresh cell is freed:\n{}",
+        plans
+    );
+    for stem in ["kept", "alias"] {
+        let block = plans.split(&format!("{}:\n", stem)).nth(1).unwrap_or("");
+        let block = block.split(":\n").next().unwrap_or("");
+        assert!(
+            !block.contains("temp-autofree") && !block.contains("stack"),
+            "{}: a cell that is kept or aliased must stay on the heap:\n{}",
+            stem,
+            plans
+        );
+    }
+    let asan = Command::new("gcc")
+        .args(["-fsanitize=address", "-x", "c", "-", "-o"])
+        .arg(dir.join("probe"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"int main(void){return 0;}")?;
+            child.wait()
+        })
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !asan {
+        let _ = fs::remove_dir_all(&dir);
+        return;
+    }
+    for stem in stems {
+        let rel = format!("tests/temps_cell/{}.trk", stem);
+        let exe = dir.join(format!("{}_asan", stem));
+        let out = Command::new(trackc())
+            .args(["build", &rel, "-o", exe.to_str().unwrap()])
+            .env("CC", "gcc -fsanitize=address -g")
+            .env("TRACKC_CACHE", dir.join("cache"))
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}: ASan build failed", rel);
+        let all_die = matches!(stem, "nested" | "print_loop");
+        let leaks = if all_die {
+            "detect_leaks=1"
+        } else {
+            "detect_leaks=0"
+        };
+        let run = Command::new(&exe)
+            .env("ASAN_OPTIONS", leaks)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success() && !err.contains("Sanitizer"),
+            "{}: ASan reports an error or a leak:\n{}",
+            rel,
+            err
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Caller return slots in the C backend (card L10, docs/lifecycles.md
 /// §3.2): every program in tests/retslot/ builds, prints its `<stem>.out`
 /// and plans as its `<stem>.place` golden (`UPDATE_LIFE=1` rewrites them).
@@ -2155,7 +2277,7 @@ fn ret_slots_write_caller_cells() {
             "a `return f(..)` passes the caller's slot through",
         ),
         (
-            "L17 call stack ends L18",
+            "L18 call stack ends L19",
             "the outer call of `f(g(x))` writes a stack slot",
         ),
     ] {

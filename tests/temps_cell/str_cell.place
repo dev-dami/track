@@ -1,0 +1,4 @@
+fn make_named
+  L6 struct heap ends -
+fn main
+  L18 struct stack ends L18

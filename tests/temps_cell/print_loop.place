@@ -1,0 +1,12 @@
+fn make_rect
+  L10 struct ret-slot ends L10
+fn make_outer
+  L14 struct heap ends -
+  L14 struct heap ends -
+fn main
+  L33 call stack ends L33
+  L34 struct stack ends L34
+  L35 call temp-autofree deep ends L35
+  L36 struct temp-autofree deep ends L36
+  L36 struct heap ends -
+  L37 tuple stack ends L37

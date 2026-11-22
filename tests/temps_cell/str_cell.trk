@@ -1,0 +1,23 @@
+// L13c: a cell temporary holding a Str is freed at its consumer; the Str
+// itself (here a literal) is left alone.
+struct Named { name: Str, n: i64 }
+
+fn make_named(n: i64) -> Named {
+    return Named { name: "cell", n: n };
+}
+
+fn weight(x: &Named) -> i64 {
+    return str_len(x.name) + x.n;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 5000 {
+        total = total + weight(&make_named(i));
+        total = total + weight(&Named { name: "lit", n: 1 });
+        i = i + 1;
+    }
+    print(total);
+    print(sys_get_memory_used());
+}

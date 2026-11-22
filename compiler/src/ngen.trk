@@ -318,7 +318,8 @@ fn ng_site_cell(c: i64, n: i64, count: i64) -> i64 {
         return x_bytes3(b, 72, 137, 200); // mov rax, rcx
     }
     if !ng_stack_site(c, n) {
-        return ng_cell(c, count);
+        ng_cell(c, count);
+        return ng_temp_cell(c, n);
     }
     let b = ncode(c);
     let base = ng_cell_slots(c, count);
@@ -3353,7 +3354,10 @@ fn ng_struct_init(c: i64, n: i64) -> i64 {
     if stack {
         return x_rm(b, 141, 0, 5, d); // lea rax, [rbp + d]
     }
-    return 0;
+    if into {
+        return 0;
+    }
+    return ng_temp_cell(c, n);
 }
 
 // Read (store < 0) or write (value in slot `store`) a struct field of the
@@ -3548,8 +3552,7 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
                 saved = true;
             }
             ng_load(c, vget(temps, i + 1));
-            x_mov_rr(b, 7, 0);
-            ng_call_regs(c, intern(c, hd_free_name(vget(temps, i + 2))), 1);
+            ng_free_temp(c, vget(temps, i + 2));
             vset(temps, i, -1);
         }
         i = i + 3;
@@ -3569,7 +3572,34 @@ fn ng_call(c: i64, n: i64, args: i64) -> i64 {
     if consumer >= 0 {
         vpush(temps, consumer);
         vpush(temps, ng_temp(c));
-        vpush(temps, life_auto_handle(c, n));
+        vpush(temps, gen_temp_code(c, n));
+    }
+    return 0;
+}
+
+// Free the temporary in rax by its NG_TEMPS code (cgen `gen_free_temp`):
+// the kind's free, drop glue for a deep cell, or the cell alone.
+fn ng_free_temp(c: i64, code: i64) -> i64 {
+    if code > 0 {
+        x_mov_rr(ncode(c), 7, 0);
+        return ng_call_regs(c, intern(c, hd_free_name(code)), 1);
+    }
+    let site = 0 - 1 - code;
+    if life_auto_deep(c, site) {
+        return ng_drop(c, pl_site_type(c, site), 0);
+    }
+    return ng_dealloc_rax(c);
+}
+
+// Heap cell in rax of literal `n`: kept in a slot for its consumer when
+// the plan makes it a temporary (card L13c). rax is unchanged.
+fn ng_temp_cell(c: i64, n: i64) -> i64 {
+    let consumer = life_temp_of(c, n);
+    if consumer >= 0 {
+        let temps = ng(c, NG_TEMPS);
+        vpush(temps, consumer);
+        vpush(temps, ng_temp(c));
+        vpush(temps, gen_temp_code(c, n));
     }
     return 0;
 }
@@ -4630,6 +4660,9 @@ fn ng_gen(c: i64, n: i64) -> i64 {
         if k == K_CALL && ng_into_rs(c, n) {
             // `return g(..)` in a ret-slot body: g writes our caller's cell
             ng_set(c, NG_RSARG, ng(c, NG_RS));
+        } else if k == K_CALL && ng_rs_call(c, n) && ng_stack_site(c, n) {
+            // a stack temporary (card L13c): g writes a frame cell
+            ng_set(c, NG_RSARG, -2 - ng_cell_slots(c, pl_flat_words(c, pl_site_type(c, n))));
         }
         return ng_call(c, n, nb(c, n));
     }

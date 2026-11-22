@@ -29,3 +29,4 @@ scratch/benchmarks/rec
 !tests/names/*.out
 !tests/handles/*.out
 !tests/temps/*.out
+!tests/temps_cell/*.out
