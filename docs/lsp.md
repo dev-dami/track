@@ -36,11 +36,11 @@ error inside an imported file is reported on line 1 with that file's
 `path:line:col` in the message.
 
 trackc stops at the first error by exiting, so the server never runs the
-checker in-process: every analysis runs `trackc lsp --check <buffer>
-<path>` as a child process (through `/proc/$PPID/exe`, so Linux only) and
-reads its output. A checker crash becomes a diagnostic, never a dead
-server. Scratch files live in a private `$TMPDIR/trackc-lsp-*` directory,
-removed on exit.
+checker in-process: every analysis writes the buffer and its path to a
+private scratch directory, `$TMPDIR/trackc-lsp-<tag>` (removed on exit),
+runs `trackc lsp --check <tag>` as a child process (through
+`/proc/$PPID/exe`, so Linux only) and reads the child's output. A checker
+crash becomes a diagnostic, never a dead server.
 
 ## Supported Files
 
