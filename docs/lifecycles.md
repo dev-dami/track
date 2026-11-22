@@ -516,6 +516,44 @@ allocations before, 298,635 after [observed]; the compiler builds no
 struct with Str fields, so its leaks are untouched (largest buckets:
 bump cells, i64 collections, `str_concat`, string builders).
 
+#### Call results and moves (card L15)
+
+Two more values count as a fresh Str in a field:
+
+- a call result. `LT_SFRES` gives, per function, the Str field bits its
+  result cell owns: the greatest fixpoint over functions whose result
+  is a struct with a fresh shell and child cells (summary result exactly
+  `fresh`, or `LT_GFN`) and whose body ends in `return`. Each starts
+  with every Str field bit; a pass keeps only the bits every `return`
+  fills fresh (a literal by the rules here, or a call by the callee's
+  current `LT_SFRES`). Marks only clear, so it stops. A local or
+  temporary built by such a call, or reassigned one, owns those fields;
+- a moved fresh local. `LT_SFMOVE` marks `let s = <fresh call>` whose
+  last mention in the rest of its block is a move (a struct literal
+  field value, or `y = s`), every other mention lent (`hd_arg_ok`) and
+  none under a loop, `for`, match or destructuring `let`, nor a
+  rebinding `let s`. So `s` has no other owner and the move runs at most
+  once per binding. Such a field is fresh for `sf_init_mask`; `y = s`,
+  for a heap-autofree handle or Str `y` of the same kind, is a fresh
+  reassignment in mode 5 of `pl_use_ok`: `y` frees its old value there
+  and its last at its end, and `s` is never freed itself (the move is
+  not a lent use).
+
+A local owning Str fields is never rewritten in place by `x = f(..)` of
+a ret-slot call (the flag it binds is 0), so the old strings are freed
+with the old cell. Child cells' Str fields still leak: the mask names
+the cell's own words, and a nested mask would need per-child drop glue.
+
+ASan-built self-compile (each compiler built from its own sources with
+its own lifecycle rules, LSan, `malloc_context_size=6`): 255,856 leaked allocations at
+e286ddf, 234,096 after [observed]. The 25,260 row collections of
+`levenshtein` (`prev = cur` per row) are freed; it now reads its result
+into a local before returning, since `return vget(prev, m)` keeps `prev`
+(mode 5 refuses `return f(.., x)`). The rest grew with the source. The
+largest remaining buckets are not freeable here: `tk_punct` bump cells
+are tokens the token list keeps, and `ng_prim`'s jump lists go to the
+cold-path list (`ng_cold_back`).
+
 ---
 
 ## 4. Measured motivation

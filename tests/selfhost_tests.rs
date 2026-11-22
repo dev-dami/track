@@ -1889,8 +1889,7 @@ fn handles_free_fresh_values() {
     let moved = plans.split("coll_move:").nth(1).unwrap_or("");
     let moved = moved.split("int_loop:").next().unwrap_or("");
     assert_eq!(
-        moved,
-        "\nfn rows\n  L6 collection heap-autofree ends L15\n",
+        moved, "\nfn rows\n  L6 collection heap-autofree ends L15\n",
         "coll_move: moves planned:\n{}",
         moved
     );
@@ -2404,10 +2403,7 @@ fn strfield_frees_owned_str_fields() {
             .output()
             .unwrap();
         assert!(out.status.success(), "{}: ASan build failed", rel);
-        let leaks = if matches!(
-            stem,
-            "temp" | "local" | "literal" | "result" | "movelocal"
-        ) {
+        let leaks = if matches!(stem, "temp" | "local" | "literal" | "result" | "movelocal") {
             "detect_leaks=1"
         } else {
             "detect_leaks=0"
