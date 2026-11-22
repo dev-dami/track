@@ -400,6 +400,7 @@ fn ev_call(c: i64, s: i64, n: i64) -> i64 {
             let pe = vget(recs, at + LR_PARAMS + i * 2 + 1);
             if params >= 0 {
                 check_twice_at_call(c, at, i, a);
+                check_tuple_twice(c, s, a, pty);
             }
             if is_ref {
                 // Lending is a read; the callee may raise it to mutate.
@@ -762,6 +763,8 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
     }
     if k == K_RETURN {
         check_return_escape(c, s, na(c, n));
+        let f = vget(life_records(c), vget(ck(c, CK_LIFE), LT_CUR) + LR_FN);
+        check_tuple_twice(c, s, na(c, n), nd(c, f));
         let o = ev_move(c, s, na(c, n));
         exit_with(s, o);
         return 0;
@@ -770,6 +773,7 @@ fn ev(c: i64, s: i64, n: i64) -> i64 {
         return ev_assign(c, s, n);
     }
     if k == K_LET {
+        check_tuple_twice(c, s, nd(c, n), nc(c, n));
         let o = ev_move(c, s, nd(c, n));
         let mut ty = nc(c, n);
         if ty < 0 {
@@ -1606,6 +1610,15 @@ fn check_owned_twice(c: i64, s: i64, n: i64) -> i64 {
                 j = j + 2;
             }
         }
+        if nk(c, e) == K_TUPLE {
+            let sd = struct_def(c, na(c, n));
+            if sd >= 0 {
+                let idx = struct_field_index(c, sd, list_at(c, pairs, i - 1));
+                if idx >= 0 {
+                    check_tuple_twice(c, s, e, list_at(c, nb(c, sd), idx * 2 + 1));
+                }
+            }
+        }
         i = i + 2;
     }
     return 0;
@@ -1644,10 +1657,62 @@ fn twice_found(c: i64, s: i64, n: i64, f1: i64, f2: i64, e: i64) -> i64 {
     sb_add(b, sname);
     sb_add(b, ".");
     sb_add(b, name_text(c, f2));
-    sb_add(b, "' both take ownership of the borrowed ");
-    sb_add(b, quoted(c, na(c, e)));
-    sb_add(b, ".");
-    let text = sb_text(b);
+    sb_add(b, "'");
+    return twice_report(c, s, e, sb_text(b));
+}
+
+// E0214 in a tuple literal whose expected type `ety` (a declared return,
+// `let`, parameter or field type) makes two elements owned: the same
+// borrowed variable fills both. A tuple's own inferred type keeps `&`
+// elements as references, so only an expected type can make them owned.
+fn check_tuple_twice(c: i64, s: i64, lit: i64, ety: i64) -> i64 {
+    if lit < 0 || ety < 0 || nk(c, lit) != K_TUPLE || nk(c, ety) != T_TUPLE {
+        return 0;
+    }
+    let el = na(c, lit);
+    let tl = na(c, ety);
+    let mut i: i64 = 0;
+    while i < list_len(c, el) && i < list_len(c, tl) {
+        let e = list_at(c, el, i);
+        if borrowed_var(c, s, e) && owned_type(c, list_at(c, tl, i)) {
+            let mut j: i64 = 0;
+            while j < i {
+                let d = list_at(c, el, j);
+                if nk(c, d) == K_VAR && na(c, d) == na(c, e) && owned_type(c, list_at(c, tl, j)) {
+                    let b = sb_new();
+                    sb_add(b, "elements ");
+                    sb_add(b, text_of_int(j));
+                    sb_add(b, " and ");
+                    sb_add(b, text_of_int(i));
+                    sb_add(b, " of the tuple");
+                    return twice_report(c, s, e, sb_text(b));
+                }
+                j = j + 1;
+            }
+        }
+        check_tuple_twice(c, s, e, list_at(c, tl, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// True when `e` is a borrowed variable (a `&` typed local or parameter).
+fn borrowed_var(c: i64, s: i64, e: i64) -> bool {
+    if e < 0 || nk(c, e) != K_VAR {
+        return false;
+    }
+    let slot = lookup(c, na(c, e));
+    return slot >= lsg(s, LS_BASE) && ty_is_ref(c, vf(c, slot, V_TYPE));
+}
+
+fn owned_type(c: i64, t: i64) -> bool {
+    return t >= 0 && !ty_is_ref(c, t) && life_tracked(c, t);
+}
+
+// Report (or, for a `&` parameter, record as latent) that `places` both
+// take ownership of the borrowed variable `e`.
+fn twice_report(c: i64, s: i64, e: i64, places: i64) -> i64 {
+    let text = text_cat3(places, " both take ownership of the borrowed ", text_cat(quoted(c, na(c, e)), "."));
     let slot = lookup(c, na(c, e));
     let base = lsg(s, LS_BASE);
     let table = ck(c, CK_LIFE);

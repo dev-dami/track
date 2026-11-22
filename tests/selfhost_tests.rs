@@ -1182,6 +1182,11 @@ const LIFE_ERRORS: &[(&str, &str)] = &[
         "struct Point { x: i64, y: i64 }\nfn dup(r: &Point) -> i64 { let t: (Point, Point) = (r, r); return t.0.x; }\nfn main() -> void { let p = Point { x: 1, y: 2 }; print(dup(&p)); }\n",
         "error[E0214]: 'p' would be ended twice: elements 0 and 1 of the tuple both take ownership of the borrowed 'r'.",
     ),
+    // L5w: E0214 tuple in an owned struct field.
+    (
+        "struct Point { x: i64, y: i64 }\nstruct Bag { t: (Point, Point) }\nfn mk(r: &Point) -> Bag { return Bag { t: (r, r) }; }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let b = mk(&p); print(b.t.0.x); }\n",
+        "error[E0214]: 'p' would be ended twice: elements 0 and 1 of the tuple both take ownership of the borrowed 'r'.",
+    ),
     // L5w: E0214 tuple argument, local reference.
     (
         "struct Point { x: i64, y: i64 }\nfn eat(t: (Point, Point)) -> i64 { return 1; }\nfn main() -> void { let p = Point { x: 1, y: 2 }; let r = &p; print(eat((r, r))); }\n",
