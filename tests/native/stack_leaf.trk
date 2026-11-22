@@ -1,0 +1,26 @@
+// A struct literal planned `stack` in a leaf function (no calls, so the
+// function would otherwise run without an rbp frame) lives in frame slots:
+// ten million calls under a 3 MB memory limit never touch the heap. The
+// body is too big to inline, so `leaf` stays a real call.
+struct Pt { x: i64, y: i64, z: i64 }
+
+fn leaf(a: i64, b: i64) -> i64 {
+    let p = Pt { x: a, y: b, z: (a | b) - (a & b) };
+    let q = Pt { x: b, y: a, z: 0 };
+    let s: i64 = p.x * 3 + p.y * 5 + p.z * 7 + q.x * 11 + q.y * 13 + q.z;
+    let t: i64 = (s + (s >> 3)) + (p.x & 15) * (q.y & 7) + (p.z | 1) * 17;
+    let u: i64 = (t * 31 + p.y) % 1000003 + (q.x - p.x) * (q.y - p.y);
+    return (u + s * 3 + t) % 1000000007;
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(3000000);
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 10000000 {
+        acc = (acc + leaf(i, acc & 1023)) % 1000000007;
+        i = i + 1;
+    }
+    print(acc);
+    return 0;
+}

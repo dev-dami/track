@@ -1,0 +1,30 @@
+// A stack array literal indexed in loops the bounds hoist covers: reads
+// and element writes go to frame slots, a million calls under a 3 MB
+// memory limit never touch the heap, and the results match the C path.
+fn table_sum(k: i64) -> i64 {
+    let mut t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    let mut i: i64 = 0;
+    while i < 12 {
+        t[i] = t[i] * k + i;
+        i = i + 1;
+    }
+    let mut s: i64 = 0;
+    let mut j: i64 = 0;
+    while j < 12 {
+        s = (s + t[j] * (j + 1)) % 1000003;
+        j = j + 1;
+    }
+    return s;
+}
+
+fn main() -> i64 {
+    sys_set_memory_limit(3000000);
+    let mut acc: i64 = 0;
+    let mut n: i64 = 0;
+    while n < 1000000 {
+        acc = (acc + table_sum(n & 255)) % 1000000007;
+        n = n + 1;
+    }
+    print(acc);
+    return 0;
+}
