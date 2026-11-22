@@ -3892,15 +3892,17 @@ fn hd_program(c: i64) -> i64 {
 // fills the fields its summary LT_SFRES names: the greatest fixpoint
 // where every `return` of the function gives such a literal or such a
 // call. And a fresh Str local moved into a literal field counts as a fresh
-// call (LT_SFMOVE): `let s = <fresh Str call>` and that field is the one
-// mention of `s` in the rest of its block, not under a loop, a match or a
-// destructuring `let`, so the string has no other owner and the literal
-// runs at most once per binding.
+// call (LT_SFMOVE): `let s = <fresh Str call>` and that field is the last
+// mention of `s` in the rest of its block, every other one lent, none
+// under a loop, a match or a destructuring `let`, so the string has no
+// other owner and the literal runs at most once per binding. The same
+// table lets a heap-autofree handle or Str local take `y = x` from such a
+// local (mode 5 of `pl_use_ok`): ownership moves, the old `y` is freed.
 
 const LT_SMASK = 25;  // by node: owned Str field bits of a deep site (L13e)
 const LT_SFLENT = 26; // by fn node: bits of the struct parameters whose Str fields it only lends
 const LT_SFRES = 27;  // by fn node: Str field bits its result cell owns (L15)
-const LT_SFMOVE = 28; // by node: 1 for a fresh Str local's one mention, moved into a literal field (L15)
+const LT_SFMOVE = 28; // by node: HK_* of a fresh local its last mention moves (field or `y = x`, L15)
 
 // Owned Str field bits of deep site `n`, or 0.
 fn life_str_mask(c: i64, n: i64) -> i64 {
@@ -3936,14 +3938,23 @@ fn sf_all(c: i64, decl: i64) -> i64 {
     return m;
 }
 
-// 1 when `v` is a fresh Str local moved into a literal field (LT_SFMOVE).
-fn sf_moved(c: i64, v: i64) -> bool {
+// HK_* of the fresh local whose last mention `v` moves it (LT_SFMOVE:
+// into a literal field, or `other = v`), else 0.
+fn hd_moved(c: i64, v: i64) -> i64 {
     let table = ck(c, CK_LIFE);
     if vlen(table) <= LT_SFMOVE || v < 0 {
-        return false;
+        return 0;
     }
     let m = vget(table, LT_SFMOVE);
-    return m != 0 && v < vlen(m) && vget(m, v) == 1;
+    if m == 0 || v >= vlen(m) {
+        return 0;
+    }
+    return vget(m, v);
+}
+
+// True when `v` is a fresh Str local moved into a literal field.
+fn sf_moved(c: i64, v: i64) -> bool {
+    return hd_moved(c, v) == HK_STR;
 }
 
 // Bits of the Str fields value `v` fills with a fresh Str: a struct
@@ -4152,7 +4163,8 @@ fn sf_program(c: i64) -> i64 {
     vset(table, LT_SFLENT, 0);
     vset(table, LT_SMASK, 0);
     vset(table, LT_SFRES, 0);
-    vset(table, LT_SFMOVE, 0);
+    // Moves (LT_SFMOVE) matter to handle locals in any program.
+    sm_program(c, node_count(c));
     let items = cx(c, CX_ITEMS);
     let mut any = false;
     let mut i: i64 = 0;
@@ -4194,17 +4206,18 @@ fn sf_program(c: i64) -> i64 {
             j = j + 1;
         }
     }
-    sm_program(c, nn);
     return sr_program(c, nn);
 }
 
-// ------------------------------------------- moved fresh Str locals (L15)
+// ------------------------------------------- moved fresh locals (L15)
 
-// Mentions of `name` in `n`, each weighing `w` (2 under a loop, so one
-// mention there already disqualifies). A rebinding `let name`, or any
-// mention under a match, a `for` or a destructuring `let`, counts 2, as
-// do unknown kinds. `acc` is [count, node]: node is the last mention when
-// it was a struct literal field value, else -1.
+// Mentions of `name` in `n` that are not lent, each weighing `w` (2 under
+// a loop, so one there already disqualifies). A mention lent to a call
+// `hd_arg_ok` allows (neither kept nor freed) weighs nothing. A rebinding
+// `let name`, or any mention under a match, a `for` or a destructuring
+// `let`, counts 2, as do unknown kinds. `acc` is [count, node]: node is
+// the last mention, when it was a move (a struct literal field value or
+// `other = name`), else -1.
 fn sm_count(c: i64, n: i64, name: i64, w: i64, acc: i64) -> i64 {
     if n < 0 {
         return 0;
@@ -4247,7 +4260,25 @@ fn sm_count(c: i64, n: i64, name: i64, w: i64, acc: i64) -> i64 {
         }
         return 0;
     }
-    if k == K_CALL { return sm_list(c, nb(c, n), name, w, acc, 0, 1); }
+    if k == K_CALL {
+        let args = nb(c, n);
+        let mut i: i64 = 0;
+        while i < list_len(c, args) {
+            let a = list_at(c, args, i);
+            let is_addr = nk(c, a) == K_ADDR;
+            let mut inner = a;
+            if is_addr {
+                inner = na(c, a);
+            }
+            if nk(c, inner) == K_VAR && na(c, inner) == name && hd_arg_ok(c, n, i, is_addr) {
+                vset(acc, 1, -1);
+            } else {
+                sm_count(c, a, name, w, acc);
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
     if k == K_MACROCALL {
         sm_list(c, nb(c, n), name, w, acc, 0, 1);
         return sm_list(c, nc(c, n), name, w, acc, 0, 1);
@@ -4263,8 +4294,14 @@ fn sm_count(c: i64, n: i64, name: i64, w: i64, acc: i64) -> i64 {
     }
     if k == K_RETURN { return sm_count(c, na(c, n), name, w, acc); }
     if k == K_ASSIGN {
-        sm_count(c, na(c, n), name, w, acc);
-        return sm_count(c, nb(c, n), name, w, acc);
+        let v = nb(c, n);
+        sm_count(c, v, name, w, acc);
+        let t = na(c, n);
+        if nk(c, v) == K_VAR && na(c, v) == name && nk(c, t) == K_VAR && na(c, t) != name {
+            vset(acc, 1, v);
+            return 0;
+        }
+        return sm_count(c, t, name, w, acc);
     }
     if k == K_LET {
         sm_count(c, nd(c, n), name, w, acc);
@@ -4291,18 +4328,24 @@ fn sm_list(c: i64, l: i64, name: i64, w: i64, acc: i64, from: i64, step: i64) ->
     return 0;
 }
 
-// Mark LT_SFMOVE in block `l` and the blocks nested in its statements.
+// Mark LT_SFMOVE in block `l` and the blocks nested in its statements:
+// for `let x = <fresh call of kind hk>`, the move that is the last mention
+// of `x` in the rest of the block, every other mention lent, gets hk.
 fn sm_block(c: i64, l: i64, acc: i64) -> i64 {
     let marks = vget(ck(c, CK_LIFE), LT_SFMOVE);
     let mut i: i64 = 0;
     while i < list_len(c, l) {
         let n = list_at(c, l, i);
-        if nk(c, n) == K_LET && hd_call_kind(c, nd(c, n)) == HK_STR {
+        let mut hk: i64 = 0;
+        if nk(c, n) == K_LET {
+            hk = hd_call_kind(c, nd(c, n));
+        }
+        if hk > 0 {
             vset(acc, 0, 0);
             vset(acc, 1, -1);
             sm_list(c, l, na(c, n), 1, acc, i + 1, 1);
             if vget(acc, 0) == 1 && vget(acc, 1) >= 0 {
-                vset(marks, vget(acc, 1), 1);
+                vset(marks, vget(acc, 1), hk);
             }
         }
         sm_stmt(c, n, acc);
@@ -4326,7 +4369,8 @@ fn sm_stmt(c: i64, n: i64, acc: i64) -> i64 {
         let arms = nb(c, n);
         let mut i: i64 = 0;
         while i < list_len(c, arms) {
-            sm_block(c, list_at(c, arms, i + 2), acc);
+            // An arm body is one node, never a block of statements.
+            sm_stmt(c, list_at(c, arms, i + 2), acc);
             i = i + 3;
         }
     }
@@ -4608,7 +4652,8 @@ fn pl_is_name(c: i64, n: i64, name: i64) -> bool {
 // and 6, `return f(.., name)` and `return f(.., &name)` escape, as ngen
 // refuses them (card L11). Mode 5 (a fresh Str or handle, card L13) only
 // lends `name` to calls `hd_arg_ok` allows, and every `name = v` makes a
-// fresh object of the site's kind (LT_CURHK); mode 6 (a lent parameter)
+// fresh object of the site's kind (LT_CURHK) or moves one from a fresh
+// local (`hd_moved`, L15); mode 6 (a lent parameter)
 // is mode 5 with no assignment at all and `return f(.., name)` allowed,
 // since nothing is freed in that frame.
 fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
@@ -4710,7 +4755,8 @@ fn pl_use_ok(c: i64, n: i64, name: i64, mode: i64) -> bool {
             if mode == 3 && !pl_deep_fresh(c, nb(c, n)) {
                 return false;
             }
-            if mode == 6 || (mode == 5 && hd_call_kind(c, nb(c, n)) != vget(ck(c, CK_LIFE), LT_CURHK)) {
+            let hk = vget(ck(c, CK_LIFE), LT_CURHK);
+            if mode == 6 || (mode == 5 && hd_call_kind(c, nb(c, n)) != hk && hd_moved(c, nb(c, n)) != hk) {
                 return false;
             }
             return pl_use_ok(c, nb(c, n), name, mode);

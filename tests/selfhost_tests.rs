@@ -1825,6 +1825,7 @@ fn handles_free_fresh_values() {
         "builder",
         "coll_kept",
         "coll_local",
+        "coll_move",
         "int_loop",
         "str_kept",
         "str_local",
@@ -1883,6 +1884,16 @@ fn handles_free_fresh_values() {
             }
         }
     }
+    // coll_move (card L15): only `rows` moves a fresh row into `prev` as
+    // its last mention; the looped and the used-after moves keep both.
+    let moved = plans.split("coll_move:").nth(1).unwrap_or("");
+    let moved = moved.split("int_loop:").next().unwrap_or("");
+    assert_eq!(
+        moved,
+        "\nfn rows\n  L6 collection heap-autofree ends L15\n",
+        "coll_move: moves planned:\n{}",
+        moved
+    );
     for (line, why) in [
         (
             "L4 str heap-autofree ends L6",
