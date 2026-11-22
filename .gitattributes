@@ -1,2 +1,2 @@
-# Generated seed of trackc (scripts/update_seed.sh): collapse it in diffs.
-bootstrap/seed/*.c linguist-generated=true -diff
+# The committed native seed of trackc (scripts/update_seed.sh): a binary.
+bootstrap/seed/trackc binary
