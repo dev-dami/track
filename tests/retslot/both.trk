@@ -1,0 +1,32 @@
+// L10: one ret-slot function called from a stack context (the result
+// lives in a slot of the caller), a heap-autofree context (the local is
+// also reassigned a cell only the heap can hold, so its cell is reused in
+// place) and a heap context (the result is returned onward).
+struct V { x: i64, y: i64 }
+
+fn mk(i: i64) -> V {
+    return V { x: i, y: i + 7 };
+}
+
+fn fresh_heap(i: i64) -> V {
+    let v = mk(i);
+    return v;
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 50 {
+        let s = mk(i);
+        let mut h = mk(i + 1);
+        total = total + s.x + s.y + h.y;
+        h = fresh_heap(i);
+        total = total + h.x;
+        h = mk(i + 3);
+        total = total + h.x;
+        let o = fresh_heap(i * 2);
+        total = total + o.y;
+        i = i + 1;
+    }
+    print(total);
+}

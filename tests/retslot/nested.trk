@@ -1,0 +1,22 @@
+// L10: a nested call `f(g(x))`: the inner result is an argument, so it
+// takes the allocating entry; the outer result lives in the caller's slot.
+struct V { x: i64, y: i64 }
+
+fn mk(i: i64) -> V {
+    return V { x: i, y: 2 * i };
+}
+
+fn grow(v: V) -> V {
+    return V { x: v.x + v.y, y: v.y + 1 };
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 25 {
+        let r = grow(grow(mk(i)));
+        total = total + r.x * 10 + r.y;
+        i = i + 1;
+    }
+    print(total);
+}

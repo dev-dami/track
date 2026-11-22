@@ -1,0 +1,20 @@
+// L10: a ret-slot function's result stored into a collection must live on
+// the heap: the caller calls the allocating entry, never a stack slot.
+struct V { x: i64, y: i64 }
+
+fn mk(i: i64) -> V {
+    return V { x: i, y: i * i };
+}
+
+fn main() -> void {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 30 {
+        let vs = [mk(i), mk(i + 1), mk(i + 2)];
+        let a = vs[0];
+        let c = vs[2];
+        total = total + a.y + c.x + array_len(&vs);
+        i = i + 1;
+    }
+    print(total);
+}
