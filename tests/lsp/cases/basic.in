@@ -1,0 +1,9 @@
+# initialize, completion and hover as in tests/lsp_tests.rs, then a clean shutdown
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///test.trk","languageId":"track","version":1,"text":"fn main() -> void {\n    le\n}"}}}
+{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///test.trk"},"position":{"line":1,"character":6}}}
+{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///test.trk","version":2},"contentChanges":[{"text":"fn main() -> void {\n    print(42);\n}"}]}}
+{"jsonrpc":"2.0","id":3,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///test.trk"},"position":{"line":1,"character":6}}}
+{"jsonrpc":"2.0","id":4,"method":"shutdown","params":null}
+{"jsonrpc":"2.0","method":"exit"}

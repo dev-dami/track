@@ -332,6 +332,17 @@ tk_w read_line(void) {
     return TK_WORD(buf);
 }
 
+/* Read n >= 0 bytes of stdin (fewer at end of input), flushing stdout first
+ * so a reply is never left buffered (`trackc lsp` relies on this). */
+tk_w track_stdin_read(tk_w n) {
+    char *buf = (char *)malloc((size_t)n + 1);
+    size_t got = 0, r = 1;
+    fflush(stdout);
+    while (buf && got < (size_t)n && r > 0) got += (r = fread(buf + got, 1, (size_t)n - got, stdin));
+    if (buf) buf[got] = '\0';
+    return TK_WORD(buf ? buf : tk_dup(""));
+}
+
 /* ---------------------------------------------------------------- strings */
 
 tk_w str_from_literal(tk_w raw) { return TK_WORD(tk_dup(TK_STR(raw))); }
@@ -502,13 +513,21 @@ tk_w file_close(tk_w f) {
 }
 
 tk_w file_read_all(tk_w handle) {
+    /* Read to end of file, as rt/sys.trk's rt_read_fd does: files whose size
+     * is not known up front (/proc, pipes) read whole too. */
     FILE *f = (FILE *)TK_PTR(handle);
-    if (!f || fseek(f, 0, SEEK_END) != 0) return TK_WORD(tk_dup(""));
-    long end = ftell(f);
-    if (end < 0 || fseek(f, 0, SEEK_SET) != 0) return TK_WORD(tk_dup(""));
-    char *buf = (char *)malloc((size_t)end + 1);
+    if (!f) return TK_WORD(tk_dup(""));
+    size_t cap = 4096, got = 0, n;
+    char *buf = (char *)malloc(cap + 1);
     if (!buf) exit(137);
-    size_t got = fread(buf, 1, (size_t)end, f);
+    while ((n = fread(buf + got, 1, cap - got, f)) > 0) {
+        got += n;
+        if (got == cap) {
+            cap *= 2;
+            buf = (char *)realloc(buf, cap + 1);
+            if (!buf) exit(137);
+        }
+    }
     buf[got] = '\0';
     return TK_WORD(buf);
 }

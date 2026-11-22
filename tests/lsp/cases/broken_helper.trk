@@ -1,0 +1,4 @@
+// imported by imports.in; holds a checker error on purpose
+fn broken() -> i64 {
+    return undefined_name;
+}
