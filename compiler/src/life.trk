@@ -1531,8 +1531,68 @@ fn check_twice_at_call(c: i64, at: i64, i: i64, a: i64) -> i64 {
     return life_error(c, npos(c, a), "E0214", text_cat3(quoted(c, name), " would be ended twice: ", vget(t, 2)));
 }
 
-// E0213 bookkeeping: `slot` (a reference) now points at the place in `rhs`.
+// Slots the reference value `rhs` points at, pushed onto `out`: the root
+// of `&place`, the targets of a `&` variable it copies, or those of the
+// one `&` argument a call's result always derives from (its summary's
+// result is exactly that parameter). Anything else adds nothing.
+fn ref_targets(c: i64, rhs: i64, out: i64) -> i64 {
+    if rhs < 0 {
+        return 0;
+    }
+    let k = nk(c, rhs);
+    if k == K_ADDR {
+        let root = place_var(c, na(c, rhs));
+        if root >= 0 {
+            let t = lookup(c, root);
+            if t >= 0 {
+                vpush(out, t);
+            }
+        }
+        return 0;
+    }
+    if k == K_VAR {
+        let slot = lookup(c, na(c, rhs));
+        if slot < 0 || !ty_is_ref(c, vf(c, slot, V_TYPE)) {
+            return 0;
+        }
+        let pts = vget(ck(c, CK_LIFE), LT_POINTS);
+        let mut j: i64 = 0;
+        while j < vlen(pts) {
+            if vget(pts, j) == slot {
+                vpush(out, vget(pts, j + 1));
+            }
+            j = j + 2;
+        }
+        return 0;
+    }
+    if k == K_CALL {
+        let at = life_callee(c, na(c, rhs));
+        if at < 0 {
+            return 0;
+        }
+        let recs = vget(ck(c, CK_LIFE), LT_RECS);
+        let r = vget(recs, at + LR_RES);
+        let bits = r & O_PARAMS;
+        if bits == 0 || (r & (O_FRESH | O_STATIC | O_UNKNOWN)) != 0 || (bits & (bits - 1)) != 0 {
+            return 0;
+        }
+        let mut i: i64 = 0;
+        while (bits & param_bit(i)) == 0 {
+            i = i + 1;
+        }
+        let params = nc(c, vget(recs, at + LR_FN));
+        let args = nb(c, rhs);
+        if i < list_len(c, args) && i * 2 + 1 < list_len(c, params) && ty_is_ref(c, list_at(c, params, i * 2 + 1)) {
+            ref_targets(c, list_at(c, args, i), out);
+        }
+    }
+    return 0;
+}
+
+// E0213 bookkeeping: `slot` (a reference) now points at what `rhs` does.
 fn ref_points(c: i64, slot: i64, rhs: i64) -> i64 {
+    let ts = vnew();
+    ref_targets(c, rhs, ts);
     let pts = vget(ck(c, CK_LIFE), LT_POINTS);
     let mut k: i64 = 0;
     while k < vlen(pts) {
@@ -1544,15 +1604,11 @@ fn ref_points(c: i64, slot: i64, rhs: i64) -> i64 {
             k = k + 2;
         }
     }
-    if rhs >= 0 && nk(c, rhs) == K_ADDR {
-        let root = place_var(c, na(c, rhs));
-        if root >= 0 {
-            let t = lookup(c, root);
-            if t >= 0 {
-                vpush(pts, slot);
-                vpush(pts, t);
-            }
-        }
+    let mut j: i64 = 0;
+    while j < vlen(ts) {
+        vpush(pts, slot);
+        vpush(pts, vget(ts, j));
+        j = j + 1;
     }
     return 0;
 }
