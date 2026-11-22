@@ -2262,9 +2262,17 @@ fn strfield_frees_owned_str_fields() {
                 // Only main's `keep` owns its string: the cells built from
                 // the parameter in build_local/build_temp do not.
                 let callee = got.split("fn main").next().unwrap_or("");
-                assert!(!callee.contains(" strs "), "param: callee frees a parameter's Str:\n{}", got);
+                assert!(
+                    !callee.contains(" strs "),
+                    "param: callee frees a parameter's Str:\n{}",
+                    got
+                );
             }
-            _ => assert!(!owns, "{}: a Str field it does not own is freed:\n{}", stem, got),
+            _ => assert!(
+                !owns,
+                "{}: a Str field it does not own is freed:\n{}",
+                stem, got
+            ),
         }
     }
     let asan = Command::new("gcc")
