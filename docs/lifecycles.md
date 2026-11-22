@@ -383,6 +383,39 @@ is freed. This is where `sieve` and `strings` gain (section 4). It also
 touches every table in the compiler, so it gets its own card and the
 strictest gate: ASan/LSan self-compile.
 
+*As built (L13):* `life.trk` names the runtime functions whose result is
+a new object the caller owns, by kind, each checked against both
+runtimes: Str (`str_from_literal`, `str_concat`, `int_to_str`,
+`str_substr`, `str_trim`, `path_basename`, `path_ext`, `path_join`,
+`track_sb_str`, `read_line`, `file_read_all`, `track_file_read`,
+`env_get`, `os_arg`), Vec (`vec_init`), i64 collection
+(`track_i64_collection_new`, `track_str_bytes`) and string builder
+(`track_sb_new`). The frees are `track_str_free`, `vec_free`,
+`track_i64_collection_free` and `track_sb_free` (all but `vec_free` new,
+identical in both runtimes; `str_free` stays a no-op because user code
+may pass it a literal). A program function whose every `return` is a
+fresh call of one kind (`text_cat`, `vnew`) counts as that kind (least
+fixpoint). The proof is syntactic, on top of the summaries:
+
+- `let x = f(..)`, not the last statement of its block, is heap-autofree
+  when every later mention of `x` (mode 5 of `pl_use_ok`) is an argument
+  `x` or `&x` to a call that neither keeps nor frees it: a runtime
+  parameter whose end is `die` only (an element a call returns is a word
+  the free never touches, so a derived result is fine), or a parameter of
+  a program function that only lends it. Arithmetic, aliasing, return,
+  `return f(.., x)`, fields, indexing, lenses and macros all keep it.
+- every `x = v` must make a fresh object of the same kind; the old one is
+  freed after `v` is built.
+- a parameter is lent (`LT_HLENT`) when every mention is such an argument
+  and it is never assigned (mode 6, greatest fixpoint), so `vget`,
+  `vlen` and `out` lend their handle and callers may still free it.
+
+The frees run where L9/L12 free cells (block end, `return`,
+reassignment), in both backends. Expression temporaries
+(`str_len(int_to_str(i))`) are not freed yet. ASan-built self-compile
+of `compiler/src/main.trk`: 771,893 leaked allocations (64.7 MB) before,
+584,001 (56.9 MB) after, 0 errors [observed].
+
 ---
 
 ## 4. Measured motivation

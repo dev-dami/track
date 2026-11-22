@@ -1,0 +1,8 @@
+fn make
+  L4 call heap ends -
+fn main
+  L9 collection heap-autofree ends L21
+  L12 call heap ends -
+  L12 call heap ends -
+  L14 call heap ends -
+  L14 call heap ends -

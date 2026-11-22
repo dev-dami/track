@@ -147,6 +147,15 @@ fn track_i64_collection_pop(h: i64) -> i64 {
     return load64(load64(h) + 8 * len);
 }
 
+// Free a collection and its storage (fresh handles only, §3.5).
+fn track_i64_collection_free(h: i64) -> i64 {
+    if h != 0 {
+        rt_free(load64(h));
+        rt_free(h);
+    }
+    return 0;
+}
+
 // Shrink to `len` elements (no-op when already shorter).
 fn track_i64_collection_truncate(h: i64, len: i64) -> i64 {
     if h != 0 && len >= 0 && len < load64(h + 8) {
@@ -317,6 +326,15 @@ fn track_sb_str(b: i64) -> i64 {
         return rt_dup_n("", 0);
     }
     return rt_dup_n(load64(b), load64(b + 8));
+}
+
+// Free a string builder and its buffer (fresh handles only, §3.5).
+fn track_sb_free(b: i64) -> i64 {
+    if b != 0 {
+        rt_free(load64(b));
+        rt_free(b);
+    }
+    return 0;
 }
 
 fn track_sb_clear(b: i64) -> i64 {

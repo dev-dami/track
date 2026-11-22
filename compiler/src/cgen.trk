@@ -530,6 +530,11 @@ fn gen_frees(c: i64, from: i64) -> i64 {
 }
 
 fn gen_free_local(c: i64, id: i64, site: i64) -> i64 {
+    let hk = life_auto_handle(c, site);
+    if hk > 0 {
+        // A fresh Str or runtime handle (card L13): its kind's free.
+        return emit(c, text_cat3(hd_free_name(hk), "(", text_cat(local_name(c, id), ");")));
+    }
     if life_auto_deep(c, site) {
         return gen_drop(c, local_name(c, id), pl_site_type(c, site), 0);
     }

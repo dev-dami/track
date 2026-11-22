@@ -1,0 +1,3 @@
+fn render
+  L4 builder heap-autofree ends L12
+  L12 str heap-autofree ends L13
