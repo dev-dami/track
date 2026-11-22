@@ -1,0 +1,7 @@
+fn label
+  L4 str heap-autofree ends L6
+  L5 str heap-autofree ends L6
+fn main
+  L14 str heap-autofree ends L17
+  L15 call heap ends -
+  L16 call heap ends -
