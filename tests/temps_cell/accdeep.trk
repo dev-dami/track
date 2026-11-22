@@ -1,0 +1,36 @@
+// Card F3: accloop.trk a million levels deep, native only: the native
+// backend runs accumulator recursion with temporary arguments as a loop
+// (no stack growth, every temporary freed); the C reference may overflow
+// its stack at this depth.
+struct In { v: i64 }
+struct Box { r: In, n: i64 }
+struct P { a: i64, c: i64 }
+
+fn mk(i: i64) -> Box { return Box { r: In { v: i }, n: 1 }; }
+
+fn acc(n: i64, b: &Box) -> i64 { if n == 0 { return b.n; } return b.r.v + acc(n - 1, &mk(n)); }
+
+fn accv(n: i64, b: Box) -> i64 { if n == 0 { return b.n; } return b.r.v + accv(n - 1, mk(n)); }
+
+fn accs(n: i64, s: &Str) -> i64 { if n == 0 { return str_len(s); } return str_len(s) + accs(n - 1, &int_to_str(n)); }
+
+fn acc2(n: i64, a: &Box, b: &Str) -> i64 {
+    if n == 0 { return a.n + str_len(b); }
+    return a.r.v + str_len(b) + acc2(n - 1, &mk(n), &int_to_str(n));
+}
+
+fn accp(n: i64, b: &Box) -> i64 { if n == 0 { return b.r.v + b.n; } return b.r.v + accp(n - 1, &mk(b.r.v - 1)); }
+
+// a literal temporary built from the parameter it replaces, fields swapped
+fn sw(n: i64, b: &P) -> i64 { if n == 0 { return b.a * 10 + b.c; } return b.a + sw(n - 1, &P { a: b.c, c: b.a }); }
+
+fn main() -> void {
+    let before = sys_get_memory_used();
+    print(acc(1000000, &mk(5)));
+    print(accv(1000000, mk(5)));
+    print(accs(1000000, &int_to_str(5)));
+    print(acc2(1000000, &mk(5), &int_to_str(5)));
+    print(accp(1000000, &mk(2000000)));
+    print(sw(1000001, &P { a: 1, c: 2 }));
+    print(sys_get_memory_used() - before);
+}

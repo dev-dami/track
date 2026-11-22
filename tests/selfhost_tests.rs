@@ -2287,12 +2287,18 @@ fn temps_free_fresh_temporaries() {
 /// call's copy, a branch condition) that must still free the temporary.
 /// accret: a native accumulator return (`x + f(&fresh)`) keeps its call so
 /// the temporary is freed.
+/// accpass (card F3b): an accumulator loop whose returns pass a parameter
+/// on (unchanged, swapped, a field of it, a local or a literal) never frees
+/// a cell a parameter still points at. Its leaks are not checked: `mkn`'s
+/// Str field is never freed by the plan, on either backend.
 #[test]
 fn temps_free_fresh_cell_temporaries() {
     let root = repo();
     let update = env::var("UPDATE_LIFE").is_ok();
     let dir = scratch("temps_cell");
     let stems = [
+        "accloop",
+        "accpass",
         "accret",
         "alias",
         "branch",
@@ -2353,6 +2359,23 @@ fn temps_free_fresh_cell_temporaries() {
             plans
         );
     }
+    // Card F3: accumulator recursion with temporary arguments stays a loop
+    // on the native backend; a million levels deep would overflow the
+    // stack as real calls (the C reference may, so it is native only).
+    let deep = dir.join("accdeep_nat");
+    let out = run_trackc(
+        &[
+            "build",
+            "--native",
+            "tests/temps_cell/accdeep.trk",
+            "-o",
+            deep.to_str().unwrap(),
+        ],
+        &root,
+    );
+    assert!(out.status.success(), "accdeep: native build failed");
+    let want = fs::read_to_string(root.join("tests/temps_cell/accdeep.out")).unwrap();
+    assert_eq!(run_exe(&deep), (want, Some(0)), "accdeep: native output");
     let nested = plans.split("nested:\n").nth(1).unwrap_or("");
     let nested = nested.split(":\n").next().unwrap_or("");
     assert_eq!(
@@ -2404,7 +2427,14 @@ fn temps_free_fresh_cell_temporaries() {
         assert!(out.status.success(), "{}: ASan build failed", rel);
         let all_die = matches!(
             stem,
-            "nested" | "print_loop" | "branch" | "discard" | "str_cell" | "tailr" | "accret"
+            "nested"
+                | "print_loop"
+                | "branch"
+                | "discard"
+                | "str_cell"
+                | "tailr"
+                | "accret"
+                | "accloop"
         );
         // str_alias keeps `keep.name` alive to the end of main and drop glue never
         // frees Str, so LSan may report that one string depending on what the C
@@ -2998,6 +3028,19 @@ fn for_in_exit_and_div_trap_on_both_runtimes() {
     assert!(
         !out.status.success() && err.contains("`for` iterates over a range or an array"),
         "for over an integer accepted: {}",
+        err
+    );
+    // F3: a range bound as a value segfaulted on both backends; it is E0200.
+    fs::write(
+        dir.join("rangeval.trk"),
+        "fn main() -> void { let r = (0-1)..3; for i in r { print(i); } }\n",
+    )
+    .unwrap();
+    let out = run_trackc(&["check", "rangeval.trk"], &dir);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && err.contains("A range `a..b` is not a value"),
+        "range bound as a value accepted: {}",
         err
     );
     let _ = fs::remove_dir_all(&dir);
