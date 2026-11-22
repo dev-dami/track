@@ -1845,9 +1845,15 @@ fn ng_amode_op(c: i64, pre: i64, opc: i64, reg: i64) -> i64 {
 }
 
 // load64/load8/store64/store8 with folded displacements.
-fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
+fn ng_mem_builtin(c: i64, name: i64, args: i64) -> bool {
     let b = ncode(c);
-    let nargs = list_len(c, args);
+    let mut text = name;
+    let mut nargs = list_len(c, args);
+    if nargs == 3 && text_eq(text, "memset") && nk(c, list_at(c, args, 2)) == K_INT && na(c, list_at(c, args, 2)) == 1 {
+        // one byte: a byte store, without rep stosb's registers and frame
+        text = "store8";
+        nargs = 2;
+    }
     if nargs >= 1 && ng_pure_addr(c, list_at(c, args, 0)) {
         if nargs == 1 && text_eq(text, "load64") {
             ng_amode_op(c, 0, 139, 0);
@@ -1879,7 +1885,7 @@ fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
         }
     }
     if text_eq(text, "load64") || text_eq(text, "load8") {
-        if list_len(c, args) != 1 {
+        if nargs != 1 {
             return false;
         }
         let d = ng_addr(c, list_at(c, args, 0));
@@ -1890,7 +1896,7 @@ fn ng_mem_builtin(c: i64, text: i64, args: i64) -> bool {
         }
         return true;
     }
-    if !(text_eq(text, "store64") || text_eq(text, "store8")) || list_len(c, args) != 2 {
+    if !(text_eq(text, "store64") || text_eq(text, "store8")) || nargs != 2 {
         return false;
     }
     let v = list_at(c, args, 1);
@@ -2022,10 +2028,15 @@ fn ng_sb_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
 }
 
 fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
-    // every name below starts with `t`, `a` or `s`
+    // every name below starts with `t`, `a`, `s` or `m`
     let first = str_char_at(text, 0);
-    if first != 116 && first != 97 && first != 115 {
+    if first != 116 && first != 97 && first != 115 && first != 109 {
         return false;
+    }
+    if count == 3 && text_eq(text, "memset") {
+        // rt memset of one constant byte: a byte store (ng_mem_builtin)
+        let n = list_at(c, args, 2);
+        return nk(c, n) == K_INT && na(c, n) == 1 && ng_mem_builtin(c, text, args);
     }
     let b = ncode(c);
     if ng_sb_prim(c, text, args, count) {
