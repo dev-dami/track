@@ -1,0 +1,16 @@
+// L12b: `let cell = pair(i)` inside a loop gets a frame slot the callee
+// writes; the heap stays empty.
+struct Pair { a: i64, b: i64 }
+fn pair(i: i64) -> Pair { return Pair { a: i, b: i * 3 }; }
+fn main() -> i64 {
+    sys_set_memory_limit(100000);
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 100000 {
+        let cell = pair(i);
+        t = (t + cell.a + cell.b) % 1000003;
+        i = i + 1;
+    }
+    print(t); print(sys_get_memory_used());
+    return 0;
+}
