@@ -2146,8 +2146,21 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         if h >= 0 {
             return ng_coll_fast(c, h, list_at(c, args, 1), -1);
         }
-        ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
         let z = vnew();
+        let ik = ng_opnd(c, list_at(c, args, 1));
+        let iv = ng(c, NG_OPV);
+        if ik == 1 && iv >= 0 && iv < 1 << 24 {
+            // constant index: compare the length with it, load at a fixed offset
+            ng_gen(c, list_at(c, args, 0));
+            x_test_rax(b);
+            vpush(z, x_jcc(b, 4));
+            x_mi(b, 7, 0, 8, iv);            // cmp qword [rax + 8], i
+            vpush(z, x_jcc(b, 6));           // jbe: len <= i
+            x_rm(b, 139, 0, 0, 0);           // mov rax, [rax]
+            x_rm(b, 139, 0, 0, iv * 8);      // mov rax, [rax + i*8]
+            return ng_cold_back(c, z, 0, -1, x_here(b)) >= 0;
+        }
+        ng_gen2_coll(c, list_at(c, args, 0), list_at(c, args, 1));
         x_test_rax(b);
         vpush(z, x_jcc(b, 4));
         x_rm(b, 59, 1, 0, 8);            // cmp rcx, [rax + 8]
@@ -2165,7 +2178,7 @@ fn ng_prim(c: i64, text: i64, args: i64, count: i64) -> bool {
         let vk = ng_opnd(c, v);
         let vv = ng(c, NG_OPV);
         if vk > 0 {
-            ng_gen2(c, list_at(c, args, 0), list_at(c, args, 1));
+            ng_gen2_coll(c, list_at(c, args, 0), list_at(c, args, 1));
             ng_opnd_to(c, vk, vv, 2);
         } else {
             ng_gen(c, list_at(c, args, 0));
@@ -3112,6 +3125,66 @@ fn ng_gen2(c: i64, x: i64, y: i64) -> i64 {
     ng_gen(c, y);
     x_mov_rcx_rax(b);
     return x_pop_rax(b);
+}
+
+// rax = handle x, rcx = index y for a collection get/set. When x is a
+// get through operands alone (it touches only rax and rcx) and y is
+// arithmetic on locals and constants, neither writes anything, so y goes
+// first and waits in rdx: no push and pop around x (the inner `cx(c, K)`
+// of `vget(cx(c, K), n * W)`).
+fn ng_gen2_coll(c: i64, x: i64, y: i64) -> i64 {
+    if ng_opnd(c, y) > 0 || ng_opnd(c, x) > 0 || !ng_get_regs(c, x) || !ng_arith(c, y, 3) {
+        return ng_gen2(c, x, y);
+    }
+    let b = ncode(c);
+    ng_gen(c, y);
+    x_mov_rr(b, 2, 0);
+    ng_gen(c, x);
+    return x_mov_rr(b, 1, 2);
+}
+
+// `n` is a collection get (direct or through ng_forward) of an operand
+// handle that no loop hoisted and an operand index: its code uses only
+// rax and rcx.
+fn ng_get_regs(c: i64, n: i64) -> bool {
+    if nk(c, n) != K_CALL {
+        return false;
+    }
+    let args = nb(c, n);
+    if list_len(c, args) != 2 {
+        return false;
+    }
+    let f = ng_call_target(c, n);
+    if f < 0 || nk(c, f) != K_FN || life_ret_slot_fn(c, f) || life_temp_of(c, n) >= 0 {
+        return false;
+    }
+    let mut g = ng_forward(c, f, 0);
+    if g < 0 {
+        g = na(c, f);
+    }
+    if g < 0 || !text_eq(name_text(c, g), "track_i64_collection_get") {
+        return false;
+    }
+    let h = list_at(c, args, 0);
+    return ng_opnd(c, h) > 0 && ng_opnd(c, list_at(c, args, 1)) > 0 && ng_coll_hoisted(c, h) < 0;
+}
+
+// `n` is integer arithmetic on locals and constants (`depth` levels).
+fn ng_arith(c: i64, n: i64, depth: i64) -> bool {
+    if ng_opnd(c, n) > 0 {
+        return true;
+    }
+    if depth <= 0 {
+        return false;
+    }
+    let k = nk(c, n);
+    if k == K_BIN {
+        return ng_arith(c, nb(c, n), depth - 1) && ng_arith(c, nc(c, n), depth - 1);
+    }
+    if k == K_UN && na(c, n) != OP_DEREF {
+        return ng_arith(c, nb(c, n), depth - 1);
+    }
+    return false;
 }
 
 // rcx = y without touching rax, when y is an in-bounds index of
