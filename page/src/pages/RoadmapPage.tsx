@@ -16,7 +16,7 @@ export const RoadmapPage: React.FC<RoadmapPageProps> = () => {
           Compiler Self-Bootstrapping Roadmap
         </h1>
         <p className="text-xs sm:text-sm text-zinc-400 font-sans mt-1">
-          Path from early memory primitives to verified 3-stage self-compilation in v0.9.0.
+          Path from early memory primitives to a self-hosted compiler in v1.0.0.
         </p>
       </div>
 

@@ -43,7 +43,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               TRACK
             </span>
             <span className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
-              v0.7.0
+              v1.0.0
             </span>
           </button>
 

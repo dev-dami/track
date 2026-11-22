@@ -215,7 +215,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
               Select
             </span>
           </div>
-          <span>Track v0.7.0 Documentation Index</span>
+          <span>Track v1.0.0 Documentation Index</span>
         </div>
       </div>
     </div>
