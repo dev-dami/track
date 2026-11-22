@@ -1,0 +1,82 @@
+// Card F3b: an accumulator loop (accloop.trk) whose returns hand a
+// parameter on instead of a fresh temporary. The cell a back edge parked
+// stays alive while a parameter still points at it: a pass-through keeps
+// it, and a return that moves it to another parameter, a field of it, a
+// local or a literal into a carried position keeps the plain call.
+struct In { v: i64 }
+struct Box { r: In, n: i64 }
+struct Nm { name: Str, n: i64 }
+
+fn mk(i: i64) -> Box { return Box { r: In { v: i }, n: 1 }; }
+fn mkn(i: i64) -> Nm { return Nm { name: int_to_str(i * 7), n: i }; }
+
+// the reported program: Str temporary, pass-through in the guard position
+fn ps(n: i64, s: &Str) -> i64 {
+    if n == 0 { return str_len(s); }
+    if n % 4 == 0 { return str_len(s) + ps(n - 1, s); }
+    return str_len(s) + ps(n - 1, &int_to_str(n * 1000));
+}
+
+// pass-through in the else position
+fn pe(n: i64, s: &Str) -> i64 {
+    if n == 0 { return str_len(s); }
+    if n % 3 == 0 { return str_len(s) + pe(n - 1, &int_to_str(n * 100)); }
+    return str_len(s) + pe(n - 1, s);
+}
+
+// a struct temporary by reference, both positions
+fn pb(n: i64, b: &Box) -> i64 {
+    if n == 0 { return b.r.v + b.n; }
+    if n % 3 == 0 { return b.r.v + pb(n - 1, b); }
+    return b.r.v + pb(n - 1, &mk(n));
+}
+
+// a struct temporary by value
+fn pv(n: i64, b: Box) -> i64 {
+    if n == 0 { return b.r.v + b.n; }
+    if n % 5 == 0 { return b.r.v + pv(n - 1, mk(n)); }
+    return b.r.v + pv(n - 1, b);
+}
+
+// two parameters, one return swaps them
+fn sw(n: i64, a: &Box, b: &Box) -> i64 {
+    if n == 0 { return a.r.v * 10 + b.r.v; }
+    if n % 2 == 0 { return a.r.v + sw(n - 1, b, a); }
+    return a.r.v + sw(n - 1, &mk(n), b);
+}
+
+// a field of the carried parameter passed on in another position
+fn pf(n: i64, s: &Nm, t: &Str) -> i64 {
+    if n == 0 { return str_len(t) + s.n; }
+    if n % 2 == 0 { return str_len(t) + pf(n - 1, &mkn(n), &s.name); }
+    return str_len(t) + pf(n - 1, &mkn(n), t);
+}
+
+// a local and a literal in a position that is otherwise a temporary
+fn pl(n: i64, s: &Str) -> i64 {
+    if n == 0 { return str_len(s); }
+    let lit = "abcdefgh";
+    if n % 5 == 0 { return str_len(s) + pl(n - 1, &lit); }
+    if n % 7 == 0 { return str_len(s) + pl(n - 1, &"xyz"); }
+    return str_len(s) + pl(n - 1, &int_to_str(n * 11));
+}
+
+// a local that aliases a carried parameter, passed on
+fn sh(n: i64, a: &Box, b: &Box) -> i64 {
+    if n == 0 { return a.r.v + b.r.v; }
+    let a = b;
+    return a.r.v + sh(n - 1, a, &mk(n));
+}
+
+fn main() -> void {
+    let before = sys_get_memory_used();
+    print(ps(3000, &int_to_str(5)));
+    print(pe(3000, &int_to_str(5)));
+    print(pb(3000, &mk(5)));
+    print(pv(3000, mk(5)));
+    print(sw(3000, &mk(5), &mk(6)));
+    print(pf(3000, &mkn(5), &int_to_str(5)));
+    print(pl(3000, &int_to_str(5)));
+    print(sh(3000, &mk(1), &mk(2)));
+    print(sys_get_memory_used() - before);
+}

@@ -1,0 +1,35 @@
+fn mk
+  L10 struct heap ends -
+  L10 struct heap ends -
+fn mkn
+  L11 struct ret-slot ends L11
+  L11 call heap ends -
+fn ps
+  L17 str temp-autofree ends L17
+fn pe
+  L23 str temp-autofree ends L23
+fn pb
+  L31 call temp-autofree deep ends L31
+fn pv
+  L37 call temp-autofree deep ends L37
+fn sw
+  L45 call temp-autofree deep ends L45
+fn pf
+  L51 call temp-autofree deep ends L51
+  L52 call temp-autofree deep ends L52
+fn pl
+  L61 str temp-autofree ends L61
+fn sh
+  L68 call temp-autofree deep ends L68
+fn main
+  L73 str temp-autofree ends L73
+  L74 str temp-autofree ends L74
+  L75 call temp-autofree deep ends L75
+  L76 call temp-autofree deep ends L76
+  L77 call temp-autofree deep ends L77
+  L77 call temp-autofree deep ends L77
+  L78 call stack ends L78
+  L78 str temp-autofree ends L78
+  L79 str temp-autofree ends L79
+  L80 call temp-autofree deep ends L80
+  L80 call temp-autofree deep ends L80
