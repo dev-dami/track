@@ -107,6 +107,11 @@ jobs:
       - name: Compiler sources are warning-clean
         run: ./build/bootstrap/stage3/trackc check --deny-warnings compiler/src/main.trk
 
+      - name: yard (written in Track) passes its suite
+        run: |
+          ./build/bootstrap/stage3/trackc check --deny-warnings tools/yard/main.trk
+          env PATH=/usr/bin:/bin TRACKC="$PWD/build/bootstrap/stage3/trackc" tests/yard/run.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:

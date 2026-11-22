@@ -1,0 +1,536 @@
+// manifest.trk — Track.toml: the TOML subset yard reads and writes.
+//
+// A manifest is a list:  [name, version, description|0, authors, deps,
+// src, target|0, error|0]. A dependency is a list: [name, detailed,
+// version|0, git|0, path|0, branch|0]; `detailed` 0 is the simple form
+// `name = "1.0"`, 1 the table form. Output matches what the Rust yard's
+// `toml::to_string_pretty` wrote, with dependencies sorted by name.
+
+import "yutil";
+
+const M_NAME = 0;
+const M_VERSION = 1;
+const M_DESC = 2;
+const M_AUTHORS = 3;
+const M_DEPS = 4;
+const M_SRC = 5;
+const M_TARGET = 6;
+const M_ERROR = 7;
+
+const D_NAME = 0;
+const D_DETAILED = 1;
+const D_VERSION = 2;
+const D_GIT = 3;
+const D_PATH = 4;
+const D_BRANCH = 5;
+
+// Values: [kind, payload].
+const V_STR = 1;
+const V_ARRAY = 2;
+const V_TABLE = 3;
+const V_RAW = 4;
+
+fn manifest_new(name: i64) -> i64 {
+    let m = vnew();
+    vpush(m, name);
+    vpush(m, "0.1.0");
+    vpush(m, 0);
+    vpush(m, vnew());
+    vpush(m, vnew());
+    vpush(m, "src");
+    vpush(m, 0);
+    vpush(m, 0);
+    return m;
+}
+
+fn dep_new(name: i64, detailed: i64, version: i64, git: i64, path: i64, branch: i64) -> i64 {
+    let d = vnew();
+    vpush(d, name);
+    vpush(d, detailed);
+    vpush(d, version);
+    vpush(d, git);
+    vpush(d, path);
+    vpush(d, branch);
+    return d;
+}
+
+// Insert or replace the dependency named like `dep`.
+fn manifest_put_dep(m: i64, dep: i64) -> i64 {
+    let deps = vget(m, M_DEPS);
+    let mut i: i64 = 0;
+    while i < vlen(deps) {
+        if text_eq(vget(vget(deps, i), D_NAME), vget(dep, D_NAME)) {
+            vset(deps, i, dep);
+            return 0;
+        }
+        i = i + 1;
+    }
+    vpush(deps, dep);
+    return 0;
+}
+
+fn manifest_find_dep(m: i64, name: i64) -> i64 {
+    let deps = vget(m, M_DEPS);
+    let mut i: i64 = 0;
+    while i < vlen(deps) {
+        if text_eq(vget(vget(deps, i), D_NAME), name) {
+            return vget(deps, i);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Dependencies sorted by name.
+fn sorted_deps(m: i64) -> i64 {
+    let deps = vget(m, M_DEPS);
+    let names = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(deps) {
+        vpush(names, vget(vget(deps, i), D_NAME));
+        i = i + 1;
+    }
+    sort_texts(names);
+    let outv = vnew();
+    i = 0;
+    while i < vlen(names) {
+        vpush(outv, manifest_find_dep(m, vget(names, i)));
+        i = i + 1;
+    }
+    return outv;
+}
+
+// ---------------------------------------------------------------- writer
+
+fn toml_str(s: i64) -> i64 {
+    let b = sb_new();
+    sb_byte(b, 34);
+    let n = text_len(s);
+    let mut i: i64 = 0;
+    while i < n {
+        let ch = text_at(s, i);
+        if ch == 34 {
+            sb_add(b, "\\\"");
+        } else if ch == 92 {
+            sb_add(b, "\\\\");
+        } else if ch == 10 {
+            sb_add(b, "\\n");
+        } else if ch == 9 {
+            sb_add(b, "\\t");
+        } else {
+            sb_byte(b, ch);
+        }
+        i = i + 1;
+    }
+    sb_byte(b, 34);
+    return sb_text(b);
+}
+
+fn kv(b: i64, key: i64, value: i64) -> i64 {
+    if value == 0 {
+        return 0;
+    }
+    sb_add(b, key);
+    sb_add(b, " = ");
+    sb_add(b, toml_str(value));
+    sb_add(b, "\n");
+    return 0;
+}
+
+fn manifest_to_toml(m: i64) -> i64 {
+    let b = sb_new();
+    sb_add(b, "[package]\n");
+    kv(b, "name", vget(m, M_NAME));
+    kv(b, "version", vget(m, M_VERSION));
+    kv(b, "description", vget(m, M_DESC));
+    sb_add(b, "authors = [");
+    let authors = vget(m, M_AUTHORS);
+    let mut i: i64 = 0;
+    while i < vlen(authors) {
+        if i > 0 {
+            sb_add(b, ", ");
+        }
+        sb_add(b, toml_str(vget(authors, i)));
+        i = i + 1;
+    }
+    sb_add(b, "]\n\n[dependencies]\n");
+    let deps = sorted_deps(m);
+    i = 0;
+    while i < vlen(deps) {
+        let d = vget(deps, i);
+        if vget(d, D_DETAILED) == 0 {
+            kv(b, vget(d, D_NAME), vget(d, D_VERSION));
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < vlen(deps) {
+        let d = vget(deps, i);
+        if vget(d, D_DETAILED) != 0 {
+            sb_add(b, text_cat3("\n[dependencies.", vget(d, D_NAME), "]\n"));
+            kv(b, "version", vget(d, D_VERSION));
+            kv(b, "git", vget(d, D_GIT));
+            kv(b, "path", vget(d, D_PATH));
+            kv(b, "branch", vget(d, D_BRANCH));
+        }
+        i = i + 1;
+    }
+    sb_add(b, "\n[build]\n");
+    kv(b, "src", vget(m, M_SRC));
+    kv(b, "target", vget(m, M_TARGET));
+    return sb_text(b);
+}
+
+// Returns "" on success, else the error message.
+fn manifest_save(m: i64, path: i64) -> i64 {
+    if write_text(path, manifest_to_toml(m)) != 0 {
+        return text_cat3("Failed to write '", path, "': write error");
+    }
+    return "";
+}
+
+// ---------------------------------------------------------------- parser
+//
+// Parser state: [text, pos, error|0].
+
+fn ps_text(p: i64) -> i64 { return vget(p, 0); }
+fn ps_pos(p: i64) -> i64 { return vget(p, 1); }
+fn ps_set(p: i64, pos: i64) -> i64 { return vset(p, 1, pos); }
+fn ps_peek(p: i64) -> i64 {
+    if ps_pos(p) >= text_len(ps_text(p)) {
+        return -1;
+    }
+    return text_at(ps_text(p), ps_pos(p));
+}
+fn ps_next(p: i64) -> i64 { return ps_set(p, ps_pos(p) + 1); }
+fn ps_fail(p: i64, msg: i64) -> i64 {
+    if vget(p, 2) == 0 {
+        vset(p, 2, msg);
+    }
+    ps_set(p, text_len(ps_text(p)));
+    return 0;
+}
+
+fn line_of(p: i64) -> i64 {
+    let s = ps_text(p);
+    let mut line: i64 = 1;
+    let mut i: i64 = 0;
+    while i < ps_pos(p) && i < text_len(s) {
+        if text_at(s, i) == 10 {
+            line = line + 1;
+        }
+        i = i + 1;
+    }
+    return line;
+}
+
+fn ps_error(p: i64, what: i64) -> i64 {
+    return ps_fail(p, text_cat3(what, " at line ", text_of_int(line_of(p))));
+}
+
+// Skip spaces and tabs; with `newlines`, also newlines and comments.
+fn ps_skip(p: i64, newlines: bool) -> i64 {
+    let mut going = true;
+    while going {
+        let ch = ps_peek(p);
+        if ch == 32 || ch == 9 || ch == 13 {
+            ps_next(p);
+        } else if ch == 35 {
+            while ps_peek(p) != 10 && ps_peek(p) != -1 {
+                ps_next(p);
+            }
+        } else if newlines && ch == 10 {
+            ps_next(p);
+        } else {
+            going = false;
+        }
+    }
+    return 0;
+}
+
+fn is_bare(ch: i64) -> bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57) || ch == 95 || ch == 45;
+}
+
+fn parse_key(p: i64) -> i64 {
+    let ch = ps_peek(p);
+    if ch == 34 || ch == 39 {
+        let v = parse_value(p);
+        return vget(v, 1);
+    }
+    let start = ps_pos(p);
+    while is_bare(ps_peek(p)) {
+        ps_next(p);
+    }
+    if ps_pos(p) == start {
+        ps_error(p, "expected a key");
+        return "";
+    }
+    return text_sub(ps_text(p), start, ps_pos(p) - start);
+}
+
+fn value(kind: i64, payload: i64) -> i64 {
+    let v = vnew();
+    vpush(v, kind);
+    vpush(v, payload);
+    return v;
+}
+
+fn parse_string(p: i64) -> i64 {
+    let quote = ps_peek(p);
+    ps_next(p);
+    let b = sb_new();
+    let mut going = true;
+    while going {
+        let ch = ps_peek(p);
+        if ch == -1 || ch == 10 {
+            ps_error(p, "unterminated string");
+            going = false;
+        } else if ch == quote {
+            ps_next(p);
+            going = false;
+        } else if ch == 92 && quote == 34 {
+            ps_next(p);
+            let e = ps_peek(p);
+            if e == 110 {
+                sb_byte(b, 10);
+            } else if e == 116 {
+                sb_byte(b, 9);
+            } else if e == 114 {
+                sb_byte(b, 13);
+            } else {
+                sb_byte(b, e);
+            }
+            ps_next(p);
+        } else {
+            sb_byte(b, ch);
+            ps_next(p);
+        }
+    }
+    return value(V_STR, sb_text(b));
+}
+
+fn parse_value(p: i64) -> i64 {
+    let ch = ps_peek(p);
+    if ch == 34 || ch == 39 {
+        return parse_string(p);
+    }
+    if ch == 91 {
+        ps_next(p);
+        let items = vnew();
+        ps_skip(p, true);
+        while ps_peek(p) != 93 && ps_peek(p) != -1 {
+            vpush(items, parse_value(p));
+            ps_skip(p, true);
+            if ps_peek(p) == 44 {
+                ps_next(p);
+                ps_skip(p, true);
+            } else if ps_peek(p) != 93 {
+                ps_error(p, "expected ',' or ']' in array");
+            }
+        }
+        ps_next(p);
+        return value(V_ARRAY, items);
+    }
+    if ch == 123 {
+        ps_next(p);
+        let pairs = vnew();
+        ps_skip(p, false);
+        while ps_peek(p) != 125 && ps_peek(p) != -1 {
+            let key = parse_key(p);
+            ps_skip(p, false);
+            if ps_peek(p) != 61 {
+                ps_error(p, "expected '=' in inline table");
+            }
+            ps_next(p);
+            ps_skip(p, false);
+            vpush(pairs, key);
+            vpush(pairs, parse_value(p));
+            ps_skip(p, false);
+            if ps_peek(p) == 44 {
+                ps_next(p);
+                ps_skip(p, false);
+            } else if ps_peek(p) != 125 {
+                ps_error(p, "expected ',' or '}' in inline table");
+            }
+        }
+        ps_next(p);
+        return value(V_TABLE, pairs);
+    }
+    let start = ps_pos(p);
+    let mut going = true;
+    while going {
+        let c = ps_peek(p);
+        if c == -1 || c == 10 || c == 32 || c == 9 || c == 13 || c == 44 || c == 93 || c == 125 || c == 35 {
+            going = false;
+        } else {
+            ps_next(p);
+        }
+    }
+    if ps_pos(p) == start {
+        ps_error(p, "expected a value");
+    }
+    return value(V_RAW, text_sub(ps_text(p), start, ps_pos(p) - start));
+}
+
+fn want_str(p: i64, key: i64, v: i64) -> i64 {
+    if vget(v, 0) != V_STR {
+        ps_fail(p, text_cat3("invalid type for `", key, "`, expected a string"));
+        return 0;
+    }
+    return vget(v, 1);
+}
+
+// Fill a table-form dependency field.
+fn dep_field(p: i64, d: i64, key: i64, v: i64) -> i64 {
+    if text_eq(key, "version") {
+        vset(d, D_VERSION, want_str(p, key, v));
+    } else if text_eq(key, "git") {
+        vset(d, D_GIT, want_str(p, key, v));
+    } else if text_eq(key, "path") {
+        vset(d, D_PATH, want_str(p, key, v));
+    } else if text_eq(key, "branch") {
+        vset(d, D_BRANCH, want_str(p, key, v));
+    }
+    return 0;
+}
+
+fn assign(p: i64, m: i64, seen: i64, section: i64, key: i64, v: i64) -> i64 {
+    if text_eq(section, "package") {
+        if text_eq(key, "name") {
+            vset(m, M_NAME, want_str(p, key, v));
+            vset(seen, 0, 1);
+        } else if text_eq(key, "version") {
+            vset(m, M_VERSION, want_str(p, key, v));
+            vset(seen, 1, 1);
+        } else if text_eq(key, "description") {
+            vset(m, M_DESC, want_str(p, key, v));
+        } else if text_eq(key, "authors") {
+            if vget(v, 0) != V_ARRAY {
+                return ps_fail(p, "invalid type for `authors`, expected a sequence");
+            }
+            let items = vget(v, 1);
+            let authors = vnew();
+            let mut i: i64 = 0;
+            while i < vlen(items) {
+                vpush(authors, want_str(p, key, vget(items, i)));
+                i = i + 1;
+            }
+            vset(m, M_AUTHORS, authors);
+        }
+        return 0;
+    }
+    if text_eq(section, "dependencies") {
+        if vget(v, 0) == V_STR {
+            return manifest_put_dep(m, dep_new(key, 0, vget(v, 1), 0, 0, 0));
+        }
+        if vget(v, 0) == V_TABLE {
+            let d = dep_new(key, 1, 0, 0, 0, 0);
+            let pairs = vget(v, 1);
+            let mut i: i64 = 0;
+            while i + 1 < vlen(pairs) {
+                dep_field(p, d, vget(pairs, i), vget(pairs, i + 1));
+                i = i + 2;
+            }
+            return manifest_put_dep(m, d);
+        }
+        return ps_fail(p, "data did not match any variant of untagged enum Dependency");
+    }
+    if text_starts(section, "dependencies.") {
+        let name = text_from(section, 13);
+        let mut d = manifest_find_dep(m, name);
+        if d == 0 {
+            d = dep_new(name, 1, 0, 0, 0, 0);
+            manifest_put_dep(m, d);
+        }
+        return dep_field(p, d, key, v);
+    }
+    if text_eq(section, "build") {
+        if text_eq(key, "src") {
+            vset(m, M_SRC, want_str(p, key, v));
+        } else if text_eq(key, "target") {
+            vset(m, M_TARGET, want_str(p, key, v));
+        }
+    }
+    return 0;
+}
+
+// Parse Track.toml text. The result's M_ERROR slot holds the parse error.
+fn manifest_parse(text: i64) -> i64 {
+    let m = manifest_new("");
+    let p = vnew();
+    vpush(p, text);
+    vpush(p, 0);
+    vpush(p, 0);
+    let seen = vnew();
+    vpush(seen, 0); // name
+    vpush(seen, 0); // version
+    vpush(seen, 0); // [package]
+    let mut section: i64 = "";
+    ps_skip(p, true);
+    while ps_peek(p) != -1 {
+        if ps_peek(p) == 91 {
+            ps_next(p);
+            let start = ps_pos(p);
+            while ps_peek(p) != 93 && ps_peek(p) != 10 && ps_peek(p) != -1 {
+                ps_next(p);
+            }
+            if ps_peek(p) != 93 {
+                ps_error(p, "unterminated table header");
+            }
+            section = text_trim(text_sub(text, start, ps_pos(p) - start));
+            ps_next(p);
+            if text_eq(section, "package") {
+                vset(seen, 2, 1);
+            }
+            if text_starts(section, "dependencies.") {
+                let name = text_from(section, 13);
+                if manifest_find_dep(m, name) == 0 {
+                    manifest_put_dep(m, dep_new(name, 1, 0, 0, 0, 0));
+                }
+            }
+        } else {
+            let key = parse_key(p);
+            ps_skip(p, false);
+            if ps_peek(p) != 61 {
+                ps_error(p, "expected '=' after key");
+            } else {
+                ps_next(p);
+                ps_skip(p, false);
+                let v = parse_value(p);
+                assign(p, m, seen, section, key, v);
+            }
+        }
+        ps_skip(p, false);
+        if ps_peek(p) != 10 && ps_peek(p) != -1 {
+            ps_error(p, "expected newline after value");
+        }
+        ps_skip(p, true);
+    }
+    let mut error = vget(p, 2);
+    if error == 0 {
+        if vget(seen, 2) == 0 {
+            error = "missing field `package`";
+        } else if vget(seen, 0) == 0 {
+            error = "missing field `name`";
+        } else if vget(seen, 1) == 0 {
+            error = "missing field `version`";
+        }
+    }
+    vset(m, M_ERROR, error);
+    return m;
+}
+
+// Load a manifest file. On failure the M_ERROR slot holds the full message.
+fn manifest_load(path: i64) -> i64 {
+    if !exists(path) || is_dir(path) {
+        let m = manifest_new("");
+        vset(m, M_ERROR, text_cat3("Failed to read '", path, "': No such file or directory (os error 2)"));
+        return m;
+    }
+    let m = manifest_parse(read_text(path));
+    if vget(m, M_ERROR) != 0 {
+        vset(m, M_ERROR, text_cat3(text_cat3("Failed to parse '", path, "': "), vget(m, M_ERROR), ""));
+    }
+    return m;
+}

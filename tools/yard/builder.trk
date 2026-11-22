@@ -1,0 +1,491 @@
+// builder.trk — build, check and test (port of src/yard/builder.rs and
+// src/yard/linker.rs).
+//
+// The Rust yard compiled each module in-process with Cranelift and linked
+// the objects with `cc`. This yard drives `trackc` instead:
+//
+//   * every module under the source directory is checked on its own with
+//     `trackc check <module>`; its cache artifact is a stamp,
+//     `target/objects/<module>.o`, holding the key it was checked under;
+//   * modules check in parallel (batches of background shell jobs) and
+//     the first failure is reported in source order;
+//   * the executable holds every module, as the Rust yard linked every
+//     object: yard writes `target/_yard_root.trk`, one `import` per module,
+//     and builds it with `trackc build --native` into `target/<package
+//     name>`. `<src>/main.trk` must exist and holds `fn main`.
+//   * `yard check` builds the same image in a scratch directory, so check
+//     and build agree on undefined and duplicate functions.
+//
+// trackc is `$TRACKC` when set, else `trackc` beside the yard binary, else
+// `trackc` on PATH.
+
+import "yutil";
+import "manifest";
+import "cache";
+import "resolver";
+
+const PARALLEL = 8;
+
+fn yard_version() -> i64 { return "1.0.0"; }
+
+fn trackc_path() -> i64 {
+    let explicit = env_or_empty("TRACKC");
+    if text_len(explicit) > 0 {
+        return absolute(explicit);
+    }
+    let self_path = arg_text(0);
+    if text_has(self_path, "/") {
+        let sibling = join(dir_name(absolute(self_path)), "trackc");
+        if exists(sibling) {
+            return sibling;
+        }
+    }
+    let found = text_trim(capture("command -v trackc 2>/dev/null"));
+    if text_len(found) > 0 {
+        return found;
+    }
+    return "trackc";
+}
+
+// The compiler's identity: its checksum, so a new trackc rebuilds everything.
+fn trackc_identity(trackc: i64) -> i64 {
+    return text_trim(capture(text_cat3("cksum < ", sq(trackc), " 2>/dev/null")));
+}
+
+fn plural(n: i64) -> i64 {
+    if n == 1 {
+        return "";
+    }
+    return "s";
+}
+
+// Hash of the yard version, the compiler identity and every package source
+// (by project-relative path), so an object is rebuilt when anything it can
+// import changes.
+fn build_fingerprint(trackc: i64, root: i64, files: i64) -> i64 {
+    let mut h = fnv_text(fnv_start(), yard_version());
+    h = fnv_byte(h, 0);
+    h = fnv_text(h, trackc_identity(trackc));
+    let mut i: i64 = 0;
+    while i < vlen(files) {
+        let f = vget(files, i);
+        h = fnv_byte(h, 0);
+        h = fnv_text(h, strip_dir(f, root));
+        h = fnv_byte(h, 0);
+        h = fnv_text(h, compute_hash(read_text(f)));
+        i = i + 1;
+    }
+    return hex16(h);
+}
+
+fn is_test_source(src_dir: i64, file: i64) -> bool {
+    if text_has(base_name(file), "_test") {
+        return true;
+    }
+    return text_has(text_cat("/", strip_dir(file, src_dir)), "/tests/");
+}
+
+// Run each command in `cmds` (a list of shell commands) in parallel batches;
+// command i records its exit status in `<dir>/st<i>` and its stderr in
+// `<dir>/err<i>`. Returns the list of statuses.
+fn run_parallel(dir: i64, cmds: i64) -> i64 {
+    make_dirs(dir);
+    let mut i: i64 = 0;
+    while i < vlen(cmds) {
+        let script = sb_new();
+        let mut k: i64 = 0;
+        while k < PARALLEL && i + k < vlen(cmds) {
+            let n = text_of_int(i + k);
+            let errf = sq(join(dir, text_cat("err", n)));
+            let stf = sq(join(dir, text_cat("st", n)));
+            sb_add(script, text_cat3("( { ", vget(cmds, i + k), text_cat3("; } >/dev/null 2>", errf, "; ")));
+            sb_add(script, text_cat3("echo $? > ", stf, " ) &\n"));
+            k = k + 1;
+        }
+        sb_add(script, "wait\n");
+        shell(sb_text(script));
+        i = i + k;
+    }
+    let statuses = vnew();
+    i = 0;
+    while i < vlen(cmds) {
+        let st = text_trim(read_text(join(dir, text_cat("st", text_of_int(i)))));
+        if text_eq(st, "0") {
+            vpush(statuses, 0);
+        } else {
+            vpush(statuses, 1);
+        }
+        i = i + 1;
+    }
+    return statuses;
+}
+
+fn job_error(dir: i64, i: i64) -> i64 {
+    let e = text_trim(read_text(join(dir, text_cat("err", text_of_int(i)))));
+    if text_len(e) == 0 {
+        return "compilation failed";
+    }
+    return e;
+}
+
+fn object_path(target_dir: i64, module: i64) -> i64 {
+    let mut stem = module;
+    if text_ends(stem, ".trk") {
+        stem = text_sub(stem, 0, text_len(stem) - 4);
+    }
+    return join(join(target_dir, "objects"), text_cat(stem, ".o"));
+}
+
+// The generated root of the linked image: one `import` per module, by
+// project-relative path. trackc runs from the project root, so
+// `import "src/h"` resolves (through trackc's cwd-relative fallback) to the
+// same file key, `src/h.trk`, that `src/main.trk`'s own `import "h"` and a
+// nested module's `import "h"` resolve to. trackc loads each key once, so a
+// module both imported explicitly and listed here is defined once.
+fn root_source(root: i64, files: i64) -> i64 {
+    let sb = sb_new();
+    sb_add(sb, "// generated by yard: every module of the package, as one image\n");
+    let mut i: i64 = 0;
+    while i < vlen(files) {
+        let mut rel = strip_dir(vget(files, i), root);
+        if text_ends(rel, ".trk") {
+            rel = text_sub(rel, 0, text_len(rel) - 4);
+        }
+        sb_add(sb, text_cat3("import \"", tq(rel), "\";\n"));
+        i = i + 1;
+    }
+    return sb_text(sb);
+}
+
+// Compile every module in `files` into the one native image `out`: write
+// the generated root to `<dir>/_yard_root.trk` and build it from the project
+// root. Returns "" on success, else trackc's error.
+fn link_image(trackc: i64, root: i64, files: i64, dir: i64, out: i64) -> i64 {
+    if make_dirs(dir) != 0 {
+        return text_cat3("Failed to create '", dir, "'");
+    }
+    let root_file = join(dir, "_yard_root.trk");
+    if write_text(root_file, root_source(root, files)) != 0 {
+        return text_cat3("Failed to write '", root_file, "'");
+    }
+    let errf = join(dir, "_yard_link.err");
+    let tmp = text_cat(out, ".tmp");
+    let build_cmd = text_cat3(text_cat3(sq(trackc), " build --native ", sq(root_file)), " -o ", sq(tmp));
+    let cmd = text_cat3(text_cat3("cd ", sq(root), " && "), build_cmd, text_cat(" >/dev/null 2>", sq(errf)));
+    let status = shell(text_cat3(cmd, " && mv -f ", text_cat3(sq(tmp), " ", sq(out))));
+    let e = text_trim(read_text(errf));
+    file_remove(errf);
+    if status == 0 {
+        return "";
+    }
+    file_remove(tmp);
+    if text_len(e) == 0 {
+        return "linking failed";
+    }
+    return e;
+}
+
+// Returns "" on success, else the error message.
+fn build(root: i64, m: i64) -> i64 {
+    outln(text_cat3(text_cat3("  Building ", vget(m, M_NAME), " v"), vget(m, M_VERSION), ""));
+    let res = resolve(m, root);
+    if vget(res, 1) != 0 {
+        return vget(res, 1);
+    }
+    let deps = vget(res, 0);
+    let mut i: i64 = 0;
+    while i < vlen(deps) {
+        outln(describe_dep(vget(deps, i)));
+        i = i + 1;
+    }
+    let src_dir = join(root, vget(m, M_SRC));
+    if !exists(src_dir) {
+        return text_cat3("Source directory '", src_dir, "' not found");
+    }
+    let all = find_trk(src_dir);
+    let files = vnew();
+    i = 0;
+    while i < vlen(all) {
+        if !is_test_source(src_dir, vget(all, i)) {
+            vpush(files, vget(all, i));
+        }
+        i = i + 1;
+    }
+    if vlen(files) == 0 {
+        return "No .trk source files found";
+    }
+    let target_dir = join(root, "target");
+    if make_dirs(target_dir) != 0 {
+        return "Failed to create target directory";
+    }
+    let cache = cache_load(target_dir);
+    let trackc = trackc_path();
+    let fingerprint = build_fingerprint(trackc, root, files);
+
+    let rels = vnew();
+    let hashes = vnew();
+    let objects = vnew();
+    let cmds = vnew();
+    let jobs = vnew(); // task index of each command
+    let mut entry: i64 = 0;
+    let mut cached_count: i64 = 0;
+    i = 0;
+    while i < vlen(files) {
+        let f = vget(files, i);
+        let rel = strip_dir(f, root);
+        let module = strip_dir(f, src_dir);
+        let obj = object_path(target_dir, module);
+        if make_dirs(dir_name(obj)) != 0 {
+            return "Failed to create object directory";
+        }
+        let h = fnv_byte(fnv_text(fnv_start(), fingerprint), 0);
+        let hash = hex16(fnv_text(h, read_text(f)));
+        vpush(rels, rel);
+        vpush(hashes, hash);
+        vpush(objects, obj);
+        if text_eq(module, "main.trk") {
+            entry = obj;
+        }
+        if cache_is_cached(cache, rel, hash, obj) {
+            cached_count = cached_count + 1;
+        } else {
+            vpush(cmds, text_cat3(sq(trackc), " check ", sq(f)));
+            vpush(jobs, i);
+        }
+        i = i + 1;
+    }
+
+    let work = join(target_dir, ".yard-jobs");
+    let statuses = run_parallel(work, cmds);
+    // Report the first source-order failure, independent of job timing.
+    i = 0;
+    while i < vlen(jobs) {
+        if vget(statuses, i) != 0 {
+            let msg = text_cat3(vget(files, vget(jobs, i)), ": ", job_error(work, i));
+            remove_tree(work);
+            return msg;
+        }
+        i = i + 1;
+    }
+    remove_tree(work);
+    // A checked module's artifact is its stamp: the key it was checked under.
+    i = 0;
+    while i < vlen(jobs) {
+        let k = vget(jobs, i);
+        if write_text(vget(objects, k), text_cat(vget(hashes, k), "\n")) != 0 {
+            return text_cat3("Failed to write '", vget(objects, k), "'");
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < vlen(rels) {
+        cache_update(cache, vget(rels, i), vget(hashes, i));
+        i = i + 1;
+    }
+
+    if entry == 0 {
+        return text_cat3("No entry point: '", join(src_dir, "main.trk"), "' not found");
+    }
+    // The executable holds every module, as the Rust yard linked every
+    // object. Its key is the fingerprint (yard, trackc and every source), so
+    // an unchanged package keeps its image and any edited module rebuilds it.
+    let exe = join(target_dir, base_name(vget(m, M_NAME)));
+    let exe_key = strip_dir(exe, root);
+    let exe_hash = compute_hash(text_cat("image\n", fingerprint));
+    if !cache_is_cached(cache, exe_key, exe_hash, exe) {
+        let linked = link_image(trackc, root, files, target_dir, exe);
+        if text_len(linked) > 0 {
+            cache_save(cache, target_dir);
+            return text_cat3(src_dir, ": ", linked);
+        }
+        cache_update(cache, exe_key, exe_hash);
+    }
+    let saved = cache_save(cache, target_dir);
+    if text_len(saved) > 0 {
+        return saved;
+    }
+    let total = vlen(files);
+    outln(text_cat3(text_cat3("✓ Built ", exe, " ("), text_cat3(text_of_int(total), " file", plural(total)), text_cat3(", ", text_of_int(cached_count), " cached)")));
+    return "";
+}
+
+// Returns "" on success, else the error message.
+fn check(root: i64, m: i64) -> i64 {
+    outln(text_cat3(text_cat3("  Checking ", vget(m, M_NAME), " v"), vget(m, M_VERSION), ""));
+    let src_dir = join(root, vget(m, M_SRC));
+    if !exists(src_dir) {
+        return text_cat3("Source directory '", src_dir, "' not found");
+    }
+    let files = find_trk(src_dir);
+    if vlen(files) == 0 {
+        return "No .trk source files found";
+    }
+    let trackc = trackc_path();
+    let cmds = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(files) {
+        vpush(cmds, text_cat3(sq(trackc), " check ", sq(vget(files, i))));
+        i = i + 1;
+    }
+    let work = scratch_path("check");
+    let statuses = run_parallel(work, cmds);
+    let errors = vnew();
+    i = 0;
+    while i < vlen(files) {
+        if vget(statuses, i) != 0 {
+            vpush(errors, text_cat3(vget(files, i), ": ", job_error(work, i)));
+        }
+        i = i + 1;
+    }
+    remove_tree(work);
+    sort_texts(errors);
+    // Then compile the modules `yard build` links, as one image, so check
+    // fails exactly when build would (an undefined or duplicate function).
+    if vlen(errors) == 0 {
+        let modules = vnew();
+        i = 0;
+        while i < vlen(files) {
+            if !is_test_source(src_dir, vget(files, i)) {
+                vpush(modules, vget(files, i));
+            }
+            i = i + 1;
+        }
+        if vlen(modules) > 0 {
+            let link_dir = scratch_path("link");
+            let linked = link_image(trackc, root, modules, link_dir, join(link_dir, "image"));
+            remove_tree(link_dir);
+            if text_len(linked) > 0 {
+                vpush(errors, text_cat3(src_dir, ": ", linked));
+            }
+        }
+    }
+    if vlen(errors) == 0 {
+        outln(text_cat3(text_cat("✓ Check passed (", text_of_int(vlen(files))), " file", text_cat(plural(vlen(files)), ")")));
+        return "";
+    }
+    i = 0;
+    while i < vlen(errors) {
+        errln(text_cat("  ✗ ", vget(errors, i)));
+        i = i + 1;
+    }
+    return text_cat(text_of_int(vlen(errors)), " error(s) found");
+}
+
+// Test entry points: src/*_test.trk, src/<subdir>/**/*.trk, tests/**/*.trk.
+fn test_files(root: i64, src_dir: i64) -> i64 {
+    let found = vnew();
+    if is_dir(src_dir) {
+        let all = find_trk(src_dir);
+        let mut i: i64 = 0;
+        while i < vlen(all) {
+            let f = vget(all, i);
+            let rel = strip_dir(f, src_dir);
+            if text_has(rel, "/") || text_has(base_name(f), "_test") {
+                vpush(found, f);
+            }
+            i = i + 1;
+        }
+    }
+    let tests_dir = join(root, "tests");
+    if is_dir(tests_dir) {
+        let more = find_trk(tests_dir);
+        let mut i: i64 = 0;
+        while i < vlen(more) {
+            vpush(found, vget(more, i));
+            i = i + 1;
+        }
+    }
+    sort_texts(found);
+    return found;
+}
+
+// Stage a temporary package whose main is `test_file`, beside the package's
+// other top-level modules and the non-source fixtures under tests/fixtures.
+fn stage_test(root: i64, m: i64, src_dir: i64, test_file: i64, tmp_root: i64) -> i64 {
+    if make_dirs(join(tmp_root, "src")) != 0 {
+        return "Failed to create temp src dir";
+    }
+    let tmp_m = manifest_new(text_cat(vget(m, M_NAME), "_test"));
+    let saved = manifest_save(tmp_m, join(tmp_root, "Track.toml"));
+    if text_len(saved) > 0 {
+        return saved;
+    }
+    if is_dir(src_dir) {
+        let tops = split_lines(capture(text_cat3("find -L ", sq(src_dir), " -maxdepth 1 -type f -name '*.trk' 2>/dev/null")));
+        let mut i: i64 = 0;
+        while i < vlen(tops) {
+            let f = vget(tops, i);
+            let name = base_name(f);
+            if !text_eq(name, "main.trk") && !text_has(name, "_test") {
+                if file_copy(f, join(join(tmp_root, "src"), name)) != 0 {
+                    return text_cat("Failed to copy ", f);
+                }
+            }
+            i = i + 1;
+        }
+    }
+    let fixtures = join(join(root, "tests"), "fixtures");
+    if is_dir(fixtures) {
+        let dest = join(tmp_root, "tests/fixtures");
+        let cmd = text_cat3(text_cat3("cd ", sq(fixtures), " && find . -type d -exec mkdir -p "), sq(dest), "/{} \\; && find . -type f ! -name '*.trk' -exec cp {} ");
+        if shell(text_cat3(cmd, sq(dest), "/{} \\;")) != 0 {
+            return text_cat3("Failed to copy fixtures from '", fixtures, "'");
+        }
+    }
+    if write_text(join(tmp_root, "src/main.trk"), read_text(test_file)) != 0 {
+        return "Failed to write tmp main.trk";
+    }
+    return "";
+}
+
+// Returns "" on success, else the error message.
+fn test(root: i64, m: i64) -> i64 {
+    outln(text_cat3(text_cat3("  Testing ", vget(m, M_NAME), " v"), vget(m, M_VERSION), ""));
+    let checked = check(root, m);
+    if text_len(checked) > 0 {
+        return checked;
+    }
+    let src_dir = join(root, vget(m, M_SRC));
+    let files = test_files(root, src_dir);
+    if vlen(files) == 0 {
+        outln("  no Track tests found (src/*_test.trk, tests/**/*.trk)");
+        outln("✓ All Track tests passed (0 tests)");
+        return "";
+    }
+    let mut failures: i64 = 0;
+    let mut i: i64 = 0;
+    while i < vlen(files) {
+        let f = vget(files, i);
+        out(text_cat3("  Running ", strip_dir(f, root), " ... "));
+        let tmp_root = scratch_path(text_cat3(vget(m, M_NAME), "_", base_name(f)));
+        remove_tree(tmp_root);
+        let staged = stage_test(root, m, src_dir, f, tmp_root);
+        if text_len(staged) > 0 {
+            errln(text_cat("✗ setup failed: ", staged));
+            failures = failures + 1;
+        } else {
+            let tmp_m = manifest_load(join(tmp_root, "Track.toml"));
+            let built = build(tmp_root, tmp_m);
+            if text_len(built) > 0 {
+                errln(text_cat("✗ build failed: ", built));
+                failures = failures + 1;
+            } else {
+                let exe = join(join(tmp_root, "target"), text_cat(vget(m, M_NAME), "_test"));
+                let status = shell(text_cat3(text_cat3("cd ", sq(tmp_root), " && "), sq(exe), ""));
+                if status == 0 {
+                    outln("✓");
+                } else {
+                    errln(text_cat3("✗ failed (exit Some(", text_of_int(status), "))"));
+                    failures = failures + 1;
+                }
+            }
+        }
+        remove_tree(tmp_root);
+        i = i + 1;
+    }
+    if failures > 0 {
+        return text_cat(text_of_int(failures), " Track test(s) failed");
+    }
+    outln(text_cat3("✓ All ", text_of_int(vlen(files)), " Track test(s) passed"));
+    return "";
+}
