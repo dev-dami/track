@@ -3770,6 +3770,11 @@ fn ng_var(c: i64, n: i64) -> i64 {
     if ni(c, name, NI_CONSTOK) == 1 {
         return x_mov_rax_imm(b, ni(c, name, NI_CONSTVAL));
     }
+    if ni(c, name, NI_CONSTOK) == 3 {
+        // A constant that does not fold (a string literal): its value
+        // expression, evaluated at each use.
+        return ng_gen(c, nb(c, ni(c, name, NI_CONST)));
+    }
     return x_mov_rax_imm(b, 0);
 }
 
