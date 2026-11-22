@@ -347,88 +347,89 @@ fn ng_site_cell(c: i64, n: i64, count: i64) -> i64 {
 // the frame down before the callee runs, and an accumulator loop reruns
 // the body over the same slots, so a local handed to any call inside a
 // `return` value (`return f(&p)`, `return x + f(p)`) must not be a frame
-// cell. Mode 0 collects those names into `names`; mode 1 records in
-// `sites` the literal of every `let`/assignment that binds one of them.
-fn ng_bar_walk(c: i64, n: i64, names: i64, sites: i64, mode: i64, in_ret: bool) -> i64 {
+// cell. One walk collects those names into `names` and, in walk order,
+// (name, literal) of every `let` and assignment of a variable into
+// `binds`; ng_stack_bars keeps the literals that bind one of the names.
+fn ng_bar_walk(c: i64, n: i64, names: i64, binds: i64, in_ret: bool) -> i64 {
     if n < 0 {
         return 0;
     }
     let k = nk(c, n);
-    if k == K_RETURN { return ng_bar_walk(c, na(c, n), names, sites, mode, true); }
+    if k == K_RETURN { return ng_bar_walk(c, na(c, n), names, binds, true); }
     if k == K_CALL || k == K_MACROCALL {
         let args = nb(c, n);
         let mut i: i64 = 0;
         while i < list_len(c, args) {
             let a = list_at(c, args, i);
-            if mode == 0 && in_ret {
+            if in_ret {
                 if nk(c, a) == K_VAR {
                     vpush(names, na(c, a));
                 } else if nk(c, a) == K_ADDR && nk(c, na(c, a)) == K_VAR {
                     vpush(names, na(c, na(c, a)));
                 }
             }
-            ng_bar_walk(c, a, names, sites, mode, in_ret);
+            ng_bar_walk(c, a, names, binds, in_ret);
             i = i + 1;
         }
         return 0;
     }
     if k == K_LET {
-        if mode == 1 && ng_vhas(names, na(c, n)) {
-            vpush(sites, nd(c, n));
-        }
-        return ng_bar_walk(c, nd(c, n), names, sites, mode, in_ret);
+        vpush(binds, na(c, n));
+        vpush(binds, nd(c, n));
+        return ng_bar_walk(c, nd(c, n), names, binds, in_ret);
     }
     if k == K_ASSIGN {
         let t = na(c, n);
-        if mode == 1 && nk(c, t) == K_VAR && ng_vhas(names, na(c, t)) {
-            vpush(sites, nb(c, n));
+        if nk(c, t) == K_VAR {
+            vpush(binds, na(c, t));
+            vpush(binds, nb(c, n));
         }
-        ng_bar_walk(c, t, names, sites, mode, in_ret);
-        return ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret);
+        ng_bar_walk(c, t, names, binds, in_ret);
+        return ng_bar_walk(c, nb(c, n), names, binds, in_ret);
     }
-    if k == K_BIN { ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret); return ng_bar_walk(c, nc(c, n), names, sites, mode, in_ret); }
-    if k == K_UN { return ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret); }
-    if k == K_ADDR || k == K_TINDEX || k == K_FIELD { return ng_bar_walk(c, na(c, n), names, sites, mode, in_ret); }
-    if k == K_TUPLE || k == K_ARRAY { return ng_bar_list(c, na(c, n), names, sites, mode, in_ret, 0, 1); }
-    if k == K_SINIT { return ng_bar_list(c, nb(c, n), names, sites, mode, in_ret, 1, 2); }
-    if k == K_INDEX || k == K_RANGE { ng_bar_walk(c, na(c, n), names, sites, mode, in_ret); return ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret); }
+    if k == K_BIN { ng_bar_walk(c, nb(c, n), names, binds, in_ret); return ng_bar_walk(c, nc(c, n), names, binds, in_ret); }
+    if k == K_UN { return ng_bar_walk(c, nb(c, n), names, binds, in_ret); }
+    if k == K_ADDR || k == K_TINDEX || k == K_FIELD { return ng_bar_walk(c, na(c, n), names, binds, in_ret); }
+    if k == K_TUPLE || k == K_ARRAY { return ng_bar_list(c, na(c, n), names, binds, in_ret, 0, 1); }
+    if k == K_SINIT { return ng_bar_list(c, nb(c, n), names, binds, in_ret, 1, 2); }
+    if k == K_INDEX || k == K_RANGE { ng_bar_walk(c, na(c, n), names, binds, in_ret); return ng_bar_walk(c, nb(c, n), names, binds, in_ret); }
     if k == K_SLICE {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
-        ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret);
-        return ng_bar_walk(c, nc(c, n), names, sites, mode, in_ret);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
+        ng_bar_walk(c, nb(c, n), names, binds, in_ret);
+        return ng_bar_walk(c, nc(c, n), names, binds, in_ret);
     }
     if k == K_IF {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
-        ng_bar_list(c, nb(c, n), names, sites, mode, in_ret, 0, 1);
-        return ng_bar_list(c, nc(c, n), names, sites, mode, in_ret, 0, 1);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
+        ng_bar_list(c, nb(c, n), names, binds, in_ret, 0, 1);
+        return ng_bar_list(c, nc(c, n), names, binds, in_ret, 0, 1);
     }
     if k == K_WHILE {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
-        return ng_bar_list(c, nb(c, n), names, sites, mode, in_ret, 0, 1);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
+        return ng_bar_list(c, nb(c, n), names, binds, in_ret, 0, 1);
     }
     if k == K_FOR {
-        ng_bar_walk(c, nb(c, n), names, sites, mode, in_ret);
-        return ng_bar_list(c, nc(c, n), names, sites, mode, in_ret, 0, 1);
+        ng_bar_walk(c, nb(c, n), names, binds, in_ret);
+        return ng_bar_list(c, nc(c, n), names, binds, in_ret, 0, 1);
     }
-    if k == K_LETD { return ng_bar_walk(c, nc(c, n), names, sites, mode, in_ret); }
-    if k == K_LENS { return ng_bar_list(c, nc(c, n), names, sites, mode, in_ret, 0, 1); }
+    if k == K_LETD { return ng_bar_walk(c, nc(c, n), names, binds, in_ret); }
+    if k == K_LENS { return ng_bar_list(c, nc(c, n), names, binds, in_ret, 0, 1); }
     if k == K_MATCH {
-        ng_bar_walk(c, na(c, n), names, sites, mode, in_ret);
+        ng_bar_walk(c, na(c, n), names, binds, in_ret);
         let arms = nb(c, n);
         let mut i: i64 = 0;
         while i < list_len(c, arms) {
-            ng_bar_walk(c, list_at(c, arms, i + 1), names, sites, mode, in_ret);
-            ng_bar_walk(c, list_at(c, arms, i + 2), names, sites, mode, in_ret);
+            ng_bar_walk(c, list_at(c, arms, i + 1), names, binds, in_ret);
+            ng_bar_walk(c, list_at(c, arms, i + 2), names, binds, in_ret);
             i = i + 3;
         }
     }
     return 0;
 }
 
-fn ng_bar_list(c: i64, l: i64, names: i64, sites: i64, mode: i64, in_ret: bool, from: i64, step: i64) -> i64 {
+fn ng_bar_list(c: i64, l: i64, names: i64, binds: i64, in_ret: bool, from: i64, step: i64) -> i64 {
     let mut i = from;
     while i < list_len(c, l) {
-        ng_bar_walk(c, list_at(c, l, i), names, sites, mode, in_ret);
+        ng_bar_walk(c, list_at(c, l, i), names, binds, in_ret);
         i = i + step;
     }
     return 0;
@@ -438,21 +439,25 @@ fn ng_bar_list(c: i64, l: i64, names: i64, sites: i64, mode: i64, in_ret: bool, 
 // not be stack cells (`ng_bar_walk`), or 0 when there are none.
 fn ng_stack_bars(c: i64, body: i64, prelude: i64) -> i64 {
     let names = vnew();
+    let binds = vnew();
+    ng_bar_list(c, body, names, binds, false, 0, 1);
+    if prelude >= 0 {
+        let mut p: i64 = 0;
+        while p < vlen(prelude) {
+            ng_bar_walk(c, vget(prelude, p), names, binds, false);
+            p = p + 1;
+        }
+    }
+    if vlen(names) == 0 {
+        return 0;
+    }
     let sites = vnew();
-    let mut mode: i64 = 0;
-    while mode < 2 {
-        ng_bar_list(c, body, names, sites, mode, false, 0, 1);
-        if prelude >= 0 {
-            let mut p: i64 = 0;
-            while p < vlen(prelude) {
-                ng_bar_walk(c, vget(prelude, p), names, sites, mode, false);
-                p = p + 1;
-            }
+    let mut i: i64 = 0;
+    while i < vlen(binds) {
+        if ng_vhas(names, vget(binds, i)) {
+            vpush(sites, vget(binds, i + 1));
         }
-        if vlen(names) == 0 {
-            return 0;
-        }
-        mode = mode + 1;
+        i = i + 2;
     }
     if vlen(sites) == 0 {
         return 0;
