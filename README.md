@@ -104,7 +104,8 @@ to a verified fixed point, through C or natively. A clean checkout
 bootstraps with only `cc`. `scripts/bootstrap.sh` builds the committed C
 seed (`bootstrap/seed/`), and Rust is not needed. The Rust compiler in
 `src/` remains an optional stage 0 (`--from-rust`). The native stages of
-the default run need an x86-64 Linux host; elsewhere, use
+the default run need an x86-64 Linux host with `sha256sum` and GNU `date`
+(`+%s%N`); elsewhere, use
 `scripts/bootstrap.sh --no-native`.
 
 ```bash
