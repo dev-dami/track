@@ -31,6 +31,12 @@ summary for that parameter is die-only (not kept, freed or returned, and
 the result not derived from it), or used as a discarded statement, is
 dumped `temp-autofree` and freed right after that call in both backends
 (ASan self-compile leaks 340,813 allocations, was 584,001).
+L13c landed: a fresh struct, tuple or array passed straight to such a
+call dies there too. A flat literal or ret-slot call that fits the frame
+budget is dumped `stack` and lives in a stack cell of the caller (not
+inside a `return` value, whose call may be a tail call); any other is
+`temp-autofree` and freed right after the call, `deep` (drop glue) when
+its children are fresh and the callee only reads it (§3.5).
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors
@@ -451,7 +457,16 @@ fixpoint). The proof is syntactic, on top of the summaries:
 
 The frees run where L9/L12 free cells (block end, `return`,
 reassignment), in both backends. Expression temporaries
-(`str_len(int_to_str(i))`) are not freed yet. ASan-built self-compile
+(`str_len(int_to_str(i))`) are freed by L13b (Str and handles) and L13c
+(cells): `pl_call_args` plans an argument a temporary when
+`pl_temp_arg_ok` holds (the parameter is lent or `die` only, and the
+call's result neither derives from it nor has an unknown origin). A cell
+temporary (`pl_temp_cell`) is a stack cell when it is a flat literal or
+ret-slot call within the frame budget and not inside a `return` value,
+else freed after the consumer (`G_TEMPS` / `NG_TEMPS`, code `-1 - site`)
+with drop glue when `pl_deep_fresh` holds and the callee only reads it.
+A Str field is never freed by drop glue, and a function returning a cell
+with a literal Str field is not `fresh`, so such results stay heap. ASan-built self-compile
 of `compiler/src/main.trk`: 771,893 leaked allocations (64.7 MB) before,
 584,001 (56.9 MB) after, 0 errors [observed].
 

@@ -1,0 +1,28 @@
+// L13c: a cell temporary the outer call returns is never freed.
+struct Rect { w: i64, h: i64 }
+
+fn make_rect(w: i64, h: i64) -> Rect {
+    return Rect { w: w, h: h };
+}
+
+fn same(r: Rect) -> Rect {
+    return r;
+}
+
+fn either(a: Rect, b: Rect, first: bool) -> Rect {
+    if first {
+        return a;
+    }
+    return b;
+}
+
+fn main() -> void {
+    let mut i: i64 = 0;
+    while i < 3 {
+        let r = same(make_rect(i, 2));
+        let e = either(make_rect(1, i), Rect { w: 9, h: 9 }, i % 2 == 0);
+        print(r.w + r.h + e.w + e.h);
+        i = i + 1;
+    }
+    print(sys_get_memory_used());
+}

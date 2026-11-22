@@ -1,8 +1,8 @@
 fn mk
-  L6 struct ret-slot ends L6
+  L7 struct ret-slot ends L7
 fn grow
-  L10 struct ret-slot ends L10
+  L11 struct ret-slot ends L11
 fn main
-  L17 call stack ends L18
-  L17 call heap ends -
-  L17 call heap ends -
+  L18 call stack ends L19
+  L18 call stack ends L18
+  L18 call stack ends L18
