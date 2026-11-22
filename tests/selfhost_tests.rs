@@ -1942,14 +1942,25 @@ fn for_in_exit_and_div_trap_on_both_runtimes() {
     let want = "10\n20\n30\n3\n2\n3\n4\n10\n20\n30\n110\n120\n130\nab\ncde\n60\n11\n21\n31\n";
     assert_eq!(c, (want.to_string(), Some(0)), "for_in: C runtime");
     assert_eq!(t, c, "for_in: Track runtime differs");
-    let (c, t) = run_under_both_runtimes(&dir, "exit_flush", &repo().join("tests/native/exit_flush.trk"));
+    let (c, t) = run_under_both_runtimes(
+        &dir,
+        "exit_flush",
+        &repo().join("tests/native/exit_flush.trk"),
+    );
     assert_eq!(c, ("1\n".to_string(), Some(3)), "exit_flush: C runtime");
     assert_eq!(t, c, "exit_flush: Track runtime differs");
-    run_under_both_runtimes(&dir, "divzero_flush", &repo().join("tests/native/divzero_flush.trk"));
+    run_under_both_runtimes(
+        &dir,
+        "divzero_flush",
+        &repo().join("tests/native/divzero_flush.trk"),
+    );
     for exe in ["divzero_flush_crt", "divzero_flush_trt"] {
         let out = Command::new(dir.join(exe)).output().unwrap();
         assert_eq!(
-            (String::from_utf8_lossy(&out.stdout).to_string(), out.status.signal()),
+            (
+                String::from_utf8_lossy(&out.stdout).to_string(),
+                out.status.signal()
+            ),
             ("1\n".to_string(), Some(8)),
             "{}: output lost on SIGFPE",
             exe

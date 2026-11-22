@@ -78,8 +78,15 @@ takes and returns words:
 - enums are their discriminant (explicit `= value`, otherwise previous + 1);
 - values of a union with any payload variant are heap cells
   `[tag, payload...]`, and `match` loads the tag from the cell;
-- division by zero (and `INT64_MIN / -1`) raises `SIGFPE`; shifts mask the
-  amount to 6 bits and `>>` is logical; arithmetic wraps.
+- division by zero (and `INT64_MIN / -1`) flushes buffered stdout, then
+  raises `SIGFPE` (shell status 136) under the C and the Track runtime alike
+  (native `INT64_MIN / -1` traps in hardware without the flush); `exit(n)`
+  flushes stdout and exits with `n`; shifts mask the amount to 6 bits and
+  `>>` is logical; arithmetic wraps;
+- `for x in a..b` binds `a`, `a + 1`, ..., `b - 1`; `for x in arr` binds
+  each element of array `arr` in order (`arr` moves into the loop; iterate
+  `&arr` to keep it); an empty array runs the body zero times, and a scalar
+  iterable is a type error (count with `for i in 0..n`).
 
 - structs are heap cells `[tag, fields...]` with fields in declaration
   order; the tag is a hash of the struct name, so separately compiled
