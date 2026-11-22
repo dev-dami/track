@@ -14,6 +14,9 @@ fresh child cells. Locals reassigned fresh cells are autofree, not stack
 handles wait for L13; ret-slot is not acted on yet.
 L11 landed: ngen puts the same `stack` literals in contiguous frame slots
 (`ng_site_cell`; native structs 0.88 of C in `bench/native.sh`).
+L12a landed: ngen frees the same `heap-autofree` cells as cgen, drop glue
+included, with an inlined free and a free-list pop in the inlined alloc
+(native structs 0.66 of C user cycles, total cycles 322M vs C 477M).
 
 The ask: every function gets a lifecycle the compiler infers, with no
 annotations. The compiler uses it to reject a new class of logic errors
