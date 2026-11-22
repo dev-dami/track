@@ -390,7 +390,7 @@ fn native_executables_have_a_non_executable_stack() {
 // K3b: programs both backends once got wrong the same way, so parity alone
 // missed them. Each must print `stdout` and end with `code` (or be killed
 // by signal `sig`) under the C backend and natively.
-const K3B_PROGRAMS: [(&str, &str, Option<i32>, Option<i32>); 3] = [
+const K3B_PROGRAMS: [(&str, &str, Option<i32>, Option<i32>); 5] = [
     (
         "for_in",
         "10\n20\n30\n3\n2\n3\n4\n10\n20\n30\n110\n120\n130\nab\ncde\n60\n11\n21\n31\n",
@@ -399,6 +399,14 @@ const K3B_PROGRAMS: [(&str, &str, Option<i32>, Option<i32>); 3] = [
     ),
     ("exit_flush", "1\n", Some(3), None),
     ("divzero_flush", "1\n", None, Some(8)),
+    // K3c: INT64_MIN / -1 and % -1 trap like a zero divisor (flush, SIGFPE).
+    (
+        "divmin_flush",
+        "-7\n0\n-9223372036854775807\n",
+        None,
+        Some(8),
+    ),
+    ("divmin_mod_flush", "0\n", None, Some(8)),
 ];
 
 #[test]

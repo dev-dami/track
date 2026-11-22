@@ -2852,15 +2852,32 @@ fn ng_op_apply(c: i64, op: i64, dst: i64, kind: i64, v: i64) -> i64 {
 }
 
 // rax = rax op rcx for the operators ng_op_direct does not cover.
-// A zero divisor calls track_trap_div (when the program has the runtime),
-// which flushes stdout before raising SIGFPE; the call never returns, so
-// it clobbers nothing that matters.
+// A zero divisor or INT64_MIN / -1 calls track_trap_div (when the program
+// has the runtime), which flushes stdout before raising SIGFPE, as the C
+// backend's tk_div does; the call never returns, so it clobbers nothing
+// that matters. The hot path pays one compare: rcx + 1 <= 1 (unsigned)
+// holds only for rcx 0 and -1; x / -1 is -x and x % -1 is 0 otherwise.
 fn ng_op_rcx(c: i64, op: i64) -> i64 {
     let b = ncode(c);
     let trap = intern(c, "track_trap_div");
     if (op == OP_DIV || op == OP_MOD) && ni(c, trap, NI_FN) >= 0 {
+        let mut m: i64 = 0;
+        if op == OP_MOD {
+            m = 1;
+        }
+        x_bytes2(b, 72, 141);       // lea rdx, [rcx + 1]
+        x_bytes2(b, 81, 1);
+        x_bytes2(b, 72, 131);       // cmp rdx, 1
+        x_bytes2(b, 250, 1);
+        x_bytes2(b, 119, 17 + 2 * m); // ja the idiv
         x_rr(b, 133, 1, 1);         // test rcx, rcx
-        x_bytes2(b, 117, 5);        // jnz past the call
+        x_bytes2(b, 116, 7 + 2 * m); // jz the call
+        x_bytes3(b, 72, 247, 216);  // neg rax (OF only for INT64_MIN)
+        x_bytes2(b, 112, 2 + 2 * m); // jo the call
+        if m == 1 {
+            x_bytes2(b, 49, 192);   // xor eax, eax
+        }
+        x_bytes2(b, 235, 10 + 3 * m); // jmp past the idiv
         let pos = x_call(b);
         let fix = ng(c, NG_CALLS);
         vpush(fix, pos);
@@ -3200,6 +3217,9 @@ fn ng_binop(c: i64, n: i64) -> i64 {
         }
     }
     ng_gen2(c, l, r);
+    if (op == OP_DIV || op == OP_MOD) && rk == 1 && rv != 0 && rv != -1 {
+        return x_binop(b, op);       // a constant divisor that cannot fault
+    }
     return ng_op_rcx(c, op);
 }
 
