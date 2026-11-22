@@ -286,6 +286,7 @@ fn register_builtins(c: i64) -> i64 {
     bi(c, "track_sb_clear", t_i64);
     bi(c, "track_str_bytes", t_i64);
     bi(c, "track_file_read", t_i64);
+    bi(c, "track_stdin_read", t_i64);
     bi(c, "track_file_write_all", t_i64);
     bi(c, "track_out", t_i64);
     bi(c, "track_err", t_i64);

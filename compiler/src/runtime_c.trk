@@ -338,6 +338,20 @@ fn runtime_source(b: i64) -> i64 {
     sb_line(b, "    return TK_WORD(buf);");
     sb_line(b, "}");
     sb_line(b, "");
+    sb_line(b, "/* Read n bytes from stdin; fewer only at end of input. stdout is flushed");
+    sb_line(b, " * first, so a reply written before the read is never left buffered (the");
+    sb_line(b, " * framed JSON-RPC loop of `trackc lsp` relies on this). */");
+    sb_line(b, "tk_w track_stdin_read(tk_w n) {");
+    sb_line(b, "    size_t want = n > 0 ? (size_t)n : 0, got = 0, r;");
+    sb_line(b, "    char *buf;");
+    sb_line(b, "    fflush(stdout);");
+    sb_line(b, "    buf = (char *)malloc(want + 1);");
+    sb_line(b, "    if (!buf) return TK_WORD(tk_dup(\"\"));");
+    sb_line(b, "    while (got < want && (r = fread(buf + got, 1, want - got, stdin)) > 0) got += r;");
+    sb_line(b, "    buf[got] = '\\0';");
+    sb_line(b, "    return TK_WORD(buf);");
+    sb_line(b, "}");
+    sb_line(b, "");
     sb_line(b, "/* ---------------------------------------------------------------- strings */");
     sb_line(b, "");
     sb_line(b, "tk_w str_from_literal(tk_w raw) { return TK_WORD(tk_dup(TK_STR(raw))); }");
@@ -983,6 +997,7 @@ fn runtime_prototypes(b: i64) -> i64 {
     sb_line(b, "tk_w track_out(tk_w);");
     sb_line(b, "tk_w track_err(tk_w);");
     sb_line(b, "tk_w read_line(void);");
+    sb_line(b, "tk_w track_stdin_read(tk_w);");
     sb_line(b, "tk_w str_from_literal(tk_w);");
     sb_line(b, "tk_w str_free(tk_w);");
     sb_line(b, "tk_w track_str_free(tk_w);");
@@ -1102,6 +1117,7 @@ fn register_runtime(c: i64) -> i64 {
     ni_set(c, intern(c, "track_out"), NI_EXTERN, 1);
     ni_set(c, intern(c, "track_err"), NI_EXTERN, 1);
     ni_set(c, intern(c, "read_line"), NI_EXTERN, 0);
+    ni_set(c, intern(c, "track_stdin_read"), NI_EXTERN, 1);
     ni_set(c, intern(c, "str_from_literal"), NI_EXTERN, 1);
     ni_set(c, intern(c, "str_free"), NI_EXTERN, 1);
     ni_set(c, intern(c, "track_str_free"), NI_EXTERN, 1);

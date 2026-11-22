@@ -454,6 +454,7 @@ impl LinearChecker {
                 "track_sb_clear",
                 "track_str_bytes",
                 "track_file_read",
+                "track_stdin_read",
                 "track_file_write_all",
                 "track_out",
                 "track_err",

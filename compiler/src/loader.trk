@@ -97,7 +97,12 @@ fn load_module(c: i64, path: i64) -> i64 {
     if !path_exists(path) {
         fail(c, "E0010", text_cat3("cannot read source file '", path, "'"));
     }
-    let src = read_text(path);
+    return load_source(c, path, read_text(path));
+}
+
+// Load module `path` from the text `src` (not from disk) and everything
+// it imports. `trackc lsp` checks an unsaved editor buffer this way.
+fn load_source(c: i64, path: i64, src: i64) -> i64 {
     let f = add_source(c, path, src);
     let first = lex_file(c, f);
     let items = parse_file(c, first);

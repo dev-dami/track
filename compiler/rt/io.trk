@@ -250,6 +250,31 @@ fn read_line() -> i64 {
     return buf;
 }
 
+// Read n bytes from stdin; fewer only at end of input. stdout is flushed
+// first, matching the C runtime's track_stdin_read.
+fn track_stdin_read(n: i64) -> i64 {
+    rt_flush();
+    let mut want = n;
+    if want < 0 {
+        want = 0;
+    }
+    let buf = rt_malloc(want + 1);
+    let mut got: i64 = 0;
+    let mut going = true;
+    while going && got < want {
+        let r = sys3(SYS_READ, 0, buf + got, want - got);
+        if r == -4 {
+            // EINTR: retry
+        } else if r <= 0 {
+            going = false;
+        } else {
+            got = got + r;
+        }
+    }
+    store8(buf + got, 0);
+    return buf;
+}
+
 // Fatal abort: print message and terminate the process with status 134.
 fn track_abort(msg: i64) -> i64 {
     rt_flush();

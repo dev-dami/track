@@ -2087,6 +2087,7 @@ fn rt_summaries(c: i64) -> i64 {
     rt(c, "file_copy", "rr", "-");
     rt(c, "dir_exists", "r", "-");
     rt(c, "track_file_read", "r", "f");
+    rt(c, "track_stdin_read", "n", "f");
     rt(c, "track_file_write_all", "rr", "-");
     // system
     rt(c, "abort", "r", "-");
@@ -3756,6 +3757,7 @@ fn hd_kinds(c: i64) -> i64 {
     hd_kind(c, kinds, "read_line", HK_STR);
     hd_kind(c, kinds, "file_read_all", HK_STR);
     hd_kind(c, kinds, "track_file_read", HK_STR);
+    hd_kind(c, kinds, "track_stdin_read", HK_STR);
     hd_kind(c, kinds, "env_get", HK_STR);
     hd_kind(c, kinds, "os_arg", HK_STR);
     hd_kind(c, kinds, "vec_init", HK_VEC);
