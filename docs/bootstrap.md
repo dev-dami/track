@@ -3,10 +3,10 @@
 Track 1.0 is self-hosting: `trackc`, the compiler in `compiler/src/`, is
 written entirely in Track and compiles itself to a fixed point.
 
-Track targets x86-64 Linux only. The repository holds no C and no Rust: a
-clean checkout bootstraps from `bootstrap/seed/trackc`, a committed static
-x86-64 Linux ELF (the fixed-point `trackc`), with POSIX tools and nothing
-else. No C compiler, assembler or linker runs at any step.
+The repository holds no C and no Rust: a clean checkout bootstraps from
+`bootstrap/seed/trackc`, a committed static x86-64 Linux ELF (the
+fixed-point `trackc`), with POSIX tools and nothing else; on Windows from
+`bootstrap/seed/trackc.exe` (below). No C compiler, assembler or linker runs at any step.
 
 ```sh
 scripts/bootstrap.sh
@@ -55,6 +55,38 @@ A runtime change (`compiler/rt/`, then `scripts/embed_runtime.sh`) can need
 that route: the old seed embeds the old runtime, so the seed's stage1 can
 differ from stage2. stage2 and stage3 still agree, so the default run
 usually suffices.
+
+### Windows: `bootstrap/seed/trackc.exe`
+
+`bootstrap/seed/trackc.exe` is the x86_64-windows trackc: the Linux fixed
+point cross-compiles `compiler/src/main.trk` with `--target x86_64-windows`.
+It is a fixed point too (trackc.exe builds itself byte for byte), so a
+Windows machine bootstraps with no Linux at all:
+
+```powershell
+pwsh -File scripts\bootstrap.ps1
+# ==> stage1: seed compiles compiler\src\main.trk
+# ==> stage2: stage1 compiles compiler\src\main.trk
+# ==> stage3: stage2 compiles compiler\src\main.trk
+# OK stage2 and stage3 are byte-identical (... bytes)
+# OK bootstrap\seed\trackc.exe matches the fixed point
+```
+
+The gate compares `Get-FileHash` of stage2 and stage3; the result is
+`build\bootstrap\stage3\trackc.exe`. `scripts/update_seed.sh` writes both
+seeds and `--check` fails when either is stale, so the Windows seed is
+regenerated on Linux in the same change. `scripts/install.ps1` runs this
+bootstrap, builds `yard.exe` and installs both. The CI `windows` job
+(windows-latest) runs `bootstrap.ps1`, then `tests/windows/run.ps1`
+(hello and the examples against their goldens, `yard test` on a sample
+project) and `install.ps1`. Locally, the same commands run under wine
+(`WINEDEBUG=-all wine trackc.exe ...`); `tests/sh/xplat.sh` covers the
+examples, the runtime smoke test and the divide trap there.
+
+On Windows the runtime's divide trap ends the process with NTSTATUS
+`0xC0000094` (STATUS_INTEGER_DIVIDE_BY_ZERO), the code a hardware divide
+fault gives; wine passes its low byte (148) to a Linux parent. Linux keeps
+SIGFPE (shell status 136).
 
 ### History: the Rust stage 0 and the C seed
 
@@ -124,7 +156,7 @@ returns words:
 - values of a union with any payload variant are heap cells
   `[tag, payload...]`, and `match` loads the tag from the cell;
 - division by zero (and `INT64_MIN / -1`) flushes buffered stdout, then
-  raises `SIGFPE` (shell status 136); a
+  raises `SIGFPE` (shell status 136; `0xC0000094` on Windows); a
   constant zero divisor or constant `INT64_MIN / -1` (also in enum
   discriminants) is E0200 at compile time; `exit(n)`
   flushes stdout and exits with `n`; shifts mask the amount to 6 bits and

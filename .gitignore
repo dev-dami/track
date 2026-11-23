@@ -37,3 +37,4 @@ scratch/benchmarks/rec
 
 # Recorded LSP sessions are expected output, not build products
 !tests/lsp/cases/*.out
+!bootstrap/seed/trackc.exe

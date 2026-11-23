@@ -14,7 +14,7 @@
 //   os_args_count, os_arg, env_get, env_exists, sys_exec, process_spawn,
 //   clock_ms, file_open, file_close, file_read_all, file_write,
 //   file_exists, file_remove, file_size, dir_exists, file_copy,
-//   track_file_read, track_file_write_all, net_socket_* (not yet: -1)
+//   track_file_read, track_file_write_all, net_socket_* (ws2_32)
 //
 // A file descriptor is a HANDLE; 0, 1 and 2 stand for the standard
 // handles. Paths and arguments are UTF-8 in Track and UTF-16 for Windows.
@@ -32,6 +32,7 @@ extern "kernel32.dll" fn GetEnvironmentVariableW(name: i64, buf: i64, n: i64) ->
 extern "kernel32.dll" fn GetFileAttributesW(path: i64) -> u32;
 extern "kernel32.dll" fn GetFileAttributesExW(path: i64, level: i64, info: i64) -> i32;
 extern "kernel32.dll" fn DeleteFileW(path: i64) -> i32;
+extern "kernel32.dll" fn MoveFileExW(from: i64, to: i64, flags: i64) -> i32;
 extern "kernel32.dll" fn SetFileInformationByHandle(h: i64, class: i64, info: i64, size: i64) -> i32;
 extern "kernel32.dll" fn SetFilePointerEx(h: i64, dist: i64, newpos: i64, how: i64) -> i32;
 extern "kernel32.dll" fn QueryPerformanceCounter(out: i64) -> i32;
@@ -286,14 +287,15 @@ fn env_exists(key: i64) -> i64 {
     return 0;
 }
 
-// system(3) with cmd.exe: `cmd.exe /c cmd`; the exit code, -1 when the
-// process could not start.
+// system(3) with cmd.exe: `cmd.exe /s /c "cmd"` (/s: cmd strips exactly
+// the outer quotes, so `cmd` may start with a quoted path); the exit
+// code, -1 when the process could not start.
 fn sys_exec(cmd: i64) -> i64 {
     if cmd == 0 {
         return -1;
     }
     rt_flush();
-    let line = str_concat("cmd.exe /c ", cmd);
+    let line = str_concat(str_concat("cmd.exe /s /c \"", cmd), "\"");
     let wl = win_wide(line);
     let si = rt_malloc(104);
     rt_zero(si, 104);
@@ -383,6 +385,55 @@ fn win_stat(path: i64, st: i64) -> i64 {
     return 0;
 }
 
+// unlink(2): the name goes now even while handles are open (every rt
+// open shares FILE_SHARE_DELETE). The file is first renamed to a unique
+// scratch name in its directory, so the name is free at once whether or
+// not the file system honours POSIX delete semantics (wine and FAT keep a
+// delete-pending file visible until its last handle closes); then the
+// scratch name is deleted, with POSIX semantics where available.
+fn win_unlink(path: i64) -> i64 {
+    let wp = win_wide(path);
+    if GetFileAttributesW(wp) == 4294967295 {
+        rt_free(wp);
+        return -2;
+    }
+    QueryPerformanceCounter(ws(0));
+    let b = track_sb_new();
+    track_sb_push(b, path);
+    track_sb_push(b, ".trk-del-");
+    track_sb_push_int(b, GetCurrentProcessId());
+    track_sb_push(b, "-");
+    track_sb_push_int(b, load64(ws(0)));
+    let wt = win_wide(track_sb_str(b));
+    let mut target = wp;
+    if MoveFileExW(wp, wt, 1) != 0 {          // MOVEFILE_REPLACE_EXISTING
+        target = wt;
+    }
+    let mut ok: i64 = 0;
+    let h = CreateFileW(target, 65536, 7, 0, 3, 33554432, 0);   // DELETE, OPEN_EXISTING, BACKUP_SEMANTICS
+    if h != -1 && h != 0 {
+        store64(ws(0), 3);                    // FILE_DISPOSITION_DELETE | POSIX_SEMANTICS
+        ok = SetFileInformationByHandle(h, 21, ws(0), 4);
+        if ok == 0 {
+            store64(ws(0), 1);                // FileDispositionInfo: DeleteFile = TRUE
+            ok = SetFileInformationByHandle(h, 4, ws(0), 4);
+        }
+        CloseHandle(h);
+    }
+    if ok == 0 {
+        ok = DeleteFileW(target);
+    }
+    if ok == 0 && target == wt {
+        MoveFileExW(wt, wp, 1);               // could not delete: put the name back
+    }
+    rt_free(wp);
+    rt_free(wt);
+    if ok == 0 {
+        return -2;
+    }
+    return 0;
+}
+
 // The `syscall6` calls of the portable runtime modules, by Linux number;
 // -38 (ENOSYS) for the ones Windows has no counterpart for here.
 fn os_syscall(nr: i64, a: i64, b: i64, d: i64, e: i64, f: i64) -> i64 {
@@ -468,29 +519,18 @@ fn os_syscall(nr: i64, a: i64, b: i64, d: i64, e: i64, f: i64) -> i64 {
         return 0;
     }
     if nr == 87 {
-        // POSIX semantics: the name goes now even while handles are open
-        let wp = win_wide(a);
-        let mut ok: i64 = 0;
-        let h = CreateFileW(wp, 65536, 7, 0, 3, 33554432, 0);   // DELETE, OPEN_EXISTING, BACKUP_SEMANTICS
-        if h != -1 && h != 0 {
-            store64(ws(0), 3);                                  // FILE_DISPOSITION_DELETE | POSIX_SEMANTICS
-            ok = SetFileInformationByHandle(h, 21, ws(0), 4);
-            CloseHandle(h);
-        }
-        if ok == 0 {
-            ok = DeleteFileW(wp);
-        }
-        rt_free(wp);
-        if ok == 0 {
-            return -2;
-        }
-        return 0;
+        return win_unlink(a);
     }
     if nr == 39 {
         return GetCurrentProcessId();
     }
     if nr == 62 {
-        ExitProcess(128 + b);                 // a signal: die with 128 + signo
+        if b == 8 {
+            // SIGFPE (track_trap_div): the NTSTATUS a hardware integer
+            // divide by zero ends a Windows process with
+            ExitProcess(3221225620);          // 0xC0000094 STATUS_INTEGER_DIVIDE_BY_ZERO
+        }
+        ExitProcess(128 + b);                 // another signal: die with 128 + signo
         return 0;
     }
     if nr == 228 {
@@ -690,11 +730,164 @@ fn track_file_write_all(path: i64, content: i64) -> i64 {
 
 // ---------------------------------------------------------------- network
 //
-// Not yet on Windows (Winsock): every call fails.
+// Winsock (ws2_32.dll). WSAStartup runs once, on the first socket call; a
+// socket is a SOCKET (INVALID_SOCKET is -1).
 
-fn net_socket_tcp_listen(port: i64) -> i64 { return -1; }
-fn net_socket_accept(server_fd: i64) -> i64 { return -1; }
-fn net_socket_connect(host: i64, port: i64) -> i64 { return -1; }
-fn net_socket_send(fd: i64, data: i64, len: i64) -> i64 { return -1; }
-fn net_socket_recv(fd: i64, buf: i64, max_len: i64) -> i64 { return -1; }
-fn net_socket_close(fd: i64) -> i64 { return 0; }
+extern "ws2_32.dll" fn WSAStartup(version: i64, data: i64) -> i32;
+extern "ws2_32.dll" fn WSAGetLastError() -> i32;
+extern "ws2_32.dll" fn socket(af: i64, kind: i64, proto: i64) -> i64;
+extern "ws2_32.dll" fn bind(s: i64, addr: i64, len: i64) -> i32;
+extern "ws2_32.dll" fn listen(s: i64, backlog: i64) -> i32;
+extern "ws2_32.dll" fn accept(s: i64, addr: i64, len: i64) -> i64;
+extern "ws2_32.dll" fn connect(s: i64, addr: i64, len: i64) -> i32;
+extern "ws2_32.dll" fn send(s: i64, buf: i64, len: i64, flags: i64) -> i32;
+extern "ws2_32.dll" fn recv(s: i64, buf: i64, len: i64, flags: i64) -> i32;
+extern "ws2_32.dll" fn closesocket(s: i64) -> i32;
+
+const WS_NET_UP = 6256;      // 1 once WSAStartup succeeded
+const WS_WSADATA = 6272;     // WSADATA (408 bytes on x64)
+
+fn win_net_up() -> bool {
+    if load64(RT_BASE + WS_NET_UP) == 1 {
+        return true;
+    }
+    if WSAStartup(514, RT_BASE + WS_WSADATA) != 0 {   // version 2.2
+        return false;
+    }
+    store64(RT_BASE + WS_NET_UP, 1);
+    return true;
+}
+
+// struct sockaddr_in for AF_INET, `port`, and the IPv4 address word `addr`.
+fn rt_sockaddr(port: i64, addr: i64) -> i64 {
+    let sa = RT_BASE + RS_SOCK;
+    let p = port & 65535;
+    store64(sa, 2 | ((p >> 8) << 16) | ((p & 255) << 24) | ((addr & 4294967295) << 32));
+    store64(sa + 8, 0);
+    return sa;
+}
+
+// inet_pton for dotted-quad IPv4; -1 when malformed.
+fn rt_parse_ipv4(s: i64) -> i64 {
+    let mut addr: i64 = 0;
+    let mut part: i64 = 0;
+    let mut digits: i64 = 0;
+    let mut parts: i64 = 0;
+    let mut i: i64 = 0;
+    while true {
+        let ch = load8(s + i);
+        if ch >= 48 && ch <= 57 {
+            part = part * 10 + ch - 48;
+            digits = digits + 1;
+            if part > 255 || digits > 3 {
+                return -1;
+            }
+        } else if ch == 46 || ch == 0 {
+            if digits == 0 || parts == 4 {
+                return -1;
+            }
+            addr = addr | (part << (8 * parts));
+            parts = parts + 1;
+            part = 0;
+            digits = 0;
+            if ch == 0 {
+                if parts != 4 {
+                    return -1;
+                }
+                return addr;
+            }
+        } else {
+            return -1;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn net_socket_tcp_listen(port: i64) -> i64 {
+    if !win_net_up() {
+        return -1;
+    }
+    let s = socket(2, 1, 6);
+    if s == -1 {
+        return -1;
+    }
+    if bind(s, rt_sockaddr(port, 0), 16) != 0 {
+        let why = WSAGetLastError();
+        let b = track_sb_new();
+        if why == 10048 {
+            track_sb_push(b, "Track Network Error: Port conflict! Port ");
+            track_sb_push_int(b, port);
+            track_sb_push(b, " is already in use by another process.\n");
+        } else {
+            track_sb_push(b, "Track Network Error: Failed to bind TCP socket on port ");
+            track_sb_push_int(b, port);
+            track_sb_push(b, " (WSA error: ");
+            track_sb_push_int(b, why);
+            track_sb_push(b, ").\n");
+        }
+        rt_err_bytes(load64(b), track_sb_len(b));
+        closesocket(s);
+        return -1;
+    }
+    if listen(s, 128) != 0 {
+        closesocket(s);
+        return -1;
+    }
+    return s;
+}
+
+fn net_socket_accept(server_fd: i64) -> i64 {
+    if server_fd < 0 {
+        return -1;
+    }
+    return accept(server_fd, 0, 0);
+}
+
+fn net_socket_connect(host: i64, port: i64) -> i64 {
+    if host == 0 || !win_net_up() {
+        return -1;
+    }
+    let addr = rt_parse_ipv4(host);
+    if addr < 0 {
+        return -1;
+    }
+    let s = socket(2, 1, 6);
+    if s == -1 {
+        return -1;
+    }
+    if connect(s, rt_sockaddr(port, addr), 16) != 0 {
+        closesocket(s);
+        return -1;
+    }
+    return s;
+}
+
+fn net_socket_send(fd: i64, data: i64, len: i64) -> i64 {
+    if fd < 0 || data == 0 {
+        return -1;
+    }
+    let r = send(fd, data, len, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_recv(fd: i64, buf: i64, max_len: i64) -> i64 {
+    if fd < 0 || buf == 0 {
+        return -1;
+    }
+    let r = recv(fd, buf, max_len, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_close(fd: i64) -> i64 {
+    if fd >= 0 {
+        closesocket(fd);
+    }
+    return 0;
+}

@@ -1,2 +1,3 @@
 # The committed native seed of trackc (scripts/update_seed.sh): a binary.
 bootstrap/seed/trackc binary
+bootstrap/seed/trackc.exe binary

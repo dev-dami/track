@@ -1,11 +1,17 @@
 #!/bin/sh
-# Regenerate bootstrap/seed/trackc from the current compiler/src.
+# Regenerate every committed seed from the current compiler/src.
 #
-# The seed is the static x86-64 Linux trackc that compiler/src/main.trk
-# builds at its fixed point. scripts/bootstrap.sh starts from it.
+#   bootstrap/seed/trackc      the static x86-64 Linux trackc that
+#                              compiler/src/main.trk builds at its fixed
+#                              point; scripts/bootstrap.sh starts from it.
+#   bootstrap/seed/trackc.exe  the x86_64-windows trackc, cross-compiled by
+#                              that fixed point (--target x86_64-windows);
+#                              scripts/bootstrap.ps1 starts from it. It is a
+#                              fixed point too: trackc.exe builds itself
+#                              byte for byte.
 #
-#   scripts/update_seed.sh          # rewrite bootstrap/seed/trackc
-#   scripts/update_seed.sh --check  # fail if bootstrap/seed/trackc is out of date
+#   scripts/update_seed.sh          # rewrite both seeds
+#   scripts/update_seed.sh --check  # fail if either seed is out of date
 #
 # The fixed point comes from scripts/bootstrap.sh (stage3, built from the
 # current seed) unless TRACKC names a working trackc. If a change to
@@ -24,6 +30,7 @@ esac
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 seed="$root/bootstrap/seed/trackc"
+wseed="$root/bootstrap/seed/trackc.exe"
 out=${BOOTSTRAP_DIR:-"$root/build/bootstrap"}
 case "$out" in
     /*) ;;
@@ -53,15 +60,29 @@ else
     gen="$out/stage3/trackc"
 fi
 
+# The Windows seed: the fixed point cross-compiles compiler/src/main.trk.
+(cd "$root" && env -i PATH=/nonexistent "$gen" build --target x86_64-windows compiler/src/main.trk -o "$out/trackc.exe" >/dev/null)
+wgen="$out/trackc.exe"
+
 if [ "$mode" = check ]; then
+    status=0
     if cmp -s "$gen" "$seed"; then
         echo "bootstrap/seed/trackc is up to date ($(wc -c < "$seed") bytes)"
-        exit 0
+    else
+        echo "bootstrap/seed/trackc is stale; run scripts/update_seed.sh" >&2
+        status=1
     fi
-    echo "bootstrap/seed/trackc is stale; run scripts/update_seed.sh" >&2
-    exit 1
+    if cmp -s "$wgen" "$wseed"; then
+        echo "bootstrap/seed/trackc.exe is up to date ($(wc -c < "$wseed") bytes)"
+    else
+        echo "bootstrap/seed/trackc.exe is stale; run scripts/update_seed.sh" >&2
+        status=1
+    fi
+    exit "$status"
 fi
 mkdir -p "$(dirname "$seed")"
 cp "$gen" "$seed"
 chmod +x "$seed"
 echo "wrote bootstrap/seed/trackc ($(wc -c < "$seed") bytes)"
+cp "$wgen" "$wseed"
+echo "wrote bootstrap/seed/trackc.exe ($(wc -c < "$wseed") bytes)"

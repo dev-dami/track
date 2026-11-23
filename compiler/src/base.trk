@@ -65,12 +65,12 @@ fn arg_count() -> i64 { return os_args_count(); }
 fn arg_text(i: i64) -> i64 { return os_arg(i); }
 fn quit(code: i64) -> i64 { return sys_exit(code); }
 
-// Byte offset of the last '/' in `s`, or -1.
+// Byte offset of the last '/' (or Windows '\\') in `s`, or -1.
 fn last_slash(s: i64) -> i64 {
     let bytes = text_bytes(s);
     let mut i: i64 = vlen(bytes) - 1;
     while i >= 0 {
-        if vget(bytes, i) == 47 {
+        if vget(bytes, i) == 47 || vget(bytes, i) == 92 {
             return i;
         }
         i = i - 1;

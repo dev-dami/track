@@ -31,14 +31,21 @@ fn yard_version() -> i64 { return "1.0.0"; }
 fn trackc_path() -> i64 {
     let explicit = env_or_empty("TRACKC");
     if text_len(explicit) > 0 {
-        return absolute(explicit);
+        return absolute(fwd_slashes(explicit));
     }
-    let self_path = arg_text(0);
+    let self_path = fwd_slashes(arg_text(0));
     if text_has(self_path, "/") {
-        let sibling = join(dir_name(absolute(self_path)), "trackc");
+        let sibling = join(dir_name(absolute(self_path)), exe_name("trackc"));
         if exists(sibling) {
             return sibling;
         }
+    }
+    if on_windows() {
+        let hits = split_lines(capture("where trackc 2>nul"));
+        if vlen(hits) > 0 {
+            return fwd_slashes(text_trim(vget(hits, 0)));
+        }
+        return "trackc";
     }
     let found = text_trim(capture("command -v trackc 2>/dev/null"));
     if text_len(found) > 0 {
@@ -48,7 +55,12 @@ fn trackc_path() -> i64 {
 }
 
 // The compiler's identity: its checksum, so a new trackc rebuilds everything.
+// Windows has no cksum: the size stands in (a rebuilt trackc of the same
+// size keeps the cache; `yard clean` resets it).
 fn trackc_identity(trackc: i64) -> i64 {
+    if on_windows() {
+        return text_cat("size ", text_of_int(file_size(trackc)));
+    }
     return text_trim(capture(text_cat3("cksum < ", sq(trackc), " 2>/dev/null")));
 }
 
@@ -90,6 +102,9 @@ fn is_test_source(src_dir: i64, file: i64) -> bool {
 // `<dir>/err<i>`. Returns the list of statuses.
 fn run_parallel(dir: i64, cmds: i64) -> i64 {
     make_dirs(dir);
+    if on_windows() {
+        return run_serial(dir, cmds);
+    }
     let mut i: i64 = 0;
     while i < vlen(cmds) {
         let script = sb_new();
@@ -111,6 +126,23 @@ fn run_parallel(dir: i64, cmds: i64) -> i64 {
     while i < vlen(cmds) {
         let st = text_trim(read_text(join(dir, text_cat("st", text_of_int(i)))));
         if text_eq(st, "0") {
+            vpush(statuses, 0);
+        } else {
+            vpush(statuses, 1);
+        }
+        i = i + 1;
+    }
+    return statuses;
+}
+
+// cmd.exe has no background jobs: run the commands one by one, with the
+// same `<dir>/err<i>` files.
+fn run_serial(dir: i64, cmds: i64) -> i64 {
+    let statuses = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(cmds) {
+        let errf = sq(join(dir, text_cat("err", text_of_int(i))));
+        if shell(text_cat3(vget(cmds, i), " >nul 2>", errf)) == 0 {
             vpush(statuses, 0);
         } else {
             vpush(statuses, 1);
@@ -171,8 +203,14 @@ fn link_image(trackc: i64, root: i64, files: i64, dir: i64, out: i64) -> i64 {
     let errf = join(dir, "_yard_link.err");
     let tmp = text_cat(out, ".tmp");
     let build_cmd = text_cat3(text_cat3(sq(trackc), " build ", sq(root_file)), " -o ", sq(tmp));
-    let cmd = text_cat3(text_cat3("cd ", sq(root), " && "), build_cmd, text_cat(" >/dev/null 2>", sq(errf)));
-    let status = shell(text_cat3(cmd, " && mv -f ", text_cat3(sq(tmp), " ", sq(out))));
+    let mut status: i64 = 0;
+    if on_windows() {
+        let cmd = text_cat3(cd_and(root), build_cmd, text_cat(" >nul 2>", sq(errf)));
+        status = shell(text_cat3(cmd, " && move /y ", text_cat3(sq(tmp), " ", text_cat(sq(out), " >nul"))));
+    } else {
+        let cmd = text_cat3(cd_and(root), build_cmd, text_cat(" >/dev/null 2>", sq(errf)));
+        status = shell(text_cat3(cmd, " && mv -f ", text_cat3(sq(tmp), " ", sq(out))));
+    }
     let e = text_trim(read_text(errf));
     file_remove(errf);
     if status == 0 {
@@ -289,7 +327,7 @@ fn build(root: i64, m: i64) -> i64 {
     // The executable holds every module, as the Rust yard linked every
     // object. Its key is the fingerprint (yard, trackc and every source), so
     // an unchanged package keeps its image and any edited module rebuilds it.
-    let exe = join(target_dir, base_name(vget(m, M_NAME)));
+    let exe = exe_name(join(target_dir, base_name(vget(m, M_NAME))));
     let exe_key = strip_dir(exe, root);
     let exe_hash = compute_hash(text_cat("image\n", fingerprint));
     if !cache_is_cached(cache, exe_key, exe_hash, exe) {
@@ -411,7 +449,12 @@ fn stage_test(root: i64, m: i64, src_dir: i64, test_file: i64, tmp_root: i64) ->
         return saved;
     }
     if is_dir(src_dir) {
-        let tops = split_lines(capture(text_cat3("find -L ", sq(src_dir), " -maxdepth 1 -type f -name '*.trk' 2>/dev/null")));
+        let mut tops = vnew();
+        if on_windows() {
+            tops = find_trk_win(src_dir, false);
+        } else {
+            tops = split_lines(capture(text_cat3("find -L ", sq(src_dir), " -maxdepth 1 -type f -name '*.trk' 2>/dev/null")));
+        }
         let mut i: i64 = 0;
         while i < vlen(tops) {
             let f = vget(tops, i);
@@ -427,6 +470,16 @@ fn stage_test(root: i64, m: i64, src_dir: i64, test_file: i64, tmp_root: i64) ->
     let fixtures = join(join(root, "tests"), "fixtures");
     if is_dir(fixtures) {
         let dest = join(tmp_root, "tests/fixtures");
+        if on_windows() {
+            // xcopy copies the .trk fixtures too; nothing builds them
+            if shell(text_cat3(text_cat3("xcopy /e /i /q /y ", sq(fixtures), " "), sq(dest), " >nul")) != 0 {
+                return text_cat3("Failed to copy fixtures from '", fixtures, "'");
+            }
+            if write_text(join(tmp_root, "src/main.trk"), read_text(test_file)) != 0 {
+                return "Failed to write tmp main.trk";
+            }
+            return "";
+        }
         let cmd = text_cat3(text_cat3("cd ", sq(fixtures), " && find . -type d -exec mkdir -p "), sq(dest), "/{} \\; && find . -type f ! -name '*.trk' -exec cp {} ");
         if shell(text_cat3(cmd, sq(dest), "/{} \\;")) != 0 {
             return text_cat3("Failed to copy fixtures from '", fixtures, "'");
@@ -470,8 +523,8 @@ fn test(root: i64, m: i64) -> i64 {
                 errln(text_cat("✗ build failed: ", built));
                 failures = failures + 1;
             } else {
-                let exe = join(join(tmp_root, "target"), text_cat(vget(m, M_NAME), "_test"));
-                let status = shell(text_cat3(text_cat3("cd ", sq(tmp_root), " && "), sq(exe), ""));
+                let exe = exe_name(join(join(tmp_root, "target"), text_cat(vget(m, M_NAME), "_test")));
+                let status = shell(text_cat(cd_and(tmp_root), sq(exe)));
                 if status == 0 {
                     outln("✓");
                 } else {

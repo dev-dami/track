@@ -11,3 +11,8 @@ stage2 and stage3, and requires stage2 = stage3 byte for byte. No C compiler,
 assembler or linker is used at any step. `scripts/update_seed.sh --check` fails
 when the seed no longer matches what the current sources produce. Rerun
 `scripts/update_seed.sh` after any change to `compiler/src/` or `compiler/rt/`.
+
+`trackc.exe` is the x86_64-windows trackc, cross-compiled by that fixed
+point (`--target x86_64-windows`) and itself a fixed point.
+`scripts/bootstrap.ps1` starts from it on Windows; `update_seed.sh` writes
+and `--check`s both seeds.
