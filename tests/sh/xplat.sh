@@ -25,12 +25,17 @@ t_xplat_unknown_target_is_a_clear_error() {
     rc_is 2 "TRACKC_TARGET is read"
 }
 
-t_xplat_unsupported_target_says_so() {
-    in_repo "$TRACKC" build --target aarch64-windows examples/hello.trk -o "$T/x"
-    rc_is 2 "exit code"
-    has "$ERR" "not supported yet" "message"
-    in_repo "$TRACKC" check --target aarch64-windows examples/hello.trk
-    rc_ok "check works for any known target"
+t_xplat_every_known_target_builds() {
+    local a o
+    for a in x86_64 aarch64; do
+        for o in linux macos windows; do
+            in_repo "$TRACKC" build --target $a-$o examples/hello.trk -o "$T/h_${a}_$o"
+            rc_ok "$a-$o: build"
+            [ -s "$T/h_${a}_$o" ] || fail "$a-$o: no image"
+            in_repo "$TRACKC" check --target $a-$o examples/hello.trk
+            rc_ok "$a-$o: check"
+        done
+    done
 }
 
 t_xplat_linux_target_is_the_default_output() {
@@ -62,7 +67,7 @@ EOF
     rc_ok "check accepts extern"
     trackc build "$T/ext.trk" -o "$T/ext"
     rc_fail "linux build of an import"
-    has "$ERR" "needs --target x86_64-windows" "message"
+    has "$ERR" "needs a windows or macos --target" "message"
 }
 
 t_xplat_windows_hello_runs_under_wine() {

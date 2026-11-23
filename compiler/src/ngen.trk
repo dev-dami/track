@@ -5920,7 +5920,7 @@ fn ng_extern_of(c: i64, name: i64) -> i64 {
 fn ng_extern_call(c: i64, e: i64, args: i64, count: i64) -> i64 {
     let b = ncode(c);
     if ng(c, NG_TARGET) != 1 && ng(c, NG_TARGET) != 2 {
-        err(text_cat3("trackc: native: imported function '", name_text(c, na(c, e)), "' needs --target x86_64-windows or x86_64-macos (this target has no import support yet)\n"));
+        err(text_cat3("trackc: native: imported function '", name_text(c, na(c, e)), "' needs a windows or macos --target (x86_64 or aarch64; Linux output imports nothing)\n"));
         quit(1);
     }
     let mut i: i64 = 0;
