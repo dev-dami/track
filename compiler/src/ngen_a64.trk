@@ -276,10 +276,16 @@ fn a64_decode(code: i64, pos: i64, n: i64, d: i64) -> bool {
     } else if op == 235 || (op >= 112 && op <= 127) {
         ax_ds(d, AD_TGT, p + 1 + ax_s8(ax_byte_at(code, p)));
         p = p + 1;
+    } else if op == 106 {
+        ax_ds(d, AD_IMM, ax_s8(ax_byte_at(code, p)));
+        p = p + 1;
+    } else if op == 104 {
+        ax_ds(d, AD_IMM, ax_s32(ax_le32(code, p)));
+        p = p + 4;
     } else if op == 194 {
         ax_ds(d, AD_IMM, ax_byte_at(code, p) + 256 * ax_byte_at(code, p + 1));
         p = p + 2;
-    } else if !(op == 144 || op == 153 || op == 195 || op == 201 || op == 204 || op == 261 || op == 267) {
+    } else if !(op == 144 || op == 153 || op == 195 || op == 201 || op == 204 || op == 244 || op == 261 || op == 267) {
         return false;
     }
     ax_ds(d, AD_LEN, p - pos);
@@ -309,7 +315,7 @@ fn a64_flag_use(d: i64) -> i64 {
         if sub == 2 { return 0; }
         return 2;
     }
-    if op == 232 || op == 233 || op == 235 || op == 195 || op == 194 || op == 261 || op == 204 || op == 267 {
+    if op == 232 || op == 233 || op == 235 || op == 195 || op == 194 || op == 261 || op == 204 || op == 244 || op == 267 {
         return 3;
     }
     return 0;
@@ -818,6 +824,10 @@ fn a64_insn(t: i64, d: i64) -> bool {
         a_push(w, r, 28);
         return true;
     }
+    if op == 104 || op == 106 {
+        a_push(w, ax_imm_reg(t, 1, ax_dg(d, AD_IMM), AX17), 28);
+        return true;
+    }
     if op >= 88 && op <= 95 {
         let r = a64_reg(reg);
         if r == 28 {
@@ -860,7 +870,7 @@ fn a64_insn(t: i64, d: i64) -> bool {
     if op == 144 || op == 287 {
         return true;
     }
-    if op == 204 || op == 267 {
+    if op == 204 || op == 244 || op == 267 {
         a_brk(w, 0);
         return true;
     }
