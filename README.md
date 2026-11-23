@@ -7,16 +7,16 @@
 - **Lexical Lenses.** Scoped mutable access without manual pointer arithmetic or ownership transfer.
 - **Native Backend.** `trackc build` writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker.
 - **Track only.** The repository holds no C or Rust. Track bootstraps from a committed native seed binary.
-- **Cross-compiling.** `trackc build --target x86_64-windows` writes a Windows PE executable from any host; `--target x86_64-macos` / `aarch64-macos` a signed Mach-O.
+- **Cross-compiling.** `trackc build --target <arch>-<os>` writes any of six targets from any host: a Windows PE (x86_64 or Windows on ARM), a static Linux ELF, or a signed Mach-O.
 
-| target | `trackc build --target` | status |
-|---|---|---|
-| x86_64-linux | default on Linux | static ELF |
-| x86_64-windows | `x86_64-windows` | PE32+ console .exe (kernel32); trackc.exe self-hosts |
-| aarch64-linux | `aarch64-linux` | static ELF (A64 lifted from the x86-64 code) |
-| x86_64-macos | `x86_64-macos` (default on a Mac) | Mach-O, libSystem, ad-hoc signed |
-| aarch64-macos | `aarch64-macos` | Mach-O for Apple silicon, ad-hoc signed |
-| aarch64-windows | | not yet |
+| target | `trackc build --target` | output | tested |
+|---|---|---|---|
+| x86_64-linux | default on Linux | static ELF | native (tests/run.sh) |
+| x86_64-windows | default on x64 Windows | PE32+ console .exe (kernel32); trackc.exe self-hosts | wine locally; native in CI (`windows`) |
+| aarch64-linux | `aarch64-linux` | static ELF (A64 lifted from the x86-64 code) | qemu-aarch64 locally |
+| x86_64-macos | default on a Mac | Mach-O, libSystem, ad-hoc signed | structure offline; runs in CI only (`macos`, Intel) |
+| aarch64-macos | `aarch64-macos` | Mach-O for Apple silicon, ad-hoc signed | structure offline; runs in CI only (`macos`, Apple silicon) |
+| aarch64-windows | default on Windows on ARM | ARM64 PE32+ console .exe (kernel32) | llvm-readobj/objdump offline; runs in CI only (`windows-arm`) |
 
 ## Hello World
 

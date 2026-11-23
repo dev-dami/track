@@ -39,6 +39,9 @@
 // macOS layer makes no system calls: ngen lowers syscall6 to os_syscall),
 // passes LC_MAIN's x0/x1 in as rdi/rsi, places the code at the Mach-O
 // __text address and pads it to 16 KiB so __DATA starts on a page.
+// Windows (os 1, pe.trk) takes the Win64 sequence (ffi_win64_call) to a
+// Windows ARM64 call (ax_import_call_win), also traps in the stub, and
+// places the code at the PE .text address, padded to 4 KiB for .data.
 
 import "base";
 import "x64";
@@ -74,7 +77,7 @@ const AT_LIVE = 7;   // flags of the current instruction are read later
 const AT_AR = 8;     // mem_addr result: base register
 const AT_AO = 9;     // mem_addr result: offset
 const AT_POS = 10;   // x86 offset of the current instruction
-const AT_OS = 11;     // target OS (NG_TARGET): 0 linux, 2 macos
+const AT_OS = 11;     // target OS (NG_TARGET): 0 linux, 1 windows, 2 macos
 const AT_IMPIN = 12;  // x86 import call fixups (code position, import id), ffi.trk
 const AT_IMPOUT = 13; // A64 import call fixups (word of the adrp, import id)
 const AT_SLOTS = 14;
@@ -751,6 +754,9 @@ fn ax_import_call(t: i64, d: i64) -> bool {
     if id < 0 {
         return a64_fail(t, "indirect call that is not an import call");
     }
+    if ax_tg(t, AT_OS) == 1 {
+        return ax_import_call_win(t, id);
+    }
     a_mov(w, 1, 3, 1);
     a_mov(w, 1, 0, 21);
     a_mov(w, 1, 1, 20);
@@ -769,6 +775,46 @@ fn ax_import_call(t: i64, d: i64) -> bool {
     a_blr(w, AX16);
     a_ldr(w, 9, A_SP, 0);
     a_ldr(w, 10, A_SP, 8);
+    let out = ax_tg(t, AT_IMPOUT);
+    vpush(out, adrp);
+    vpush(out, id);
+    return true;
+}
+
+// The Windows variant (aarch64-windows): ngen emitted ffi_win64_call, so
+// arguments 1-4 are in rcx, rdx, r8, r9 (x1, x2, x22, x23) and 5-10 at
+// [rsp + 32 + 8k], above the 32-byte shadow space. The Windows ARM64 ABI
+// is AAPCS64 with no shadow space: rcx -> x0, rdx -> x1, r8 -> x2,
+// r9 -> x3, Win64 stack words 0-3 -> x4..x7, words 4 and 5 (arguments 9
+// and 10, CreateProcessW) -> [sp], [sp + 8]. SP goes 16-aligned below the
+// emulated stack; x9 and x10 are kept at [sp + 16], [sp + 24]. x18 (the
+// TEB) is never touched: the translator maps no x86 register to it and
+// uses only x13..x17 as scratch. Calls of up to ten word arguments.
+fn ax_import_call_win(t: i64, id: i64) -> bool {
+    let w = ax_tw(t);
+    a_mov(w, 1, 0, 1);
+    a_mov(w, 1, 1, 2);
+    a_mov(w, 1, 2, 22);
+    a_mov(w, 1, 3, 23);
+    a_ldr(w, 4, 28, 32);
+    a_ldr(w, 5, 28, 40);
+    a_ldr(w, 6, 28, 48);
+    a_ldr(w, 7, 28, 56);
+    a_ldr(w, 14, 28, 64);
+    a_ldr(w, AX17, 28, 72);
+    a_subi(w, 1, AX16, 28, 32);
+    a_lsr_i(w, 1, AX16, AX16, 4);
+    a_lsl_i(w, 1, AX16, AX16, 4);
+    a_mov_sp(w, A_SP, AX16);
+    a_mem(w, 3, 0, 14, A_SP, 0);
+    a_mem(w, 3, 0, AX17, A_SP, 8);
+    a_mem(w, 3, 0, 9, A_SP, 16);
+    a_mem(w, 3, 0, 10, A_SP, 24);
+    let adrp = a_adrp(w, AX16, 0);
+    a_ldr(w, AX16, AX16, 0);
+    a_blr(w, AX16);
+    a_ldr(w, 9, A_SP, 16);
+    a_ldr(w, 10, A_SP, 24);
     let out = ax_tg(t, AT_IMPOUT);
     vpush(out, adrp);
     vpush(out, id);
@@ -1182,6 +1228,10 @@ fn a64_translate(body: i64, n: i64, out: i64) -> i64 {
 
 // The macOS image's __text address (macho.trk MO_BASE + MO_TEXT_OFF).
 const AX_MACHO_TEXT = 4294983680;
+// The Windows image's .text address (pe.trk PE_BASE + PE_TEXT_RVA). The
+// loader may move the image (ARM64 images are always DYNAMIC_BASE), but by
+// 64 KiB steps, so adrp page distances hold.
+const AX_PE_TEXT = 5368713216;
 
 // a64_translate for target OS `os`; `impin` holds the x86 import call
 // fixups (0: none), `impout` receives the A64 ones.
@@ -1230,6 +1280,10 @@ fn a64_translate_os(body: i64, n: i64, out: i64, os: i64, impin: i64, impout: i6
         a_brk(w, 1);           // no system calls on macOS
         origin = AX_MACHO_TEXT;
         align = 4096;          // words: 16 KiB, the __DATA page
+    } else if os == 1 {
+        a_brk(w, 1);           // nor on Windows (kernel32 through os_syscall)
+        origin = AX_PE_TEXT;
+        align = 1024;          // words: 4 KiB, the .data page
     } else {
         a64_sys_stub(w);
     }

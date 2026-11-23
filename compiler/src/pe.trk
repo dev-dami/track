@@ -1,4 +1,4 @@
-// pe.trk — PE32+ console executable writer (x86_64-windows).
+// pe.trk — PE32+ console executable writer (x86_64-windows, aarch64-windows).
 //
 // Layout (SectionAlignment 0x1000, FileAlignment 0x200, ImageBase
 // 0x140000000, no relocations: the image loads at its base):
@@ -80,7 +80,7 @@ fn pe_cstr(b: i64, s: i64) -> i64 {
 
 // The .idata contents at `rva`; fills `slots` (import id -> IAT slot RVA)
 // and `dirs` with [import dir RVA, size, IAT RVA, size].
-fn pe_idata(imports: i64, rva: i64, slots: i64, dirs: i64) -> i64 {
+fn pe_idata(imports: i64, rva: i64, slots: i64, dirs: i64, arm: bool) -> i64 {
     let n = vlen(imports) / 2;
     let libs = vnew();
     let mut i: i64 = 0;
@@ -115,7 +115,10 @@ fn pe_idata(imports: i64, rva: i64, slots: i64, dirs: i64) -> i64 {
         l = l + 1;
     }
     let desc_size = 20 * (nlib + 1);
-    let ilt = rva + desc_size;
+    let mut ilt = rva + desc_size;
+    if arm {
+        ilt = rva + pe_up(desc_size, 8);   // ldr's scaled offset: 8-aligned slots
+    }
     let iat = ilt + 8 * vlen(order);
     let names_at = iat + 8 * vlen(order);
     // hint/name entries, then library names
@@ -159,6 +162,7 @@ fn pe_idata(imports: i64, rva: i64, slots: i64, dirs: i64) -> i64 {
         vpush(b, 0);
         z = z + 1;
     }
+    pe_pad(b, ilt - rva);
     // lookup table, then the IAT (same contents until the loader binds it)
     let mut pass: i64 = 0;
     while pass < 2 {
@@ -189,30 +193,84 @@ fn pe_idata(imports: i64, rva: i64, slots: i64, dirs: i64) -> i64 {
     return b;
 }
 
+fn pe_get32(b: i64, at: i64) -> i64 {
+    return vget(b, at) + vget(b, at + 1) * 256 + vget(b, at + 2) * 65536 + vget(b, at + 3) * 16777216;
+}
+
+// Patch the adrp + ldr pairs of aarch64 import calls (fixups: (word of
+// the adrp, import id)) to load the import's IAT slot.
+fn pe_patch_a64(body: i64, fixups: i64, slots: i64) -> i64 {
+    let mut f: i64 = 0;
+    while f < vlen(fixups) {
+        let at = 4 * vget(fixups, f);
+        let pc = PE_TEXT_RVA + at;
+        let slot = vget(slots, vget(fixups, f + 1));
+        let pages = (slot >> 12) - (pc >> 12);
+        let adrp = pe_get32(body, at);
+        x_patch32(body, at, (adrp & 2667577375) + (pages & 3) * 536870912 + ((pages >> 2) & 524287) * 32);
+        let ldr = pe_get32(body, at + 4);
+        x_patch32(body, at + 4, (ldr & 4290774015) + ((slot & 4095) / 8) * 1024);
+        f = f + 2;
+    }
+    return 0;
+}
+
 // The whole PE image of code+data `body` (the first `code` bytes code,
-// page-aligned) calling `imports` from the sites `fixups`.
+// page-aligned) calling `imports` from the sites `fixups` (x86_64).
 fn pe_image(body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
+    return pe_image_m(body, code, imports, fixups, false);
+}
+
+// pe_image for x86_64 (`arm` false: AMD64, fixups are rip displacements)
+// or aarch64 (`arm`: ARM64, fixups are adrp + ldr pairs). The ARM64 image
+// is DYNAMIC_BASE (Windows on ARM requires it) with a .reloc section whose
+// one block fixes nothing: the A64 code and data are position independent
+// (adrp/add), and the loader moves images by 64 KiB, which keeps adrp's
+// 4 KiB page distances. No load config and no .pdata: neither is needed to
+// load or run (functions without unwind data count as leaf functions, and
+// nothing here raises or unwinds an exception).
+fn pe_image_m(body: i64, code: i64, imports: i64, fixups: i64, arm: bool) -> i64 {
     let mut dsize = vlen(body) - code;
     if dsize < 8 {
         dsize = 8;
+    }
+    let mut hdrs = PE_HEADERS;
+    let mut nsec: i64 = 3;
+    if arm {
+        hdrs = 2 * PE_HEADERS;   // a fourth section header
+        nsec = 4;
     }
     let data_rva = PE_TEXT_RVA + pe_up(code, PE_SALIGN);
     let idata_rva = data_rva + pe_up(dsize, PE_SALIGN);
     let slots = vfill(vnew(), vlen(imports) / 2, 0);
     let dirs = vfill(vnew(), 4, 0);
-    let idata = pe_idata(imports, idata_rva, slots, dirs);
-    let image_size = idata_rva + pe_up(vlen(idata), PE_SALIGN);
+    let idata = pe_idata(imports, idata_rva, slots, dirs, arm);
+    let reloc_rva = idata_rva + pe_up(vlen(idata), PE_SALIGN);
+    let mut image_size = reloc_rva;
+    let reloc = vnew();
+    if arm {
+        // one base relocation block, two IMAGE_REL_BASED_ABSOLUTE (padding)
+        x_u32(reloc, PE_TEXT_RVA);
+        x_u32(reloc, 12);
+        x_u32(reloc, 0);
+        image_size = reloc_rva + PE_SALIGN;
+    }
     // bind the call sites to their IAT slots
-    let mut f: i64 = 0;
-    while f < vlen(fixups) {
-        let at = vget(fixups, f);
-        x_patch32(body, at, vget(slots, vget(fixups, f + 1)) - (PE_TEXT_RVA + at + 4));
-        f = f + 2;
+    if arm {
+        pe_patch_a64(body, fixups, slots);
+    } else {
+        let mut f: i64 = 0;
+        while f < vlen(fixups) {
+            let at = vget(fixups, f);
+            x_patch32(body, at, vget(slots, vget(fixups, f + 1)) - (PE_TEXT_RVA + at + 4));
+            f = f + 2;
+        }
     }
     let text_raw = pe_up(code, PE_FALIGN);
     let data_raw = pe_up(dsize, PE_FALIGN);
     let idata_raw = pe_up(vlen(idata), PE_FALIGN);
-    let b = vnew_cap(PE_HEADERS + text_raw + data_raw + idata_raw);
+    let reloc_raw = pe_up(vlen(reloc), PE_FALIGN);
+    let b = vnew_cap(hdrs + text_raw + data_raw + idata_raw + reloc_raw);
     // DOS header: "MZ", e_lfanew = 0x80; a stub that prints and exits
     pe_u16(b, 23117);
     pe_pad(b, 60);
@@ -232,13 +290,21 @@ fn pe_image(body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
     pe_pad(b, 128);
     // PE signature and COFF header
     x_u32(b, 17744);               // "PE\0\0"
-    pe_u16(b, 34404);              // IMAGE_FILE_MACHINE_AMD64
-    pe_u16(b, 3);                  // sections
+    if arm {
+        pe_u16(b, 43620);          // IMAGE_FILE_MACHINE_ARM64 (0xaa64)
+    } else {
+        pe_u16(b, 34404);          // IMAGE_FILE_MACHINE_AMD64
+    }
+    pe_u16(b, nsec);               // sections
     x_u32(b, 0);
     x_u32(b, 0);
     x_u32(b, 0);
     pe_u16(b, 240);                // optional header size
-    pe_u16(b, 35);                 // RELOCS_STRIPPED | EXECUTABLE | LARGE_ADDRESS_AWARE
+    if arm {
+        pe_u16(b, 34);             // EXECUTABLE | LARGE_ADDRESS_AWARE
+    } else {
+        pe_u16(b, 35);             // RELOCS_STRIPPED | EXECUTABLE | LARGE_ADDRESS_AWARE
+    }
     // PE32+ optional header
     pe_u16(b, 523);                // 0x20b
     x_byte(b, 1);
@@ -259,10 +325,14 @@ fn pe_image(body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
     pe_u16(b, 0);                  // subsystem version
     x_u32(b, 0);
     x_u32(b, image_size);
-    x_u32(b, PE_HEADERS);
+    x_u32(b, hdrs);
     x_u32(b, 0);                   // checksum
     pe_u16(b, 3);                  // IMAGE_SUBSYSTEM_WINDOWS_CUI
-    pe_u16(b, 33024);              // NX_COMPAT | TERMINAL_SERVER_AWARE
+    if arm {
+        pe_u16(b, 33120);          // + HIGH_ENTROPY_VA | DYNAMIC_BASE
+    } else {
+        pe_u16(b, 33024);          // NX_COMPAT | TERMINAL_SERVER_AWARE
+    }
     x_u64(b, 268435456);           // stack reserve 256 MiB (trackc recurses deeply)
     x_u64(b, 16777216);            // stack commit 16 MiB (frames skip guard pages)
     x_u64(b, 1048576);
@@ -274,6 +344,9 @@ fn pe_image(body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
         if dd == 1 {
             x_u32(b, vget(dirs, 0));
             x_u32(b, vget(dirs, 1));
+        } else if dd == 5 && arm {
+            x_u32(b, reloc_rva);
+            x_u32(b, vlen(reloc));
         } else if dd == 12 {
             x_u32(b, vget(dirs, 2));
             x_u32(b, vget(dirs, 3));
@@ -282,34 +355,48 @@ fn pe_image(body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
         }
         dd = dd + 1;
     }
-    pe_section(b, ".text", code, PE_TEXT_RVA, text_raw, PE_HEADERS, 1610612768);
-    pe_section(b, ".data", dsize, data_rva, data_raw, PE_HEADERS + text_raw, 3221225536);
-    pe_section(b, ".idata", vlen(idata), idata_rva, idata_raw, PE_HEADERS + text_raw + data_raw, 3221225536);
-    pe_pad(b, PE_HEADERS);
+    pe_section(b, ".text", code, PE_TEXT_RVA, text_raw, hdrs, 1610612768);
+    pe_section(b, ".data", dsize, data_rva, data_raw, hdrs + text_raw, 3221225536);
+    pe_section(b, ".idata", vlen(idata), idata_rva, idata_raw, hdrs + text_raw + data_raw, 3221225536);
+    if arm {
+        // INITIALIZED_DATA | DISCARDABLE | MEM_READ
+        pe_section(b, ".reloc", vlen(reloc), reloc_rva, reloc_raw, hdrs + text_raw + data_raw + idata_raw, 1107296320);
+    }
+    pe_pad(b, hdrs);
     let mut i: i64 = 0;
     while i < code {
         vpush(b, vget(body, i));
         i = i + 1;
     }
-    pe_pad(b, PE_HEADERS + text_raw);
+    pe_pad(b, hdrs + text_raw);
     while i < vlen(body) {
         vpush(b, vget(body, i));
         i = i + 1;
     }
-    pe_pad(b, PE_HEADERS + text_raw + data_raw);
+    pe_pad(b, hdrs + text_raw + data_raw);
     let mut k: i64 = 0;
     while k < vlen(idata) {
         vpush(b, vget(idata, k));
         k = k + 1;
     }
-    pe_pad(b, PE_HEADERS + text_raw + data_raw + idata_raw);
+    pe_pad(b, hdrs + text_raw + data_raw + idata_raw);
+    let mut r: i64 = 0;
+    while r < vlen(reloc) {
+        vpush(b, vget(reloc, r));
+        r = r + 1;
+    }
+    pe_pad(b, hdrs + text_raw + data_raw + idata_raw + reloc_raw);
     return b;
 }
 
 // Write the PE image to `path` (mode 0755 where that means anything).
 // Returns 0 on success.
 fn pe_write_file(path: i64, body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
-    let img = pe_image(body, code, imports, fixups);
+    return pe_write_file_m(path, body, code, imports, fixups, false);
+}
+
+fn pe_write_file_m(path: i64, body: i64, code: i64, imports: i64, fixups: i64, arm: bool) -> i64 {
+    let img = pe_image_m(body, code, imports, fixups, arm);
     let n = vlen(img);
     let buf: i64 = alloc(n + 8);
     let mut i: i64 = 0;

@@ -47,7 +47,7 @@ fn usage() -> i64 {
     err("\nOPTIONS:\n");
     err("    --deny-warnings  exit 1 when any warning is reported\n");
     err("    --target <arch>-<os>  build/run/check for x86_64|aarch64 - linux|macos|windows\n");
-    err("                     (also TRACKC_TARGET; default: the host; built today: x86_64-linux/macos/windows, aarch64-linux/macos)\n");
+    err("                     (also TRACKC_TARGET; default: the host; every pair builds)\n");
     return 0;
 }
 
@@ -130,6 +130,11 @@ const TG_MACOS = 2;
 // The host's target: Windows or macOS when trackc itself runs there.
 fn host_target() -> i64 {
     if text_eq(env_get("OS"), "Windows_NT") {
+        // an Arm64 trackc.exe sees ARM64; an x64 one, also under Windows
+        // on ARM's emulation, sees AMD64
+        if text_eq(env_get("PROCESSOR_ARCHITECTURE"), "ARM64") {
+            return "aarch64-windows";
+        }
         return "x86_64-windows";
     }
     let me = arg_text(0);
@@ -219,21 +224,10 @@ fn check_target_known() -> i64 {
     return 0;
 }
 
-// Exit unless this trackc can generate code for the target.
+// Exit unless this trackc can generate code for the target: every known
+// arch-OS pair builds.
 fn check_target_buildable() -> i64 {
-    check_target_known();
-    let arch = target_arch_name();
-    let os = target_os_name();
-    if text_eq(arch, "x86_64") && (text_eq(os, "linux") || text_eq(os, "windows") || text_eq(os, "macos")) {
-        return 0;
-    }
-    if text_eq(arch, "aarch64") && (text_eq(os, "linux") || text_eq(os, "macos")) {
-        return 0;
-    }
-    err(text_cat3("trackc: target '", target_text(), "' is not supported yet\n"));
-    err("  supported: x86_64-linux, x86_64-windows, x86_64-macos, aarch64-linux, aarch64-macos\n");
-    quit(2);
-    return 0;
+    return check_target_known();
 }
 
 fn front_end(path: i64) -> i64 {
@@ -295,7 +289,7 @@ fn make_dir(dir: i64) -> i64 {
     if path_exists(dir) {
         return 0;
     }
-    if text_eq(host_target(), "x86_64-windows") {
+    if text_ends(host_target(), "-windows") {
         // cmd.exe: mkdir makes the parents too; it wants backslashes
         let sb = sb_new();
         let bytes = text_bytes(dir);
@@ -360,7 +354,21 @@ fn build_native(path: i64, exe: i64) -> i64 {
         quit(1);
     }
     if os == TG_WINDOWS {
-        if pe_write_file(exe, body, native_code_len(c), native_imports(c), native_import_fixups(c)) != 0 {
+        let mut wcode = native_code_len(c);
+        let mut wfix = native_import_fixups(c);
+        let arm = text_eq(target_arch_name(), "aarch64");
+        if arm {
+            // lift to A64; Win64 import calls become Windows ARM64 calls
+            let wlen = vfill(vnew(), 1, 0);
+            let afix = vnew();
+            body = a64_translate_os(body, wcode, wlen, TG_WINDOWS, wfix, afix);
+            if body == 0 {
+                quit(1);
+            }
+            wcode = vget(wlen, 0);
+            wfix = afix;
+        }
+        if pe_write_file_m(exe, body, wcode, native_imports(c), wfix, arm) != 0 {
             err(text_cat3("trackc: cannot write '", exe, "'\n"));
             quit(1);
         }

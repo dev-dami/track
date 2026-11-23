@@ -2,8 +2,8 @@
 
 `trackc` compiles `compiler/src/*.trk` straight to a native executable,
 with no C compiler and no C source in the chain: a static ELF for
-x86_64-linux, a PE32+ console executable for x86_64-windows (see
-"Targets"). Two halves:
+x86_64-linux, a PE32+ console executable for x86_64-windows and
+aarch64-windows, a Mach-O for macOS (see "Targets"). Two halves:
 
 - **the runtime written in Track** (`compiler/rt/*.trk`), which needs no
   libc;
@@ -23,17 +23,20 @@ reachable (docs/bootstrap.md). The C backend and the C runtime
 pair is an error (exit 2). `check` accepts every known pair; `build`
 generates code for:
 
-| target | output | status |
+| target | output | tested |
 |---|---|---|
-| x86_64-linux | static ELF, Linux syscalls | default; output byte-identical to earlier trackc |
-| x86_64-windows | PE32+ console .exe, kernel32 imports | builds and runs (tested under wine); trackc.exe self-hosts |
-| aarch64-linux | static ELF, A64 lifted from ngen's x86-64 (ngen_a64.trk) | builds and runs (tested under qemu) |
-| x86_64-macos | Mach-O MH_EXECUTE, libSystem imports, ad-hoc signature | builds; structure and signature checked offline, runs in CI on an Intel Mac [CI only] |
-| aarch64-macos | the same Mach-O for arm64, A64 lifted as for aarch64-linux | builds; checked offline, runs in CI on Apple silicon [CI only] |
-| aarch64-windows | | "not supported yet" |
+| x86_64-linux | static ELF, Linux syscalls | native: the default; output byte-identical to earlier trackc |
+| x86_64-windows | PE32+ console .exe, kernel32 imports | wine locally (tests/sh/xplat.sh), native in CI (`windows`); trackc.exe self-hosts |
+| aarch64-linux | static ELF, A64 lifted from ngen's x86-64 (ngen_a64.trk) | qemu-aarch64 locally (tests/sh/arm64.sh) |
+| x86_64-macos | Mach-O MH_EXECUTE, libSystem imports, ad-hoc signature | structure and signature offline (tests/sh/macos.sh); runs in CI only, Intel Mac (`macos`) |
+| aarch64-macos | the same Mach-O for arm64, A64 lifted as for aarch64-linux | the same offline checks; runs in CI only, Apple silicon (`macos`) |
+| aarch64-windows | ARM64 PE32+ console .exe, A64 lifted, kernel32 imports | llvm-readobj / llvm-objdump offline (tests/sh/winarm.sh); runs in CI only, `windows-11-arm` (`windows-arm`). wine on x86-64 cannot load an ARM64 PE |
 
 On a Mac the default target is x86_64-macos (arm64 Macs run it under
-Rosetta 2); pass `--target aarch64-macos` for native code.
+Rosetta 2); pass `--target aarch64-macos` for native code. On Windows the
+default follows the running trackc.exe: an Arm64 one sees
+`PROCESSOR_ARCHITECTURE=ARM64` and defaults to aarch64-windows, an x64 one
+(also under Windows on ARM's emulation) to x86_64-windows.
 
 `run` only runs host-target programs. The target picks the OS layer:
 trackc loads `rt/os/<os>.trk` with the portable rt modules and passes
@@ -91,8 +94,16 @@ x0-x5 from the System V registers, x6/x7 from the first two stack words,
 adrp + ldr of the slot, blr); variadic arguments, which Apple's arm64 ABI
 puts on the stack, are not supported, so the macOS layer calls no
 variadic function with variadic arguments (open(2) without a mode,
-creat(2) to create). aarch64-windows reuses the tables and the
-translator hook with its own call sequence. On a target without import
+creat(2) to create). For aarch64-windows ngen emits the Win64 sequence
+and the translator turns it into a Windows ARM64 call
+(`ax_import_call_win`): that ABI is AAPCS64 with no shadow space, so rcx,
+rdx, r8, r9 become x0-x3, the Win64 stack words above the shadow space
+become x4-x7, and words 5 and 6 (arguments 9 and 10, CreateProcessW) go
+to [sp], [sp + 8]; SP is 16-aligned below the emulated stack; calls take
+up to ten word arguments. x18 holds the TEB on Windows ARM64 and must not
+change: the translator maps no x86 register to it and its scratch
+registers are x13-x17 (tests/sh/winarm.sh checks trackc.exe's code never
+names x18). On a target without import
 support a call to an `extern` function is an error.
 
 `as "symbol"` after the signature names the library's symbol when the
@@ -167,6 +178,32 @@ scratch name before deleting it, so the name is gone at once even where
 a file with open handles stays visible until they close (wine, FAT).
 `sys_exec` runs `cmd.exe /s /c "cmd"`. trackc treats `\` as a path
 separator too.
+
+**ARM64 (aarch64-windows).** The same layout with machine
+IMAGE_FILE_MACHINE_ARM64 (0xAA64), plain PE32+ (no CHPE, ARM64EC or
+ARM64X), SectionAlignment 4 KiB (the Windows ARM64 page), the entry at
+the first byte of `.text`, and a fourth section, `.reloc`. Windows on ARM
+only loads ASLR images (link.exe and lld refuse `/DYNAMICBASE:NO` for
+ARM64), so the image is DYNAMIC_BASE | HIGH_ENTROPY_VA, relocations not
+stripped, and the base relocation directory holds one block of two
+IMAGE_REL_BASED_ABSOLUTE (padding) entries: nothing needs fixing, since
+the A64 code reaches data and the IAT with adrp + add/ldr and the loader
+moves images by 64 KiB, which keeps adrp's 4 KiB page distances. Import
+calls are adrp + ldr x16 of the IAT slot, then blr x16 (`pe_patch_a64`);
+the import lookup table is 8-aligned for ldr's scaled offset. The
+translator pads the code to 4 KiB so `.data` follows it at the address
+the adrp pairs assume, and the system call stub is a `brk` (ngen sends
+`syscall6` to `os_syscall`).
+
+Neither a load config directory nor exception data (`.pdata`/`.xdata`)
+is emitted: neither is required to load or run. The load config only
+carries opt-in features (CFG, SEH tables are x86-only, CHPE metadata);
+without `.pdata` every function counts as a leaf for unwinding, which
+matters only when an exception is dispatched through Track frames, and
+the runtime raises none (`track_trap_div` calls ExitProcess). A fault
+in Track code therefore ends the process without a usable stack trace.
+[reported: from the PE/COFF spec and the ARM64 exception-handling
+docs; not observed on hardware until the `windows-arm` CI job runs]
 
 ## Machine builtins
 
