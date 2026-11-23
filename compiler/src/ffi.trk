@@ -1,0 +1,90 @@
+// ffi.trk — calls to functions in system libraries (`extern "lib" fn`).
+//
+// The backend records every imported function it calls in an import
+// table: a vector of (library text, symbol text) pairs, the import id of a
+// pair being its index / 2. Each call site leaves a fixup: a vector of
+// (code position, import id) pairs, the position being a 32-bit field the
+// image writer fills once it has laid out the import table. On Windows
+// (pe.trk) the field is the rip-relative displacement of the import's IAT
+// slot (`call [rip + disp32]`); a Mach-O writer (dyld binding to
+// libSystem) or an aarch64 backend reuses the same two vectors and adds
+// its own call sequence next to ffi_win64_call.
+//
+// Track's own calling convention (ngen.trk ng_arg_reg) is not the
+// platform's, so each call converts: arguments are evaluated and pushed
+// first (first argument deepest), then the call sequence moves them into
+// the platform's registers and stack slots.
+
+import "base";
+import "x64";
+
+// Import id of `lib`/`sym` in `imports`, adding the pair when new.
+fn ffi_import_id(imports: i64, lib: i64, sym: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(imports) {
+        if text_eq(vget(imports, i), lib) && text_eq(vget(imports, i + 1), sym) {
+            return i / 2;
+        }
+        i = i + 2;
+    }
+    vpush(imports, lib);
+    vpush(imports, sym);
+    return vlen(imports) / 2 - 1;
+}
+
+fn ffi_rm_disp(b: i64, rex: i64, op: i64, modrm: i64, disp: i64) -> i64 {
+    x_bytes3(b, rex, op, modrm);
+    return x_u32(b, disp);
+}
+
+// Win64 call of import `id`, its `nargs` arguments pushed (first argument
+// deepest). rcx, rdx, r8, r9 take arguments 1-4, the rest go on the stack
+// above the 32-byte shadow space, rsp is 16-byte aligned at the call.
+// `ret`: 0 keeps rax, 1 sign-extends eax (i32), 2 zero-extends it (u32,
+// bool, Win32 BOOL). Leaves the result in rax and pops the arguments.
+// Clobbers rax, rcx, rdx, r8-r11 (all volatile in both conventions).
+fn ffi_win64_call(b: i64, fixups: i64, id: i64, nargs: i64, ret: i64) -> i64 {
+    let mut extra: i64 = 0;
+    if nargs > 4 {
+        extra = nargs - 4;
+    }
+    let frame = (32 + 8 * extra + 8 + 15) & (0 - 16);
+    x_bytes3(b, 73, 137, 227);          // mov r11, rsp (the pushed arguments)
+    x_bytes3(b, 72, 131, 228);
+    x_byte(b, 240);                     // and rsp, -16
+    x_bytes3(b, 72, 129, 236);
+    x_u32(b, frame);                    // sub rsp, frame
+    x_bytes3(b, 76, 137, 156);
+    x_byte(b, 36);
+    x_u32(b, frame - 8);                // mov [rsp + frame - 8], r11
+    let mut i: i64 = 4;
+    while i < nargs {
+        ffi_rm_disp(b, 73, 139, 131, 8 * (nargs - 1 - i));  // mov rax, [r11 + d]
+        x_bytes3(b, 72, 137, 132);
+        x_byte(b, 36);
+        x_u32(b, 32 + 8 * (i - 4));     // mov [rsp + 32 + 8k], rax
+        i = i + 1;
+    }
+    if nargs > 0 { ffi_rm_disp(b, 73, 139, 139, 8 * (nargs - 1)); }  // mov rcx, [r11 + d]
+    if nargs > 1 { ffi_rm_disp(b, 73, 139, 147, 8 * (nargs - 2)); }  // mov rdx, [r11 + d]
+    if nargs > 2 { ffi_rm_disp(b, 77, 139, 131, 8 * (nargs - 3)); }  // mov r8, [r11 + d]
+    if nargs > 3 { ffi_rm_disp(b, 77, 139, 139, 8 * (nargs - 4)); }  // mov r9, [r11 + d]
+    x_bytes2(b, 255, 21);               // call [rip + disp32]
+    vpush(fixups, vlen(b));
+    vpush(fixups, id);
+    x_u32(b, 0);
+    x_bytes3(b, 72, 139, 164);
+    x_byte(b, 36);
+    x_u32(b, frame - 8);                // mov rsp, [rsp + frame - 8]
+    if nargs > 0 {
+        x_bytes3(b, 72, 129, 196);
+        x_u32(b, 8 * nargs);            // add rsp, 8 * nargs
+    }
+    if ret == 1 {
+        return x_bytes3(b, 72, 99, 192); // movsxd rax, eax
+    }
+    if ret == 2 {
+        return x_bytes2(b, 137, 192);    // mov eax, eax
+    }
+    return 0;
+}

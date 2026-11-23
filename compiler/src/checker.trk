@@ -2259,6 +2259,9 @@ fn check_expr(c: i64, n: i64) -> i64 {
     if k == K_MACRODEF {
         return check_function(c, n, true);
     }
+    if k == K_EXTERN {
+        return 0;
+    }
     if k == K_USE {
         return check_use(c, n);
     }
@@ -2505,7 +2508,7 @@ fn check_program(c: i64) -> i64 {
             declare_enum(c, n);
         } else if k == K_UNION {
             declare_union(c, n);
-        } else if k == K_FN || k == K_MACRODEF {
+        } else if k == K_FN || k == K_MACRODEF || k == K_EXTERN {
             fn_register(c, na(c, n), nd(c, n));
         } else if k == K_CONST {
             let mut ty = infer_type(c, nb(c, n));

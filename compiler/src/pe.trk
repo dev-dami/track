@@ -1,0 +1,336 @@
+// pe.trk — PE32+ console executable writer (x86_64-windows).
+//
+// Layout (SectionAlignment 0x1000, FileAlignment 0x200, ImageBase
+// 0x140000000, no relocations: the image loads at its base):
+//
+//   headers  DOS header + stub, "PE\0\0", COFF header, PE32+ optional
+//            header (16 data directories), three section headers
+//   .text    the code (RVA 0x1000, entry at its first byte)
+//   .data    the data ngen appends after the code; ngen page-aligns the
+//            code for this target, so rip-relative references made by
+//            generate_native stay correct with .data at 0x1000 + code
+//   .idata   import descriptors, lookup tables, the IAT, hint/name
+//            entries and library names, one descriptor per library
+//
+// The import table comes from ngen (native_imports: (library, symbol)
+// pairs; native_import_fixups: (code position, import id)): each fixup
+// is the disp32 of a `call [rip + disp32]` and gets the distance to its
+// IAT slot. Files are written with the same open64/write/fchmod/close as
+// elf.trk.
+
+import "base";
+import "x64";
+
+const PE_BASE = 5368709120;   // 0x140000000
+const PE_SALIGN = 4096;
+const PE_FALIGN = 512;
+const PE_HEADERS = 512;
+const PE_TEXT_RVA = 4096;
+
+fn pe_u16(b: i64, v: i64) -> i64 {
+    x_byte(b, v);
+    return x_byte(b, v >> 8);
+}
+
+fn pe_up(n: i64, a: i64) -> i64 { return (n + a - 1) / a * a; }
+
+fn pe_pad(b: i64, size: i64) -> i64 {
+    while vlen(b) < size {
+        vpush(b, 0);
+    }
+    return 0;
+}
+
+fn pe_name8(b: i64, name: i64) -> i64 {
+    let bytes = text_bytes(name);
+    let mut i: i64 = 0;
+    while i < 8 {
+        if i < vlen(bytes) {
+            vpush(b, vget(bytes, i));
+        } else {
+            vpush(b, 0);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn pe_section(b: i64, name: i64, vsize: i64, rva: i64, rawsize: i64, rawptr: i64, flags: i64) -> i64 {
+    pe_name8(b, name);
+    x_u32(b, vsize);
+    x_u32(b, rva);
+    x_u32(b, rawsize);
+    x_u32(b, rawptr);
+    x_u32(b, 0);
+    x_u32(b, 0);
+    pe_u16(b, 0);
+    pe_u16(b, 0);
+    return x_u32(b, flags);
+}
+
+fn pe_cstr(b: i64, s: i64) -> i64 {
+    let bytes = text_bytes(s);
+    let mut i: i64 = 0;
+    while i < vlen(bytes) {
+        vpush(b, vget(bytes, i));
+        i = i + 1;
+    }
+    return vpush(b, 0);
+}
+
+// The .idata contents at `rva`; fills `slots` (import id -> IAT slot RVA)
+// and `dirs` with [import dir RVA, size, IAT RVA, size].
+fn pe_idata(imports: i64, rva: i64, slots: i64, dirs: i64) -> i64 {
+    let n = vlen(imports) / 2;
+    let libs = vnew();
+    let mut i: i64 = 0;
+    while i < n {
+        let lib = vget(imports, 2 * i);
+        let mut seen = false;
+        let mut j: i64 = 0;
+        while j < vlen(libs) {
+            if text_eq(vget(libs, j), lib) {
+                seen = true;
+            }
+            j = j + 1;
+        }
+        if !seen {
+            vpush(libs, lib);
+        }
+        i = i + 1;
+    }
+    let nlib = vlen(libs);
+    // order: imports grouped by library, each group 0-terminated
+    let order = vnew();
+    let mut l: i64 = 0;
+    while l < nlib {
+        let mut k: i64 = 0;
+        while k < n {
+            if text_eq(vget(imports, 2 * k), vget(libs, l)) {
+                vpush(order, k);
+            }
+            k = k + 1;
+        }
+        vpush(order, -1);
+        l = l + 1;
+    }
+    let desc_size = 20 * (nlib + 1);
+    let ilt = rva + desc_size;
+    let iat = ilt + 8 * vlen(order);
+    let names_at = iat + 8 * vlen(order);
+    // hint/name entries, then library names
+    let names = vnew();
+    let hint = vfill(vnew(), n, 0);
+    let mut q: i64 = 0;
+    while q < n {
+        vset(hint, q, names_at + vlen(names));
+        pe_u16(names, 0);
+        pe_cstr(names, vget(imports, 2 * q + 1));
+        if vlen(names) % 2 != 0 {
+            vpush(names, 0);
+        }
+        q = q + 1;
+    }
+    let libname = vnew();
+    let mut m: i64 = 0;
+    while m < nlib {
+        vpush(libname, names_at + vlen(names));
+        pe_cstr(names, vget(libs, m));
+        m = m + 1;
+    }
+    let b = vnew();
+    // descriptors
+    let mut pos: i64 = 0;
+    let mut d: i64 = 0;
+    while d < nlib {
+        x_u32(b, ilt + 8 * pos);
+        x_u32(b, 0);
+        x_u32(b, 0);
+        x_u32(b, vget(libname, d));
+        x_u32(b, iat + 8 * pos);
+        while vget(order, pos) >= 0 {
+            pos = pos + 1;
+        }
+        pos = pos + 1;
+        d = d + 1;
+    }
+    let mut z: i64 = 0;
+    while z < 20 {
+        vpush(b, 0);
+        z = z + 1;
+    }
+    // lookup table, then the IAT (same contents until the loader binds it)
+    let mut pass: i64 = 0;
+    while pass < 2 {
+        let mut o: i64 = 0;
+        while o < vlen(order) {
+            let k = vget(order, o);
+            if k < 0 {
+                x_u64(b, 0);
+            } else {
+                x_u64(b, vget(hint, k));
+                if pass == 1 {
+                    vset(slots, k, iat + 8 * o);
+                }
+            }
+            o = o + 1;
+        }
+        pass = pass + 1;
+    }
+    let mut w: i64 = 0;
+    while w < vlen(names) {
+        vpush(b, vget(names, w));
+        w = w + 1;
+    }
+    vset(dirs, 0, rva);
+    vset(dirs, 1, desc_size);
+    vset(dirs, 2, iat);
+    vset(dirs, 3, 8 * vlen(order));
+    return b;
+}
+
+// The whole PE image of code+data `body` (the first `code` bytes code,
+// page-aligned) calling `imports` from the sites `fixups`.
+fn pe_image(body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
+    let mut dsize = vlen(body) - code;
+    if dsize < 8 {
+        dsize = 8;
+    }
+    let data_rva = PE_TEXT_RVA + pe_up(code, PE_SALIGN);
+    let idata_rva = data_rva + pe_up(dsize, PE_SALIGN);
+    let slots = vfill(vnew(), vlen(imports) / 2, 0);
+    let dirs = vfill(vnew(), 4, 0);
+    let idata = pe_idata(imports, idata_rva, slots, dirs);
+    let image_size = idata_rva + pe_up(vlen(idata), PE_SALIGN);
+    // bind the call sites to their IAT slots
+    let mut f: i64 = 0;
+    while f < vlen(fixups) {
+        let at = vget(fixups, f);
+        x_patch32(body, at, vget(slots, vget(fixups, f + 1)) - (PE_TEXT_RVA + at + 4));
+        f = f + 2;
+    }
+    let text_raw = pe_up(code, PE_FALIGN);
+    let data_raw = pe_up(dsize, PE_FALIGN);
+    let idata_raw = pe_up(vlen(idata), PE_FALIGN);
+    let b = vnew_cap(PE_HEADERS + text_raw + data_raw + idata_raw);
+    // DOS header: "MZ", e_lfanew = 0x80; a stub that prints and exits
+    pe_u16(b, 23117);
+    pe_pad(b, 60);
+    x_u32(b, 128);
+    let stub = vnew();
+    x_bytes3(stub, 14, 31, 186);   // push cs; pop ds; mov dx, 0x000e
+    x_bytes3(stub, 14, 0, 180);    // ...; mov ah, 9
+    x_bytes3(stub, 9, 205, 33);    // int 21h
+    x_bytes3(stub, 184, 1, 76);    // mov ax, 0x4c01
+    x_bytes2(stub, 205, 33);       // int 21h
+    pe_cstr(stub, "This program needs Windows.$");
+    let mut s: i64 = 0;
+    while s < vlen(stub) {
+        vpush(b, vget(stub, s));
+        s = s + 1;
+    }
+    pe_pad(b, 128);
+    // PE signature and COFF header
+    x_u32(b, 17744);               // "PE\0\0"
+    pe_u16(b, 34404);              // IMAGE_FILE_MACHINE_AMD64
+    pe_u16(b, 3);                  // sections
+    x_u32(b, 0);
+    x_u32(b, 0);
+    x_u32(b, 0);
+    pe_u16(b, 240);                // optional header size
+    pe_u16(b, 35);                 // RELOCS_STRIPPED | EXECUTABLE | LARGE_ADDRESS_AWARE
+    // PE32+ optional header
+    pe_u16(b, 523);                // 0x20b
+    x_byte(b, 1);
+    x_byte(b, 0);
+    x_u32(b, text_raw);            // SizeOfCode
+    x_u32(b, data_raw + idata_raw);
+    x_u32(b, 0);
+    x_u32(b, PE_TEXT_RVA);         // entry point
+    x_u32(b, PE_TEXT_RVA);         // BaseOfCode
+    x_u64(b, PE_BASE);
+    x_u32(b, PE_SALIGN);
+    x_u32(b, PE_FALIGN);
+    pe_u16(b, 6);
+    pe_u16(b, 0);                  // OS version
+    pe_u16(b, 0);
+    pe_u16(b, 0);                  // image version
+    pe_u16(b, 6);
+    pe_u16(b, 0);                  // subsystem version
+    x_u32(b, 0);
+    x_u32(b, image_size);
+    x_u32(b, PE_HEADERS);
+    x_u32(b, 0);                   // checksum
+    pe_u16(b, 3);                  // IMAGE_SUBSYSTEM_WINDOWS_CUI
+    pe_u16(b, 33024);              // NX_COMPAT | TERMINAL_SERVER_AWARE
+    x_u64(b, 268435456);           // stack reserve 256 MiB (trackc recurses deeply)
+    x_u64(b, 16777216);            // stack commit 16 MiB (frames skip guard pages)
+    x_u64(b, 1048576);
+    x_u64(b, 4096);
+    x_u32(b, 0);
+    x_u32(b, 16);
+    let mut dd: i64 = 0;
+    while dd < 16 {
+        if dd == 1 {
+            x_u32(b, vget(dirs, 0));
+            x_u32(b, vget(dirs, 1));
+        } else if dd == 12 {
+            x_u32(b, vget(dirs, 2));
+            x_u32(b, vget(dirs, 3));
+        } else {
+            x_u64(b, 0);
+        }
+        dd = dd + 1;
+    }
+    pe_section(b, ".text", code, PE_TEXT_RVA, text_raw, PE_HEADERS, 1610612768);
+    pe_section(b, ".data", dsize, data_rva, data_raw, PE_HEADERS + text_raw, 3221225536);
+    pe_section(b, ".idata", vlen(idata), idata_rva, idata_raw, PE_HEADERS + text_raw + data_raw, 3221225536);
+    pe_pad(b, PE_HEADERS);
+    let mut i: i64 = 0;
+    while i < code {
+        vpush(b, vget(body, i));
+        i = i + 1;
+    }
+    pe_pad(b, PE_HEADERS + text_raw);
+    while i < vlen(body) {
+        vpush(b, vget(body, i));
+        i = i + 1;
+    }
+    pe_pad(b, PE_HEADERS + text_raw + data_raw);
+    let mut k: i64 = 0;
+    while k < vlen(idata) {
+        vpush(b, vget(idata, k));
+        k = k + 1;
+    }
+    pe_pad(b, PE_HEADERS + text_raw + data_raw + idata_raw);
+    return b;
+}
+
+// Write the PE image to `path` (mode 0755 where that means anything).
+// Returns 0 on success.
+fn pe_write_file(path: i64, body: i64, code: i64, imports: i64, fixups: i64) -> i64 {
+    let img = pe_image(body, code, imports, fixups);
+    let n = vlen(img);
+    let buf: i64 = alloc(n + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        memset(buf + i, vget(img, i), 1);
+        i = i + 1;
+    }
+    let fd: i64 = open64(path, 577, 493);
+    if fd < 0 {
+        return 1;
+    }
+    fchmod(fd, 493);
+    let mut done: i64 = 0;
+    while done < n {
+        let w: i64 = write(fd, buf + done, n - done);
+        if w <= 0 {
+            close(fd);
+            return 1;
+        }
+        done = done + w;
+    }
+    close(fd);
+    return 0;
+}

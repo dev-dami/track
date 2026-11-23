@@ -6,7 +6,14 @@
 - **Linear Ownership.** Rejects use-after-free and double-free. The self-hosted compiler infers where each allocation's life ends and places it on the stack or frees it there ([docs/lifecycles.md](docs/lifecycles.md)).
 - **Lexical Lenses.** Scoped mutable access without manual pointer arithmetic or ownership transfer.
 - **Native Backend.** `trackc build` writes a static x86-64 Linux executable itself, with no C compiler, assembler or linker.
-- **Track only.** The repository holds no C or Rust. Track targets x86-64 Linux only and bootstraps from a committed native seed binary.
+- **Track only.** The repository holds no C or Rust. Track bootstraps from a committed native seed binary.
+- **Cross-compiling.** `trackc build --target x86_64-windows` writes a Windows PE executable from any host.
+
+| target | `trackc build --target` | status |
+|---|---|---|
+| x86_64-linux | default on Linux | static ELF |
+| x86_64-windows | `x86_64-windows` | PE32+ console .exe (kernel32); trackc.exe self-hosts |
+| aarch64-linux, x86_64/aarch64-macos, aarch64-windows | | not yet |
 
 ## Hello World
 
