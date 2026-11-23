@@ -86,3 +86,28 @@ jobs:
           "$TRACKC" --version | grep -q "1.0.0"
           build/yard --version | grep -q "1.0.0"
           echo "✓ versions ok"
+
+  windows:
+    # Track on Windows from the committed Windows seed
+    # (bootstrap/seed/trackc.exe): no Linux machine, no toolchain.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap from bootstrap/seed/trackc.exe (seed -> stage1 -> stage2 = stage3)
+        run: ./scripts/bootstrap.ps1
+
+      - name: hello and the examples match their goldens; yard.exe builds and tests
+        run: ./tests/windows/run.ps1 build/bootstrap/stage3/trackc.exe
+
+      - name: install.ps1 installs trackc.exe and yard.exe from this checkout
+        env:
+          TRACK_INSTALL_DIR: ${{ runner.temp }}\track-bin
+          TRACK_NO_PATH: '1'
+        run: |
+          ./scripts/install.ps1
+          & "$env:TRACK_INSTALL_DIR\trackc.exe" --version
+          & "$env:TRACK_INSTALL_DIR\yard.exe" --version
