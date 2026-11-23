@@ -159,8 +159,14 @@ and `.idata`. The Windows entry aligns the stack and calls `os_start`;
 standard handles; paths and arguments are UTF-8 in Track and UTF-16 at
 the kernel32 boundary.
 
-Not yet on Windows: sockets (Winsock) and `track_trap_div` dies with exit
-code 136 rather than a signal.
+Sockets use Winsock (ws2_32.dll; WSAStartup on the first call).
+`track_trap_div` ends the process with `0xC0000094`
+(STATUS_INTEGER_DIVIDE_BY_ZERO), the code of a hardware divide fault; other
+`kill` signals exit with 128 + signo. `unlink` renames the file to a
+scratch name before deleting it, so the name is gone at once even where
+a file with open handles stays visible until they close (wine, FAT).
+`sys_exec` runs `cmd.exe /s /c "cmd"`. trackc treats `\` as a path
+separator too.
 
 ## Machine builtins
 

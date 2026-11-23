@@ -94,12 +94,13 @@ EOF
 -21" "stdout"
 }
 
-# The examples print their goldens under wine, arguments and files
-# included; net_demo needs sockets (not on Windows yet).
+# The examples print their goldens under wine, arguments, files and
+# sockets (Winsock) included. error_handling prints the size of
+# /etc/hostname, which only the Linux CI job pins.
 t_xplat_windows_examples_print_their_goldens() {
     need_wine
     local e n=0 g="$ROOT/tests/cases/examples"
-    for e in arithmetic borrow generics hello linear_auto_free macro_test slice_and_types stdlib_demo structs_arrays union_enum_test use_test v030_features_demo v040_features_demo; do
+    for e in arithmetic borrow generics hello linear_auto_free macro_test net_demo slice_and_types stdlib_demo structs_arrays union_enum_test use_test v030_features_demo v040_features_demo; do
         n=$((n + 1))
         in_repo "$TRACKC" build --target x86_64-windows "examples/$e.trk" -o "$T/$e.exe"
         rc_ok "$e: build"
@@ -107,7 +108,7 @@ t_xplat_windows_examples_print_their_goldens() {
         out_is "$g/$e.out" "$e: output"
         rc_is "$(cat "$g/$e.code")" "$e: exit code"
     done
-    [ "$n" -ge 13 ] || fail "only $n inputs"
+    [ "$n" -ge 14 ] || fail "only $n inputs"
 }
 
 # trackc.exe, built for Windows, builds hello.exe identical to the one
@@ -121,4 +122,27 @@ t_xplat_windows_trackc_builds_hello() {
     win_run "$ROOT" "$T/trackc.exe" build --target x86_64-windows examples/hello.trk -o "$T/h2.exe"
     rc_ok "trackc.exe builds hello.exe"
     same_file "$T/h1.exe" "$T/h2.exe" "hello.exe from both compilers"
+}
+
+# The runtime smoke test passes under wine: files removed while handles
+# are still open are gone at once, as on Linux.
+t_xplat_windows_rt_smoke_under_wine() {
+    need_wine
+    in_repo "$TRACKC" build --target x86_64-windows compiler/rt/tests/rt_smoke.trk -o "$T/rt_smoke.exe"
+    rc_ok "build"
+    win_run "$ROOT" "$T/rt_smoke.exe"
+    out_is "$ROOT/tests/cases/native_runs/rt_smoke.out" "output"
+    rc_is "$(cat "$ROOT/tests/cases/native_runs/rt_smoke.code")" "exit code"
+}
+
+# Integer division by zero ends a Windows process with NTSTATUS
+# 0xC0000094 (STATUS_INTEGER_DIVIDE_BY_ZERO); wine passes its low byte,
+# 0x94 = 148, to the Linux parent. Linux keeps SIGFPE (136).
+t_xplat_windows_divzero_is_status_integer_divide_by_zero() {
+    need_wine
+    in_repo "$TRACKC" build --target x86_64-windows tests/native/divzero.trk -o "$T/divzero.exe"
+    rc_ok "build"
+    win_run "$ROOT" "$T/divzero.exe"
+    out_is "$ROOT/tests/cases/native_runs/divzero.out" "output before the trap"
+    rc_is 148 "exit code (0xC0000094 & 0xff)"
 }

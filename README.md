@@ -60,6 +60,24 @@ match n {
 curl -fsSL https://raw.githubusercontent.com/dev-dami/track/main/scripts/install.sh | bash
 ```
 
+### Windows
+
+In PowerShell (no Linux machine, compiler or admin rights needed):
+
+```powershell
+irm https://raw.githubusercontent.com/dev-dami/track/main/scripts/install.ps1 | iex
+```
+
+It fetches the sources (git if present, else the zip), bootstraps
+`trackc.exe` from `bootstrap\seed\trackc.exe` with `scripts\bootstrap.ps1`
+(seed → stage1 → stage2 = stage3), builds `yard.exe`, installs both to
+`%USERPROFILE%\.track\bin` and adds that to the user PATH. From a
+checkout: `pwsh -File scripts\bootstrap.ps1` leaves
+`build\bootstrap\stage3\trackc.exe`. Paths may use `\` or `/` and drive
+letters; yard runs its commands through `cmd.exe`. Integer division by
+zero exits with `0xC0000094` (STATUS_INTEGER_DIVIDE_BY_ZERO); sockets use
+Winsock.
+
 ### Build from Source
 
 Requires an x86-64 Linux host and POSIX tools; nothing else. No C

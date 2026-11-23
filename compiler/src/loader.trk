@@ -74,7 +74,7 @@ fn resolve_module(dir: i64, path: i64) -> i64 {
 
 // Canonical key for a module file so `./a.trk` and `a.trk` load once.
 fn module_key(path: i64) -> i64 {
-    if text_starts(path, "./") {
+    if text_starts(path, "./") || text_starts(path, ".\\") {
         return str_substr(path, 2, text_len(path) - 2);
     }
     return path;
