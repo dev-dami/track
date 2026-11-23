@@ -1,3 +1,10 @@
+# Every text file is LF on every platform: goldens are compared byte for
+# byte, and trackc must see the same .trk bytes on Windows as on Linux.
+* text=auto eol=lf
+# Vendored and built website files keep their bytes.
+page/node_modules/** -text
+page/dist/** -text
+
 # The committed native seed of trackc (scripts/update_seed.sh): a binary.
 bootstrap/seed/trackc binary
 bootstrap/seed/trackc.exe binary
