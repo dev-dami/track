@@ -1,8 +1,9 @@
 # The native backend and the Track runtime
 
-`trackc` compiles `compiler/src/*.trk` straight to a Linux x86-64
-executable, with no C compiler and no C source in the chain. Track targets
-x86-64 Linux only. Two halves:
+`trackc` compiles `compiler/src/*.trk` straight to a native executable,
+with no C compiler and no C source in the chain: a static ELF for
+x86_64-linux, a PE32+ console executable for x86_64-windows (see
+"Targets"). Two halves:
 
 - **the runtime written in Track** (`compiler/rt/*.trk`), which needs no
   libc;
@@ -13,6 +14,87 @@ x86-64 Linux only. Two halves:
 itself, and `scripts/selfhost.sh` rebuilds trackc that way with no program
 reachable (docs/bootstrap.md). The C backend and the C runtime
 (`runtime/track_runtime.c`) that once stood beside them are gone (card NOC).
+
+## Targets
+
+`trackc build|run|check --target <arch>-<os>` (also `--target=<t>` or
+`TRACKC_TARGET=<t>`) picks the target; the default is the host. Arch is
+`x86_64` or `aarch64`, OS is `linux`, `macos` or `windows`; any other
+pair is an error (exit 2). `check` accepts every known pair; `build`
+generates code for:
+
+| target | output | status |
+|---|---|---|
+| x86_64-linux | static ELF, Linux syscalls | default; output byte-identical to earlier trackc |
+| x86_64-windows | PE32+ console .exe, kernel32 imports | builds and runs (tested under wine); trackc.exe self-hosts |
+| aarch64-linux, x86_64/aarch64-macos, aarch64-windows | | "not supported yet" |
+
+`run` only runs host-target programs. The target picks the OS layer:
+trackc loads `rt/os/<os>.trk` with the portable rt modules and passes
+the OS to ngen (`generate_native_for`, NG_TARGET).
+
+### The OS layer
+
+Every `compiler/rt/os/<os>.trk` defines this interface (the names the
+other rt modules, ngen and the checker builtins call):
+
+- process: `os_args_count`, `os_arg`, `env_get`, `env_exists`,
+  `sys_exec`, `process_spawn`, `clock_ms`;
+- files: `file_open`, `file_close`, `file_read_all`, `file_write`,
+  `file_exists`, `file_remove`, `file_size`, `dir_exists`, `file_copy`,
+  `track_file_read`, `track_file_write_all`;
+- network: `net_socket_tcp_listen`, `_accept`, `_connect`, `_send`,
+  `_recv`, `_close`;
+- off Linux only: `os_start()` (the entry; builds argc/argv and calls
+  `rt_start`) and `os_syscall(nr, a, b, c, d, e)`.
+
+The portable modules (`mem`, `io`, `libc`) still make their few kernel
+calls with `syscall6` and Linux numbers (read, write, open, close, stat,
+lseek, mmap, munmap, mremap, madvise, pipe, access, getpid, kill, unlink,
+clock_gettime, exit_group, fchmod). On Linux that is the `syscall`
+instruction; on any other target ngen lowers `syscall6(nr, a..f)` to a
+call of the OS layer's `os_syscall(nr, a..e)` (the runtime never passes
+a sixth argument), which maps each number to the OS. This keeps
+x86_64-linux output byte-identical: every rt function is emitted in load
+order, so moving Linux code between files would change every binary.
+
+### Imported functions (`extern`)
+
+```track
+extern "kernel32.dll" fn WriteFile(h: i64, buf: i64, n: i64, done: i64, ov: i64) -> i32;
+```
+
+declares a function in a system library (`extern` is contextual: only
+`extern` followed by a string starts one). Calls type-check like any
+function; arguments are words. The return type picks the result width:
+`i32` sign-extends `eax`, `u32`/`bool` zero-extends it (Win32 `BOOL` and
+`DWORD`), anything else keeps `rax`.
+
+The backend (`ffi.trk`) records an import table, (library, symbol)
+pairs, and per call site a fixup (code position, import id); the image
+writer lays out the table and fills the fixups. For x86_64-windows each
+call is `call [rip + IAT slot]` with the Win64 ABI: arguments 1-4 in
+rcx, rdx, r8, r9, the rest on the stack above 32 bytes of shadow space,
+rsp 16-byte aligned (`ffi_win64_call`); pe.trk writes one import
+descriptor per library. A macOS writer (dyld binding to libSystem, SysV
+ABI) or aarch64-windows reuses the two tables and adds its own call
+sequence next to `ffi_win64_call`. On a target without import support a
+call to an `extern` function is an error.
+
+### PE32+ layout (`pe.trk`)
+
+DOS header and stub, COFF header (AMD64, relocations stripped), PE32+
+optional header (console subsystem, image base 0x140000000, 256 MiB
+stack reserve and 16 MiB committed: ngen frames may skip guard pages),
+then `.text` (RVA 0x1000, entry at its first byte), `.data` (ngen pads
+the code to a page for this target so rip-relative data references hold)
+and `.idata`. The Windows entry aligns the stack and calls `os_start`;
+`sys_exit` ends in `ExitProcess`. File descriptors are HANDLEs, 0-2 the
+standard handles; paths and arguments are UTF-8 in Track and UTF-16 at
+the kernel32 boundary.
+
+Not yet on Windows: sockets (Winsock) and `track_trap_div` dies with exit
+code 136 rather than a signal.
 
 ## Machine builtins
 
@@ -39,7 +121,8 @@ calls; `store64`/`store8` must not be reordered across `syscall6`.
 | `io.trk` | `rt_start`, `sys_exit`, buffered stdout, stderr, `print*`, `track_out`/`track_err`, `read_line`, `track_abort`, `track_trap_div`, int formatting |
 | `str.trk` | `str_*`, `int_to_str`, `track_str_bytes`, `char_*`, `path_*` |
 | `vec.trk` | `vec_*`, `track_i64_collection_*`, `track_sb_*`, `track_array_*`, `array_len`, `track_bad_field`, `math_*`, `add`/`sum`/`sub` |
-| `sys.trk` | argv, `env_*`, `sys_exec`/`process_spawn` (fork + execve `/bin/sh -c` + wait4), `clock_ms`, `file_*`, `track_file_*`, `dir_exists`, `net_socket_*` |
+| `os/linux.trk` | the Linux OS layer: argv, `env_*`, `sys_exec`/`process_spawn` (fork + execve `/bin/sh -c` + wait4), `clock_ms`, `file_*`, `track_file_*`, `dir_exists`, `net_socket_*` |
+| `os/windows.trk` | the Windows OS layer (kernel32 through `extern`): the same interface, plus `os_start` and `os_syscall` |
 | `libc.trk` | `open64`, `write`, `fchmod`, `close`, `memset`: the libc names `elf.trk` calls, written in Track |
 
 The runtime keeps the word-ABI behaviour of the retired C runtime

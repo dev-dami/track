@@ -25,6 +25,7 @@ import "checker";
 import "life";
 import "ngen";
 import "ngen_a64";
+import "pe";
 import "runtime_trk";
 import "lsp";
 
@@ -33,7 +34,7 @@ fn trackc_version() -> i64 { return "1.0.0"; }
 fn usage() -> i64 {
     err("trackc 1.0.0 — the self-hosted Track compiler\n\n");
     err("USAGE:\n");
-    err("    trackc build <file.trk> [-o <exe>]     Compile to a static x86-64 Linux ELF\n");
+    err("    trackc build <file.trk> [-o <exe>]     Compile to a native executable (ELF, or PE for windows)\n");
     err("        -g, --symbols                      ...with a symbol table (nm, perf, gdb)\n");
     err("    trackc run <file.trk> [args...]        Compile and run\n");
     err("    trackc check <file.trk>                Parse and ownership-check only\n");
@@ -44,6 +45,8 @@ fn usage() -> i64 {
     err("    trackc --version                       Show version info\n");
     err("\nOPTIONS:\n");
     err("    --deny-warnings  exit 1 when any warning is reported\n");
+    err("    --target <arch>-<os>  build/run/check for x86_64|aarch64 - linux|macos|windows\n");
+    err("                     (also TRACKC_TARGET; default: the host; built today: x86_64-linux, x86_64-windows)\n");
     return 0;
 }
 
@@ -80,8 +83,13 @@ fn load_checked(path: i64, with_rt: bool) -> i64 {
         let from = vlen(cx(c, CX_ITEMS));
         let node_from = node_count(c);
         let mut m: i64 = 0;
+        let os_file = text_cat3("rt/os/", target_os_name(), ".trk");
         while m < rt_module_count() {
-            load_embedded_module(c, rt_module_name(m), rt_module_source(m));
+            let name = rt_module_name(m);
+            // one OS layer: the target's (rt/os/<os>.trk)
+            if !text_starts(name, "rt/os/") || text_eq(name, os_file) {
+                load_embedded_module(c, name, rt_module_source(m));
+            }
             m = m + 1;
         }
         isolate_runtime(c, from, node_from);
@@ -108,27 +116,122 @@ fn warning_count_text(n: i64) -> i64 {
     return text_cat(text_of_int(n), " warnings");
 }
 
-fn front_end(path: i64) -> i64 {
-    return load_checked(path, false);
+// ---------------------------------------------------------------- targets
+//
+// `--target <arch>-<os>` (or `--target=<arch>-<os>`, or TRACKC_TARGET):
+// arch x86_64 or aarch64, os linux, macos or windows. The default is the
+// host. TG_* match ngen's NG_TARGET.
+
+const TG_LINUX = 0;
+const TG_WINDOWS = 1;
+const TG_MACOS = 2;
+
+// The host's target: Windows when trackc itself runs there.
+fn host_target() -> i64 {
+    if text_eq(env_get("OS"), "Windows_NT") {
+        return "x86_64-windows";
+    }
+    let me = arg_text(0);
+    if text_ends(me, ".exe") || text_ends(me, ".EXE") {
+        return "x86_64-windows";
+    }
+    return "x86_64-linux";
 }
 
-// `--arch aarch64`: emit an aarch64 Linux executable (default x86-64).
-fn arch_aarch64() -> bool {
+fn target_text() -> i64 {
     let mut i: i64 = 2;
-    while i < arg_count() - 1 {
-        if text_eq(arg_text(i), "--arch") {
-            if text_eq(arg_text(i + 1), "aarch64") {
-                return true;
-            }
-            if text_eq(arg_text(i + 1), "x86_64") {
-                return false;
-            }
-            err(text_cat3("trackc: unknown --arch '", arg_text(i + 1), "' (x86_64, aarch64)\n"));
-            quit(2);
+    while i < arg_count() {
+        let a = arg_text(i);
+        if text_eq(a, "--target") && i + 1 < arg_count() {
+            return arg_text(i + 1);
+        }
+        if text_starts(a, "--target=") {
+            return str_substr(a, 9, text_len(a) - 9);
         }
         i = i + 1;
     }
-    return false;
+    if env_exists("TRACKC_TARGET") != 0 {
+        let t: i64 = env_get("TRACKC_TARGET");
+        if text_len(t) > 0 {
+            return t;
+        }
+    }
+    return host_target();
+}
+
+fn target_dash(t: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < text_len(t) {
+        if text_eq(str_substr(t, i, 1), "-") {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn target_arch_name() -> i64 {
+    let t = target_text();
+    let d = target_dash(t);
+    if d < 0 {
+        return t;
+    }
+    return str_substr(t, 0, d);
+}
+
+fn target_os_name() -> i64 {
+    let t = target_text();
+    let d = target_dash(t);
+    if d < 0 {
+        return "";
+    }
+    return str_substr(t, d + 1, text_len(t) - d - 1);
+}
+
+fn target_os() -> i64 {
+    let os = target_os_name();
+    if text_eq(os, "windows") {
+        return TG_WINDOWS;
+    }
+    if text_eq(os, "macos") {
+        return TG_MACOS;
+    }
+    return TG_LINUX;
+}
+
+// Exit with a clear message unless the target names a known arch and OS.
+fn check_target_known() -> i64 {
+    let arch = target_arch_name();
+    let os = target_os_name();
+    let arch_ok = text_eq(arch, "x86_64") || text_eq(arch, "aarch64");
+    let os_ok = text_eq(os, "linux") || text_eq(os, "macos") || text_eq(os, "windows");
+    if !arch_ok || !os_ok {
+        err(text_cat3("trackc: unknown target '", target_text(), "'\n"));
+        err("  expected <arch>-<os>: arch x86_64 or aarch64, os linux, macos or windows\n");
+        quit(2);
+    }
+    return 0;
+}
+
+// Exit unless this trackc can generate code for the target.
+fn check_target_buildable() -> i64 {
+    check_target_known();
+    let arch = target_arch_name();
+    let os = target_os_name();
+    if text_eq(arch, "x86_64") && (text_eq(os, "linux") || text_eq(os, "windows")) {
+        return 0;
+    }
+    if text_eq(arch, "aarch64") && text_eq(os, "linux") {
+        return 0;
+    }
+    err(text_cat3("trackc: target '", target_text(), "' is not supported yet\n"));
+    err("  supported: x86_64-linux, x86_64-windows, aarch64-linux\n");
+    quit(2);
+    return 0;
+}
+
+fn front_end(path: i64) -> i64 {
+    return load_checked(path, false);
 }
 
 // Value following `-o`, or 0.
@@ -188,9 +291,9 @@ fn file_arg_index() -> i64 {
         let a = arg_text(i);
         if text_eq(a, "-o") {
             i = i + 2;
-        } else if text_eq(a, "--arch") {
+        } else if text_eq(a, "--target") {
             i = i + 2;
-        } else if text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") || text_eq(a, "--place") || text_eq(a, "-g") || text_eq(a, "--symbols") {
+        } else if text_starts(a, "--target=") || text_starts(a, "--rt=") || text_eq(a, "--native") || text_eq(a, "--deny-warnings") || text_eq(a, "--place") || text_eq(a, "-g") || text_eq(a, "--symbols") {
             i = i + 1;
         } else {
             return i;
@@ -203,9 +306,16 @@ fn file_arg_index() -> i64 {
 // x86-64 ELF executable at `exe`; `-g` (or `--symbols`) adds a symbol table
 // naming every function.
 fn build_native(path: i64, exe: i64) -> i64 {
+    check_target_buildable();
     let c = load_checked(path, true);
     life_place_program(c); // stack cells (ngen `ng_site_cell`)
-    let mut body = generate_native(c);
+    let os = target_os();
+    let mut body: i64 = 0;
+    if os == TG_LINUX {
+        body = generate_native(c);
+    } else {
+        body = generate_native_for(c, os);
+    }
     if body == 0 {
         quit(1);
     }
@@ -218,10 +328,17 @@ fn build_native(path: i64, exe: i64) -> i64 {
         err(text_cat3("trackc: cannot create directory '", dir, "'\n"));
         quit(1);
     }
+    if os == TG_WINDOWS {
+        if pe_write_file(exe, body, native_code_len(c), native_imports(c), native_import_fixups(c)) != 0 {
+            err(text_cat3("trackc: cannot write '", exe, "'\n"));
+            quit(1);
+        }
+        return 0;
+    }
     let mut code_len = native_code_len(c);
     let mut mach = ELF_X86_64;
-    if arch_aarch64() {
-        // temporary selector until `--target` lands: lift to A64 (ngen_a64)
+    if text_eq(target_arch_name(), "aarch64") {
+        // lift ngen's x86-64 code to A64 (ngen_a64.trk)
         let out_len = vfill(vnew(), 1, 0);
         body = a64_translate(body, code_len, out_len);
         if body == 0 {
@@ -243,6 +360,9 @@ fn cmd_build(path: i64) -> i64 {
     let mut exe = output_flag();
     if exe == 0 {
         exe = file_stem(path);
+        if target_os() == TG_WINDOWS {
+            exe = text_cat(exe, ".exe");
+        }
     }
     build_native(path, exe);
     out(text_cat3("✓ Built: ", exe, "\n"));
@@ -259,6 +379,11 @@ fn require_file() -> i64 {
 }
 
 fn cmd_run(path: i64) -> i64 {
+    check_target_buildable();
+    if !text_eq(target_text(), host_target()) {
+        err(text_cat3("trackc: cannot run a ", target_text(), " program on this host; use `trackc build --target ...`\n"));
+        quit(2);
+    }
     let mut tmp: i64 = "/tmp";
     if env_exists("TMPDIR") != 0 {
         let t: i64 = env_get("TMPDIR");
@@ -368,6 +493,7 @@ fn main() -> i64 {
         return 0;
     }
     if text_eq(command, "check") {
+        check_target_known();
         let path = require_file();
         let c = front_end(path);
         let n = cx(c, CX_NWARN);

@@ -1,4 +1,4 @@
-# aarch64 Linux output (`trackc build --arch aarch64`, compiler/src/ngen_a64.trk
+# aarch64 Linux output (`trackc build --target aarch64-linux`, compiler/src/ngen_a64.trk
 # and a64.trk): executables are cross-compiled here and run under
 # qemu-aarch64 user emulation; every test skips when qemu is absent.
 # Commands run from the repository root.
@@ -15,7 +15,7 @@ qemu_a64() {
 
 t_arm64_hello_runs_under_qemu() {
     qemu_a64
-    in_repo "$TRACKC" build --arch aarch64 examples/hello.trk -o "$T/hello"
+    in_repo "$TRACKC" build --target aarch64-linux examples/hello.trk -o "$T/hello"
     rc_ok "aarch64 build"
     eq "$(u16_at "$T/hello" 18)" 183 "e_machine EM_AARCH64"
     in_repo "$QEMU" "$T/hello"
@@ -36,7 +36,7 @@ t_arm64_programs_print_their_goldens() {
         g="$ROOT/tests/cases/native_runs"
         case "$p" in "$ROOT/examples/"*) g="$ROOT/tests/cases/examples" ;; esac
         n=$((n + 1))
-        in_repo "$TRACKC" build --arch aarch64 "$p" -o "$T/$s"
+        in_repo "$TRACKC" build --target aarch64-linux "$p" -o "$T/$s"
         rc_ok "$s: aarch64 build"
         in_repo "$QEMU" "$T/$s"
         sed "s/@HOSTNAME_BYTES@/$hb/" "$g/$s.out" >"$T/.want_$s"
@@ -49,9 +49,9 @@ t_arm64_programs_print_their_goldens() {
 
 t_arm64_compiler_reaches_a_fixed_point_under_qemu() {
     qemu_a64
-    in_repo "$TRACKC" build --arch aarch64 compiler/src/main.trk -o "$T/trackc2"
+    in_repo "$TRACKC" build --target aarch64-linux compiler/src/main.trk -o "$T/trackc2"
     rc_ok "aarch64 stage2 build"
-    in_repo env PATH=/nonexistent "$QEMU" "$T/trackc2" build --arch aarch64 compiler/src/main.trk -o "$T/trackc3"
+    in_repo env PATH=/nonexistent "$QEMU" "$T/trackc2" build --target aarch64-linux compiler/src/main.trk -o "$T/trackc3"
     rc_ok "stage3 build under qemu"
     same_file "$T/trackc2" "$T/trackc3" "aarch64 stage2 and stage3"
     in_repo "$QEMU" "$T/trackc2" build compiler/src/main.trk -o "$T/trackc_x86"
@@ -60,17 +60,11 @@ t_arm64_compiler_reaches_a_fixed_point_under_qemu() {
     same_file "$T/trackc_x86" "$T/trackc_ref" "x86-64 output of the aarch64 compiler"
 }
 
-t_arm64_x86_64_is_the_default_arch() {
+t_arm64_target_does_not_change_x86_64_output() {
     in_repo "$TRACKC" build examples/hello.trk -o "$T/a"
     rc_ok "default build"
-    in_repo "$TRACKC" build --arch x86_64 examples/hello.trk -o "$T/b"
-    rc_ok "--arch x86_64 build"
-    same_file "$T/a" "$T/b" "--arch x86_64 output"
+    in_repo "$TRACKC" build --target x86_64-linux examples/hello.trk -o "$T/b"
+    rc_ok "--target x86_64-linux build"
+    same_file "$T/a" "$T/b" "x86_64-linux output"
     eq "$(u16_at "$T/a" 18)" 62 "e_machine EM_X86_64"
-}
-
-t_arm64_unknown_arch_is_rejected() {
-    in_repo "$TRACKC" build --arch sparc examples/hello.trk -o "$T/x"
-    rc_is 2 "unknown --arch exit code"
-    [ ! -e "$T/x" ] || fail "an executable was written for an unknown arch"
 }

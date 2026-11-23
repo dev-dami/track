@@ -1,5 +1,9 @@
-// rt/sys.trk — Track runtime: arguments, environment, processes, clock,
-// files, sockets. All through Linux x86-64 system calls.
+// rt/os/linux.trk — Track runtime OS layer for Linux: arguments,
+// environment, processes, clock, files, sockets, all through Linux x86-64
+// system calls. Every OS layer (rt/os/<os>.trk) defines the same OS
+// interface (docs/native.md, "The OS layer"); trackc loads the one for
+// the target. On Linux the portable modules' own `syscall6` calls go
+// straight to the kernel; other OS layers also define `os_syscall`.
 
 // ---------------------------------------------------------------- process
 
