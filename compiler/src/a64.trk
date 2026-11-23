@@ -1,0 +1,416 @@
+// a64.trk — A64 (aarch64) instruction encoder.
+//
+// Every function appends one 32-bit instruction word to the word vector
+// `w` (one instruction per element; a64_bytes turns it into the byte
+// vector elf.trk writes) and returns its index. `sf` is 1 for the 64-bit
+// (X) form and 0 for the 32-bit (W) form, which zero-extends its result.
+// Register 31 is XZR in data-processing operands and SP as an address
+// base or in add/sub immediate. Branch and address immediates are word
+// offsets the caller computes (a_patch_* re-targets them in place).
+
+import "base";
+import "x64";
+
+const A_ZR = 31;
+const A_SP = 31;
+
+// Condition codes.
+const A_EQ = 0;
+const A_NE = 1;
+const A_HS = 2;
+const A_LO = 3;
+const A_MI = 4;
+const A_PL = 5;
+const A_VS = 6;
+const A_VC = 7;
+const A_HI = 8;
+const A_LS = 9;
+const A_GE = 10;
+const A_LT = 11;
+const A_GT = 12;
+const A_LE = 13;
+
+const A_MOVZ = 1384120320; // 0x52800000
+const A_MOVK = 1920991232; // 0x72800000
+const A_MOVN = 310378496; // 0x12800000
+const A_ADDI = 285212672; // 0x11000000
+const A_ADDSI = 822083584; // 0x31000000
+const A_SUBI = 1358954496; // 0x51000000
+const A_SUBSI = 1895825408; // 0x71000000
+const A_ADDR = 184549376; // 0x0B000000
+const A_ADDSR = 721420288; // 0x2B000000
+const A_SUBR = 1258291200; // 0x4B000000
+const A_SUBSR = 1795162112; // 0x6B000000
+const A_ANDR = 167772160; // 0x0A000000
+const A_ORRR = 704643072; // 0x2A000000
+const A_EORR = 1241513984; // 0x4A000000
+const A_ANDSR = 1778384896; // 0x6A000000
+const A_ORNR = 706740224; // 0x2A200000
+const A_MADD = 452984832; // 0x1B000000
+const A_MSUB = 453017600; // 0x1B008000
+const A_SMULH = 2604694528; // 0x9B407C00
+const A_UMULH = 2613083136; // 0x9BC07C00
+const A_SDIV = 448793600; // 0x1AC00C00
+const A_UDIV = 448792576; // 0x1AC00800
+const A_LSLV = 448798720; // 0x1AC02000
+const A_LSRV = 448799744; // 0x1AC02400
+const A_ASRV = 448800768; // 0x1AC02800
+const A_UBFM = 1392508928; // 0x53000000
+const A_SBFM = 318767104; // 0x13000000
+const A_BFM = 855638016; // 0x33000000
+const A_CSINC = 444597248; // 0x1A800400
+const A_CSEL = 444596224; // 0x1A800000
+const A_RBIT = 1522532352; // 0x5AC00000
+const A_CLZ = 1522536448; // 0x5AC01000
+const A_B = 335544320; // 0x14000000
+const A_BL = 2483027968; // 0x94000000
+const A_BCOND = 1409286144; // 0x54000000
+const A_CBZ = 872415232; // 0x34000000
+const A_CBNZ = 889192448; // 0x35000000
+const A_BR = 3592355840; // 0xD61F0000
+const A_BLR = 3594452992; // 0xD63F0000
+const A_RET = 3596550144; // 0xD65F0000
+const A_LDST = 956301312; // 0x39000000   // load/store, unsigned scaled offset
+const A_LDSTU = 939524096; // 0x38000000  // load/store, unscaled / pre / post index
+const A_LDSTR = 941623296; // 0x38200800  // load/store, register offset
+const A_STP = 2835349504; // 0xA9000000
+const A_LDP = 2839543808; // 0xA9400000
+const A_ADR = 268435456; // 0x10000000
+const A_ADRP = 2415919104; // 0x90000000
+const A_SVC = 3556769793; // 0xD4000001
+const A_BRK = 3558866944; // 0xD4200000
+const A_NOP = 3573751839; // 0xD503201F
+const A_MOVI0 = 1862329344; // 0x6F00E400  // movi vd.2d, #0
+const A_LDRQ = 1035993088; // 0x3DC00000   // ldr qt, [xn, #imm*16]
+const A_CMEQ16 = 1847626752; // 0x6E208C00 // cmeq vd.16b, vn.16b, vm.16b
+const A_EOR16 = 1847598080; // 0x6E201C00  // eor vd.16b, vn.16b, vm.16b
+const A_UMOVD = 1309162496; // 0x4E083C00  // umov xd, vn.d[0]
+
+fn a_emit(w: i64, insn: i64) -> i64 {
+    vpush(w, insn);
+    return vlen(w) - 1;
+}
+
+fn a_sf(sf: i64) -> i64 { return sf * 2147483648; }
+
+// Code bytes of the word vector `w`, appended to the byte vector `b`.
+fn a64_bytes(w: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(w) {
+        x_u32(b, vget(w, i));
+        i = i + 1;
+    }
+    return b;
+}
+
+// ---- moves ----
+
+fn a_movz(w: i64, sf: i64, rd: i64, imm16: i64, hw: i64) -> i64 {
+    return a_emit(w, A_MOVZ + a_sf(sf) + hw * 2097152 + (imm16 & 65535) * 32 + rd);
+}
+
+fn a_movk(w: i64, sf: i64, rd: i64, imm16: i64, hw: i64) -> i64 {
+    return a_emit(w, A_MOVK + a_sf(sf) + hw * 2097152 + (imm16 & 65535) * 32 + rd);
+}
+
+fn a_movn(w: i64, sf: i64, rd: i64, imm16: i64, hw: i64) -> i64 {
+    return a_emit(w, A_MOVN + a_sf(sf) + hw * 2097152 + (imm16 & 65535) * 32 + rd);
+}
+
+// 16-bit chunk `k` of v (k = 0..3), as an unsigned value.
+fn a_chunk(v: i64, k: i64) -> i64 { return (v >> (16 * k)) & 65535; }
+
+// rd = v (any 64-bit value; 32-bit forms take the low 32 bits).
+fn a_mov_imm(w: i64, sf: i64, rd: i64, v: i64) -> i64 {
+    let mut n: i64 = 4;
+    let mut x = v;
+    if sf == 0 {
+        n = 2;
+        x = v & 4294967295;
+    }
+    // count chunks equal to 0xffff (prefer movn) and to 0 (prefer movz)
+    let mut ones: i64 = 0;
+    let mut zeros: i64 = 0;
+    let mut k: i64 = 0;
+    while k < n {
+        if a_chunk(x, k) == 65535 {
+            ones = ones + 1;
+        }
+        if a_chunk(x, k) == 0 {
+            zeros = zeros + 1;
+        }
+        k = k + 1;
+    }
+    let mut fill: i64 = 0;
+    if ones > zeros {
+        fill = 65535;
+    }
+    let mut first = true;
+    k = 0;
+    while k < n {
+        let c = a_chunk(x, k);
+        if c != fill {
+            if first {
+                if fill == 0 {
+                    a_movz(w, sf, rd, c, k);
+                } else {
+                    a_movn(w, sf, rd, 65535 - c, k);
+                }
+                first = false;
+            } else {
+                a_movk(w, sf, rd, c, k);
+            }
+        }
+        k = k + 1;
+    }
+    if first {
+        if fill == 0 {
+            return a_movz(w, sf, rd, 0, 0);
+        }
+        return a_movn(w, sf, rd, 0, 0);
+    }
+    return vlen(w) - 1;
+}
+
+// rd = rm (orr rd, xzr, rm)
+fn a_mov(w: i64, sf: i64, rd: i64, rm: i64) -> i64 {
+    return a_alu_r(w, A_ORRR, sf, rd, A_ZR, rm, 0, 0);
+}
+
+// rd = rn where either may be SP (add rd, rn, #0)
+fn a_mov_sp(w: i64, rd: i64, rn: i64) -> i64 {
+    return a_addi(w, 1, rd, rn, 0);
+}
+
+// ---- arithmetic and logic ----
+
+// add/adds/sub/subs immediate: `op` one of A_ADDI A_ADDSI A_SUBI A_SUBSI;
+// imm 0..4095, or a multiple of 4096 up to 4095 << 12.
+fn a_arith_i(w: i64, op: i64, sf: i64, rd: i64, rn: i64, imm: i64) -> i64 {
+    if imm > 4095 {
+        return a_emit(w, op + a_sf(sf) + 4194304 + ((imm >> 12) & 4095) * 1024 + rn * 32 + rd);
+    }
+    return a_emit(w, op + a_sf(sf) + (imm & 4095) * 1024 + rn * 32 + rd);
+}
+
+fn a_addi(w: i64, sf: i64, rd: i64, rn: i64, imm: i64) -> i64 { return a_arith_i(w, A_ADDI, sf, rd, rn, imm); }
+fn a_subi(w: i64, sf: i64, rd: i64, rn: i64, imm: i64) -> i64 { return a_arith_i(w, A_SUBI, sf, rd, rn, imm); }
+fn a_cmpi(w: i64, sf: i64, rn: i64, imm: i64) -> i64 { return a_arith_i(w, A_SUBSI, sf, A_ZR, rn, imm); }
+fn a_cmni(w: i64, sf: i64, rn: i64, imm: i64) -> i64 { return a_arith_i(w, A_ADDSI, sf, A_ZR, rn, imm); }
+
+// Shifted-register data processing: `op` one of A_ADDR A_ADDSR A_SUBR
+// A_SUBSR A_ANDR A_ORRR A_EORR A_ANDSR A_ORNR; shift 0 lsl, 1 lsr, 2 asr.
+fn a_alu_r(w: i64, op: i64, sf: i64, rd: i64, rn: i64, rm: i64, shift: i64, amount: i64) -> i64 {
+    return a_emit(w, op + a_sf(sf) + shift * 4194304 + rm * 65536 + amount * 1024 + rn * 32 + rd);
+}
+
+fn a_add(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_alu_r(w, A_ADDR, sf, rd, rn, rm, 0, 0); }
+fn a_sub(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_alu_r(w, A_SUBR, sf, rd, rn, rm, 0, 0); }
+fn a_and(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_alu_r(w, A_ANDR, sf, rd, rn, rm, 0, 0); }
+fn a_orr(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_alu_r(w, A_ORRR, sf, rd, rn, rm, 0, 0); }
+fn a_eor(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_alu_r(w, A_EORR, sf, rd, rn, rm, 0, 0); }
+fn a_cmp(w: i64, sf: i64, rn: i64, rm: i64) -> i64 { return a_alu_r(w, A_SUBSR, sf, A_ZR, rn, rm, 0, 0); }
+fn a_tst(w: i64, sf: i64, rn: i64, rm: i64) -> i64 { return a_alu_r(w, A_ANDSR, sf, A_ZR, rn, rm, 0, 0); }
+fn a_mvn(w: i64, sf: i64, rd: i64, rm: i64) -> i64 { return a_alu_r(w, A_ORNR, sf, rd, A_ZR, rm, 0, 0); }
+fn a_neg(w: i64, sf: i64, rd: i64, rm: i64) -> i64 { return a_alu_r(w, A_SUBR, sf, rd, A_ZR, rm, 0, 0); }
+fn a_negs(w: i64, sf: i64, rd: i64, rm: i64) -> i64 { return a_alu_r(w, A_SUBSR, sf, rd, A_ZR, rm, 0, 0); }
+
+// rd = rn * rm + ra (madd) / ra - rn * rm (msub)
+fn a_madd(w: i64, sf: i64, rd: i64, rn: i64, rm: i64, ra: i64) -> i64 {
+    return a_emit(w, A_MADD + a_sf(sf) + rm * 65536 + ra * 1024 + rn * 32 + rd);
+}
+
+fn a_msub(w: i64, sf: i64, rd: i64, rn: i64, rm: i64, ra: i64) -> i64 {
+    return a_emit(w, A_MSUB + a_sf(sf) + rm * 65536 + ra * 1024 + rn * 32 + rd);
+}
+
+fn a_mul(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_madd(w, sf, rd, rn, rm, A_ZR); }
+
+fn a_smulh(w: i64, rd: i64, rn: i64, rm: i64) -> i64 {
+    return a_emit(w, A_SMULH + rm * 65536 + rn * 32 + rd);
+}
+
+fn a_umulh(w: i64, rd: i64, rn: i64, rm: i64) -> i64 {
+    return a_emit(w, A_UMULH + rm * 65536 + rn * 32 + rd);
+}
+
+// Two-source data processing (sdiv udiv lslv lsrv asrv).
+fn a_dp2(w: i64, op: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 {
+    return a_emit(w, op + a_sf(sf) + rm * 65536 + rn * 32 + rd);
+}
+
+fn a_sdiv(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_dp2(w, A_SDIV, sf, rd, rn, rm); }
+fn a_udiv(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_dp2(w, A_UDIV, sf, rd, rn, rm); }
+
+// Bitfield move (ubfm sbfm bfm); N = sf.
+fn a_bfm(w: i64, op: i64, sf: i64, rd: i64, rn: i64, immr: i64, imms: i64) -> i64 {
+    return a_emit(w, op + a_sf(sf) + sf * 4194304 + immr * 65536 + imms * 1024 + rn * 32 + rd);
+}
+
+fn a_bits(sf: i64) -> i64 { return 32 + 32 * sf; }
+
+fn a_lsl_i(w: i64, sf: i64, rd: i64, rn: i64, s: i64) -> i64 {
+    let n = a_bits(sf);
+    return a_bfm(w, A_UBFM, sf, rd, rn, (n - s) % n, n - 1 - s);
+}
+
+fn a_lsr_i(w: i64, sf: i64, rd: i64, rn: i64, s: i64) -> i64 {
+    return a_bfm(w, A_UBFM, sf, rd, rn, s, a_bits(sf) - 1);
+}
+
+fn a_asr_i(w: i64, sf: i64, rd: i64, rn: i64, s: i64) -> i64 {
+    return a_bfm(w, A_SBFM, sf, rd, rn, s, a_bits(sf) - 1);
+}
+
+// Zero-extend the low `bits` bits of rn into rd (uxtb / uxth / 32-bit mov).
+fn a_uxt(w: i64, rd: i64, rn: i64, bits: i64) -> i64 {
+    return a_bfm(w, A_UBFM, 0, rd, rn, 0, bits - 1);
+}
+
+// Sign-extend the low `bits` bits of rn into the 64-bit rd.
+fn a_sxt(w: i64, rd: i64, rn: i64, bits: i64) -> i64 {
+    return a_bfm(w, A_SBFM, 1, rd, rn, 0, bits - 1);
+}
+
+// Insert the low `bits` bits of rn at bit 0 of rd (bfi rd, rn, #0, #bits).
+fn a_bfi0(w: i64, rd: i64, rn: i64, bits: i64) -> i64 {
+    return a_bfm(w, A_BFM, 1, rd, rn, 0, bits - 1);
+}
+
+fn a_lslv(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_dp2(w, A_LSLV, sf, rd, rn, rm); }
+fn a_lsrv(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_dp2(w, A_LSRV, sf, rd, rn, rm); }
+fn a_asrv(w: i64, sf: i64, rd: i64, rn: i64, rm: i64) -> i64 { return a_dp2(w, A_ASRV, sf, rd, rn, rm); }
+
+fn a_inv_cond(cc: i64) -> i64 {
+    if cc % 2 == 0 {
+        return cc + 1;
+    }
+    return cc - 1;
+}
+
+// rd = cond ? 1 : 0
+fn a_cset(w: i64, sf: i64, rd: i64, cc: i64) -> i64 {
+    return a_emit(w, A_CSINC + a_sf(sf) + A_ZR * 65536 + a_inv_cond(cc) * 4096 + A_ZR * 32 + rd);
+}
+
+// rd = cond ? rn : rm
+fn a_csel(w: i64, sf: i64, rd: i64, rn: i64, rm: i64, cc: i64) -> i64 {
+    return a_emit(w, A_CSEL + a_sf(sf) + rm * 65536 + cc * 4096 + rn * 32 + rd);
+}
+
+fn a_rbit(w: i64, sf: i64, rd: i64, rn: i64) -> i64 { return a_emit(w, A_RBIT + a_sf(sf) + rn * 32 + rd); }
+fn a_clz(w: i64, sf: i64, rd: i64, rn: i64) -> i64 { return a_emit(w, A_CLZ + a_sf(sf) + rn * 32 + rd); }
+
+// ---- branches (offsets in instructions, relative to the branch) ----
+
+fn a_b(w: i64, off: i64) -> i64 { return a_emit(w, A_B + (off & 67108863)); }
+fn a_bl(w: i64, off: i64) -> i64 { return a_emit(w, A_BL + (off & 67108863)); }
+fn a_bcond(w: i64, cc: i64, off: i64) -> i64 { return a_emit(w, A_BCOND + (off & 524287) * 32 + cc); }
+fn a_cbz(w: i64, sf: i64, rt: i64, off: i64) -> i64 { return a_emit(w, A_CBZ + a_sf(sf) + (off & 524287) * 32 + rt); }
+fn a_cbnz(w: i64, sf: i64, rt: i64, off: i64) -> i64 { return a_emit(w, A_CBNZ + a_sf(sf) + (off & 524287) * 32 + rt); }
+fn a_br(w: i64, rn: i64) -> i64 { return a_emit(w, A_BR + rn * 32); }
+fn a_blr(w: i64, rn: i64) -> i64 { return a_emit(w, A_BLR + rn * 32); }
+fn a_ret(w: i64) -> i64 { return a_emit(w, A_RET + 30 * 32); }
+
+fn a_fits_b(off: i64) -> bool { return off >= -33554432 && off < 33554432; }
+fn a_fits_bcond(off: i64) -> bool { return off >= -262144 && off < 262144; }
+
+// Re-target the branch at word `at` to word `target`.
+fn a_patch_branch(w: i64, at: i64, target: i64) -> i64 {
+    let insn = vget(w, at);
+    let off = target - at;
+    if (insn & 2080374784) == 335544320 {
+        // b / bl: imm26
+        return vset(w, at, (insn & 4227858432) + (off & 67108863));
+    }
+    // b.cond / cbz / cbnz: imm19 at bit 5
+    return vset(w, at, (insn & 4278190111) + (off & 524287) * 32);
+}
+
+fn a_patch_here(w: i64, at: i64) -> i64 { return a_patch_branch(w, at, vlen(w)); }
+
+// ---- loads and stores ----
+// size: 0 byte, 1 half, 2 word, 3 doubleword. opc: 0 store, 1 load
+// (zero-extending), 2 load sign-extending to 64 bits.
+
+fn a_ldst(w: i64, size: i64, opc: i64, rt: i64, rn: i64, uimm: i64) -> i64 {
+    return a_emit(w, A_LDST + size * 1073741824 + opc * 4194304 + (uimm & 4095) * 1024 + rn * 32 + rt);
+}
+
+// mode: 0 unscaled (ldur/stur), 1 post-index, 3 pre-index; simm9 bytes
+fn a_ldstu(w: i64, size: i64, opc: i64, rt: i64, rn: i64, simm: i64, mode: i64) -> i64 {
+    return a_emit(w, A_LDSTU + size * 1073741824 + opc * 4194304 + (simm & 511) * 4096 + mode * 1024 + rn * 32 + rt);
+}
+
+// [rn + rm << (scaled ? size : 0)]
+fn a_ldstr(w: i64, size: i64, opc: i64, rt: i64, rn: i64, rm: i64, scaled: i64) -> i64 {
+    return a_emit(w, A_LDSTR + size * 1073741824 + opc * 4194304 + rm * 65536 + 3 * 8192 + scaled * 4096 + rn * 32 + rt);
+}
+
+// True when [rn + off] has a single-instruction form at access size `size`.
+fn a_mem_fits(size: i64, off: i64) -> bool {
+    let unit = 1 << size;
+    if off >= 0 && off % unit == 0 && off / unit < 4096 {
+        return true;
+    }
+    return off >= -256 && off <= 255;
+}
+
+// Load or store at [rn + off]; the caller checks a_mem_fits.
+fn a_mem(w: i64, size: i64, opc: i64, rt: i64, rn: i64, off: i64) -> i64 {
+    let unit = 1 << size;
+    if off >= 0 && off % unit == 0 && off / unit < 4096 {
+        return a_ldst(w, size, opc, rt, rn, off / unit);
+    }
+    return a_ldstu(w, size, opc, rt, rn, off, 0);
+}
+
+fn a_ldr(w: i64, rt: i64, rn: i64, off: i64) -> i64 { return a_mem(w, 3, 1, rt, rn, off); }
+fn a_str(w: i64, rt: i64, rn: i64, off: i64) -> i64 { return a_mem(w, 3, 0, rt, rn, off); }
+
+// str rt, [rn, #-8]! / ldr rt, [rn], #8 — a push and a pop on stack rn
+fn a_push(w: i64, rt: i64, rn: i64) -> i64 { return a_ldstu(w, 3, 0, rt, rn, -8, 3); }
+fn a_pop(w: i64, rt: i64, rn: i64) -> i64 { return a_ldstu(w, 3, 1, rt, rn, 8, 1); }
+
+// stp / ldp rt, rt2, [rn, #off] (off a multiple of 8, -512..504)
+fn a_stp(w: i64, rt: i64, rt2: i64, rn: i64, off: i64) -> i64 {
+    return a_emit(w, A_STP + ((off / 8) & 127) * 32768 + rt2 * 1024 + rn * 32 + rt);
+}
+
+fn a_ldp(w: i64, rt: i64, rt2: i64, rn: i64, off: i64) -> i64 {
+    return a_emit(w, A_LDP + ((off / 8) & 127) * 32768 + rt2 * 1024 + rn * 32 + rt);
+}
+
+// ---- addresses ----
+
+// adr rd, pc + off (bytes, +-1 MiB)
+fn a_adr(w: i64, rd: i64, off: i64) -> i64 {
+    return a_emit(w, A_ADR + (off & 3) * 536870912 + ((off >> 2) & 524287) * 32 + rd);
+}
+
+// adrp rd, page(pc) + pages * 4096
+fn a_adrp(w: i64, rd: i64, pages: i64) -> i64 {
+    return a_emit(w, A_ADRP + (pages & 3) * 536870912 + ((pages >> 2) & 524287) * 32 + rd);
+}
+
+// Set the adrp at word `at` (code address `pc`) and the add after it so
+// the pair yields absolute address `target`.
+fn a_patch_adrp_add(w: i64, at: i64, pc: i64, target: i64) -> i64 {
+    let pages = (target >> 12) - (pc >> 12);
+    let rd = vget(w, at) & 31;
+    vset(w, at, A_ADRP + (pages & 3) * 536870912 + ((pages >> 2) & 524287) * 32 + rd);
+    let add = vget(w, at + 1);
+    return vset(w, at + 1, (add & 4290773983) + (target & 4095) * 1024);
+}
+
+fn a_svc(w: i64, imm: i64) -> i64 { return a_emit(w, A_SVC + imm * 32); }
+fn a_brk(w: i64, imm: i64) -> i64 { return a_emit(w, A_BRK + imm * 32); }
+fn a_nop(w: i64) -> i64 { return a_emit(w, A_NOP); }
+
+// ---- SIMD (16-byte vectors), for the string-scan idiom ----
+
+fn a_movi0(w: i64, vd: i64) -> i64 { return a_emit(w, A_MOVI0 + vd); }
+fn a_ldrq(w: i64, vt: i64, rn: i64, uimm: i64) -> i64 { return a_emit(w, A_LDRQ + uimm * 1024 + rn * 32 + vt); }
+fn a_cmeq16(w: i64, vd: i64, vn: i64, vm: i64) -> i64 { return a_emit(w, A_CMEQ16 + vm * 65536 + vn * 32 + vd); }
+fn a_eor16(w: i64, vd: i64, vn: i64, vm: i64) -> i64 { return a_emit(w, A_EOR16 + vm * 65536 + vn * 32 + vd); }
+fn a_umovd(w: i64, rd: i64, vn: i64, lane: i64) -> i64 { return a_emit(w, A_UMOVD + lane * 1048576 + vn * 32 + rd); }
