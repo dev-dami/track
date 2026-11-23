@@ -130,6 +130,11 @@ const TG_MACOS = 2;
 // The host's target: Windows or macOS when trackc itself runs there.
 fn host_target() -> i64 {
     if text_eq(env_get("OS"), "Windows_NT") {
+        // an Arm64 trackc.exe sees ARM64; an x64 one, also under Windows
+        // on ARM's emulation, sees AMD64
+        if text_eq(env_get("PROCESSOR_ARCHITECTURE"), "ARM64") {
+            return "aarch64-windows";
+        }
         return "x86_64-windows";
     }
     let me = arg_text(0);
@@ -284,7 +289,7 @@ fn make_dir(dir: i64) -> i64 {
     if path_exists(dir) {
         return 0;
     }
-    if text_eq(host_target(), "x86_64-windows") {
+    if text_ends(host_target(), "-windows") {
         // cmd.exe: mkdir makes the parents too; it wants backslashes
         let sb = sb_new();
         let bytes = text_bytes(dir);

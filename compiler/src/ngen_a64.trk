@@ -39,6 +39,9 @@
 // macOS layer makes no system calls: ngen lowers syscall6 to os_syscall),
 // passes LC_MAIN's x0/x1 in as rdi/rsi, places the code at the Mach-O
 // __text address and pads it to 16 KiB so __DATA starts on a page.
+// Windows (os 1, pe.trk) takes the Win64 sequence (ffi_win64_call) to a
+// Windows ARM64 call (ax_import_call_win), also traps in the stub, and
+// places the code at the PE .text address, padded to 4 KiB for .data.
 
 import "base";
 import "x64";

@@ -202,3 +202,102 @@ jobs:
           ./scripts/install.ps1
           & "$env:TRACK_INSTALL_DIR\trackc.exe" --version
           & "$env:TRACK_INSTALL_DIR\yard.exe" --version
+
+  windows-arm-cross:
+    # Cross-build the aarch64-windows executables on Linux: trackc.exe,
+    # hello and every example (docs/native.md, "PE32+ layout"); the
+    # windows-arm job runs them on Windows on ARM.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap trackc
+        run: scripts/bootstrap.sh
+
+      - name: Cross-build for aarch64-windows and parse the images
+        run: |
+          tc=build/bootstrap/stage3/trackc
+          d=build/winarm
+          mkdir -p "$d/examples"
+          "$tc" build --target aarch64-windows compiler/src/main.trk -o "$d/trackc.exe"
+          for f in examples/*.trk; do
+            s=$(basename "$f" .trk)
+            case "$s" in *_err) continue ;; esac
+            "$tc" build --target aarch64-windows "$f" -o "$d/examples/$s.exe"
+          done
+          if command -v llvm-readobj >/dev/null; then
+            for x in "$d/trackc.exe" "$d"/examples/*.exe; do
+              llvm-readobj --file-headers --coff-imports "$x" | grep -q 'IMAGE_FILE_MACHINE_ARM64'
+            done
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winarm-binaries
+          path: build/winarm
+          if-no-files-found: error
+
+  windows-arm:
+    # [untested here] Runs the cross-built binaries on GitHub's Windows on
+    # ARM runner: the examples against their goldens, then trackc.exe
+    # rebuilds hello on the device and must produce the same bytes as the
+    # Linux trackc did; last, the Arm64 trackc.exe runs the windows suite
+    # (its default target there is aarch64-windows).
+    needs: windows-arm-cross
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: winarm-binaries
+          path: build/winarm
+
+      - name: Show the machine
+        run: |
+          $env:PROCESSOR_ARCHITECTURE
+          [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+
+      - name: Examples print their goldens
+        run: |
+          $d = Resolve-Path build/winarm
+          $fails = 0
+          foreach ($f in Get-ChildItem examples -Filter '*.trk' | Sort-Object Name) {
+            $s = $f.BaseName
+            if ($s.EndsWith('_err')) { continue }
+            $exe = Join-Path $d "examples\$s.exe"
+            $out = Join-Path $d "examples\$s.out"
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $exe
+            $psi.WorkingDirectory = (Resolve-Path examples).Path
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $fs = [System.IO.File]::Create($out)
+            try { $p.StandardOutput.BaseStream.CopyTo($fs) } finally { $fs.Close() }
+            $p.WaitForExit()
+            $want = ([System.IO.File]::ReadAllText("tests/cases/examples/$s.out")).Replace('@HOSTNAME_BYTES@', '0')
+            $got = [System.IO.File]::ReadAllText($out)
+            $code = [int]([System.IO.File]::ReadAllText("tests/cases/examples/$s.code").Trim())
+            if ($got -eq $want -and $p.ExitCode -eq $code) { Write-Host "ok $s" }
+            else { Write-Host "FAIL $s (exit $($p.ExitCode), want $code)"; $fails++ }
+          }
+          if ($fails -ne 0) { exit 1 }
+
+      - name: trackc.exe builds hello on the device, byte-identical to the cross build
+        run: |
+          New-Item -ItemType Directory -Force -Path build/ondevice | Out-Null
+          & build/winarm/trackc.exe build --target aarch64-windows examples/hello.trk -o build/ondevice/hello.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $a = Get-FileHash build/ondevice/hello.exe
+          $b = Get-FileHash build/winarm/examples/hello.exe
+          if ($a.Hash -ne $b.Hash) { Write-Host "hello.exe differs from the cross build"; exit 1 }
+          & build/ondevice/hello.exe
+          & build/winarm/trackc.exe check examples/stdlib_demo.trk
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: The Arm64 trackc.exe passes the windows suite natively
+        run: ./tests/windows/run.ps1 build/winarm/trackc.exe
