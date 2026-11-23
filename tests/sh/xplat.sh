@@ -26,10 +26,10 @@ t_xplat_unknown_target_is_a_clear_error() {
 }
 
 t_xplat_unsupported_target_says_so() {
-    in_repo "$TRACKC" build --target aarch64-macos examples/hello.trk -o "$T/x"
+    in_repo "$TRACKC" build --target aarch64-windows examples/hello.trk -o "$T/x"
     rc_is 2 "exit code"
     has "$ERR" "not supported yet" "message"
-    in_repo "$TRACKC" check --target aarch64-macos examples/hello.trk
+    in_repo "$TRACKC" check --target aarch64-windows examples/hello.trk
     rc_ok "check works for any known target"
 }
 

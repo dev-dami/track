@@ -14,12 +14,17 @@
 //   os_args_count, os_arg, env_get, env_exists, sys_exec, process_spawn,
 //   clock_ms, file_*, dir_exists, track_file_*, net_socket_*
 //
+// No variadic call: arm64 macOS passes variadic arguments on the stack,
+// so open(2) is called without a mode and a file is created with
+// creat(2) (mac_open).
+//
 // libSystem returns -1 and sets errno; os_syscall returns -errno like the
 // Linux kernel, with macOS errno values (ENOENT, EINTR, EBADF agree).
 
 extern "libSystem.B.dylib" fn c_read(fd: i64, buf: i64, n: i64) -> i64 as "read";
 extern "libSystem.B.dylib" fn c_write(fd: i64, buf: i64, n: i64) -> i64 as "write";
-extern "libSystem.B.dylib" fn c_open(path: i64, flags: i64, mode: i64) -> i32 as "open";
+extern "libSystem.B.dylib" fn c_open(path: i64, flags: i64) -> i32 as "open";
+extern "libSystem.B.dylib" fn c_creat(path: i64, mode: i64) -> i32 as "creat";
 extern "libSystem.B.dylib" fn c_close(fd: i64) -> i32 as "close";
 extern "libSystem.B.dylib" fn c_stat(path: i64, st: i64) -> i32 as "stat";
 extern "libSystem.B.dylib" fn c_lseek(fd: i64, off: i64, how: i64) -> i64 as "lseek";
@@ -146,6 +151,32 @@ fn mac_oflags(f: i64) -> i64 {
     return m;
 }
 
+// open(2) with Linux flags and mode, without a variadic call: creating
+// goes through creat(2) (O_WRONLY | O_CREAT | O_TRUNC), then the file is
+// opened again with the asked flags minus O_CREAT and O_EXCL (unless
+// creat's write-only descriptor already fits).
+fn mac_open(path: i64, f: i64, mode: i64) -> i64 {
+    let flags = mac_oflags(f) & (0 - 2561);      // without O_CREAT | O_EXCL
+    if (f & 64) == 0 {
+        return mac_ret(c_open(path, flags));
+    }
+    if c_access(path, 0) == 0 {
+        if (f & 128) != 0 {
+            return -17;                           // EEXIST
+        }
+        return mac_ret(c_open(path, flags));
+    }
+    let fd = mac_ret(c_creat(path, mode));
+    if fd < 0 {
+        return fd;
+    }
+    if (f & 3) == 1 && (f & 1024) == 0 {
+        return fd;                                // creat's own descriptor fits
+    }
+    c_close(fd);
+    return mac_ret(c_open(path, flags));
+}
+
 // Linux mmap(2) flags -> macOS; MAP_FIXED_NOREPLACE becomes a hint that
 // must be met (os_syscall checks).
 fn mac_mflags(f: i64) -> i64 {
@@ -179,7 +210,7 @@ fn os_syscall(nr: i64, a: i64, b: i64, d: i64, e: i64, f: i64) -> i64 {
         return mac_ret(c_write(a, b, d));
     }
     if nr == 2 {
-        return mac_ret(c_open(a, mac_oflags(b), d));
+        return mac_open(a, b, d);
     }
     if nr == 3 {
         return mac_ret(c_close(a));

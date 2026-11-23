@@ -28,6 +28,17 @@
 // Interface: a64_translate(body, code_len, out) -> A64 body (code + the
 // unchanged data) or 0 after printing an error; vget(out, 0) is the A64
 // code length. The entry point stays at offset 0.
+//
+// Import calls (ffi.trk ffi_sysv_call, `call [rip + slot]`) translate to
+// an AAPCS64 call (ax_import_call): the System V argument registers move
+// to x0..x5, the first two System V stack words to x6, x7, the real SP
+// drops below the emulated stack, and adrp + ldr + blr reach the slot.
+// a64_translate_os(body, code_len, out, os, x86 fixups, A64 fixups) takes
+// the x86 fixups and returns the A64 ones, (adrp word, import id), for
+// the image writer (macho.trk); macOS also moves the stub to a trap (the
+// macOS layer makes no system calls: ngen lowers syscall6 to os_syscall),
+// passes LC_MAIN's x0/x1 in as rdi/rsi, places the code at the Mach-O
+// __text address and pads it to 16 KiB so __DATA starts on a page.
 
 import "base";
 import "x64";
@@ -63,7 +74,10 @@ const AT_LIVE = 7;   // flags of the current instruction are read later
 const AT_AR = 8;     // mem_addr result: base register
 const AT_AO = 9;     // mem_addr result: offset
 const AT_POS = 10;   // x86 offset of the current instruction
-const AT_SLOTS = 11;
+const AT_OS = 11;     // target OS (NG_TARGET): 0 linux, 2 macos
+const AT_IMPIN = 12;  // x86 import call fixups (code position, import id), ffi.trk
+const AT_IMPOUT = 13; // A64 import call fixups (word of the adrp, import id)
+const AT_SLOTS = 14;
 
 const AFK_SUB = 0;
 const AFK_ADD = 1;
@@ -715,10 +729,59 @@ fn ax_pmovmskb(t: i64, rd: i64, vn: i64) -> i64 {
 }
 
 // Translate the decoded instruction d.
+// x86 `call [rip + slot]` of an import (ffi_sysv_call) as an AAPCS64
+// call: rcx -> x3 first (x1 is rcx), rdi -> x0, rsi -> x1, rdx stays in
+// x2, r8 -> x4, r9 -> x5, System V stack words 0 and 1 -> x6, x7 (calls
+// of up to eight word arguments; Apple's variadic arguments, which go on
+// the stack, are not supported). The real SP goes 16-aligned below the
+// emulated stack, where x9 and x10 (rbx-class r14/r15, caller-saved in
+// AAPCS64) are kept across the call. The result is in x0 = rax.
+fn ax_import_call(t: i64, d: i64) -> bool {
+    let w = ax_tw(t);
+    let fx = ax_tg(t, AT_IMPIN);
+    let at = ax_tg(t, AT_POS) + 2;
+    let mut id: i64 = -1;
+    let mut i: i64 = 0;
+    while fx != 0 && i < vlen(fx) {
+        if vget(fx, i) == at {
+            id = vget(fx, i + 1);
+        }
+        i = i + 2;
+    }
+    if id < 0 {
+        return a64_fail(t, "indirect call that is not an import call");
+    }
+    a_mov(w, 1, 3, 1);
+    a_mov(w, 1, 0, 21);
+    a_mov(w, 1, 1, 20);
+    a_mov(w, 1, 4, 22);
+    a_mov(w, 1, 5, 23);
+    a_ldr(w, 6, 28, 0);
+    a_ldr(w, 7, 28, 8);
+    a_subi(w, 1, AX16, 28, 16);
+    a_lsr_i(w, 1, AX16, AX16, 4);
+    a_lsl_i(w, 1, AX16, AX16, 4);
+    a_mov_sp(w, A_SP, AX16);
+    a_mem(w, 3, 0, 9, A_SP, 0);
+    a_mem(w, 3, 0, 10, A_SP, 8);
+    let adrp = a_adrp(w, AX16, 0);
+    a_ldr(w, AX16, AX16, 0);
+    a_blr(w, AX16);
+    a_ldr(w, 9, A_SP, 0);
+    a_ldr(w, 10, A_SP, 8);
+    let out = ax_tg(t, AT_IMPOUT);
+    vpush(out, adrp);
+    vpush(out, id);
+    return true;
+}
+
 fn a64_insn(t: i64, d: i64) -> bool {
     let w = ax_tw(t);
     let op = ax_dg(d, AD_OP);
     let reg = ax_dg(d, AD_REG);
+    if op == 255 && reg == 2 && ax_dg(d, AD_BASE) == -2 {
+        return ax_import_call(t, d);
+    }
     let sub = reg & 7;
     let md = ax_dg(d, AD_MOD);
     let size = ax_op_size(d);
@@ -1114,7 +1177,19 @@ fn a64_sys_stub(w: i64) -> i64 {
 
 // Translate the x86-64 body (code_len code bytes, then data) to A64.
 fn a64_translate(body: i64, n: i64, out: i64) -> i64 {
+    return a64_translate_os(body, n, out, 0, 0, vnew());
+}
+
+// The macOS image's __text address (macho.trk MO_BASE + MO_TEXT_OFF).
+const AX_MACHO_TEXT = 4294983680;
+
+// a64_translate for target OS `os`; `impin` holds the x86 import call
+// fixups (0: none), `impout` receives the A64 ones.
+fn a64_translate_os(body: i64, n: i64, out: i64, os: i64, impin: i64, impout: i64) -> i64 {
     let t = vfill(vnew_cap(AT_SLOTS), AT_SLOTS, 0);
+    vset(t, AT_OS, os);
+    vset(t, AT_IMPIN, impin);
+    vset(t, AT_IMPOUT, impout);
     let w = vnew_cap(n);
     vset(t, AT_W, w);
     vset(t, AT_FX, vnew());
@@ -1124,6 +1199,10 @@ fn a64_translate(body: i64, n: i64, out: i64) -> i64 {
     vset(t, AT_D, d);
     vset(t, AT_D2, vfill(vnew_cap(AD_SLOTS), AD_SLOTS, 0));
     let map = vfill(vnew_cap(n + 1), n + 1, -1);
+    if os == 2 {
+        a_mov(w, 1, 21, 0);  // LC_MAIN's argc, argv: the x86 entry reads rdi, rsi
+        a_mov(w, 1, 20, 1);
+    }
     a_mov_sp(w, 28, A_SP); // the emulated rsp starts at the entry stack
     let mut pos: i64 = 0;
     while pos < n {
@@ -1145,12 +1224,19 @@ fn a64_translate(body: i64, n: i64, out: i64) -> i64 {
     }
     vset(map, n, vlen(w));
     let stub = vlen(w);
-    a64_sys_stub(w);
-    while vlen(w) % 4 != 0 {
+    let mut origin = ELF_BASE + ELF_HEADERS;
+    let mut align: i64 = 4;
+    if os == 2 {
+        a_brk(w, 1);           // no system calls on macOS
+        origin = AX_MACHO_TEXT;
+        align = 4096;          // words: 16 KiB, the __DATA page
+    } else {
+        a64_sys_stub(w);
+    }
+    while vlen(w) % align != 0 {
         a_nop(w);
     }
     let code_bytes = vlen(w) * 4;
-    let origin = ELF_BASE + ELF_HEADERS;
     let fx = ax_tg(t, AT_FX);
     let mut i: i64 = 0;
     while i < vlen(fx) {

@@ -301,6 +301,36 @@ fn mo_patch_x64(body: i64, fixups: i64, got_off: i64) -> i64 {
     return 0;
 }
 
+fn mo_get32(b: i64, at: i64) -> i64 {
+    return vget(b, at) | (vget(b, at + 1) << 8) | (vget(b, at + 2) << 16) | (vget(b, at + 3) << 24);
+}
+
+fn mo_put32(b: i64, at: i64, v: i64) -> i64 {
+    vset(b, at, v & 255);
+    vset(b, at + 1, (v >> 8) & 255);
+    vset(b, at + 2, (v >> 16) & 255);
+    return vset(b, at + 3, (v >> 24) & 255);
+}
+
+// arm64: each fixup is (word of an `adrp x16; ldr x16, [x16]` pair,
+// import id) in the A64 code (ngen_a64.trk ax_import_call); the pair gets
+// the page and offset of the import's __got slot.
+fn mo_patch_a64(body: i64, fixups: i64, got_off: i64) -> i64 {
+    let mut f: i64 = 0;
+    while f < vlen(fixups) {
+        let at = 4 * vget(fixups, f);
+        let pc = MO_BASE + MO_TEXT_OFF + at;
+        let slot = MO_BASE + got_off + 8 * vget(fixups, f + 1);
+        let pages = (slot >> 12) - (pc >> 12);
+        let adrp = mo_get32(body, at);
+        mo_put32(body, at, (adrp & 2667577375) + (pages & 3) * 536870912 + ((pages >> 2) & 524287) * 32);
+        let ldr = mo_get32(body, at + 4);
+        mo_put32(body, at + 4, (ldr & 4290773983) + ((slot & 4095) / 8) * 1024);
+        f = f + 2;
+    }
+    return 0;
+}
+
 // The whole signed Mach-O image of code+data `body` (the first `code`
 // bytes code, a multiple of MO_PAGE) calling `imports` from the sites
 // `fixups`, for CPU type `cpu`; `ident` names it in the signature.
@@ -317,6 +347,8 @@ fn macho_image(body: i64, code: i64, imports: i64, fixups: i64, ident: i64, cpu:
     let le_off = data_off + data_fsize;
     if cpu == MO_CPU_X86_64 {
         mo_patch_x64(body, fixups, got_off);
+    } else {
+        mo_patch_a64(body, fixups, got_off);
     }
     // __LINKEDIT: bind opcodes
     let le = vnew();
