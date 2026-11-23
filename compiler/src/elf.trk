@@ -18,6 +18,8 @@ import "x64";
 
 const ELF_BASE = 4194304;   // 0x400000
 const ELF_HEADERS = 176;    // ELF header + two program headers
+const ELF_X86_64 = 62;      // e_machine EM_X86_64
+const ELF_AARCH64 = 183;    // e_machine EM_AARCH64
 
 fn elf_u16(b: i64, v: i64) -> i64 {
     x_byte(b, v);
@@ -30,6 +32,12 @@ fn elf_u16(b: i64, v: i64) -> i64 {
 // `shoff`/`shnum`: file offset and count of the section headers (0, 0 for
 // none); the last section is the section-name table.
 fn elf_headers(body: i64, entry: i64, shoff: i64, shnum: i64) -> i64 {
+    return elf_headers_m(body, entry, shoff, shnum, ELF_X86_64);
+}
+
+// elf_headers for machine `mach` (ELF_X86_64 or ELF_AARCH64; aarch64
+// Linux may run 64 KiB pages, so its segment is 64 KiB aligned).
+fn elf_headers_m(body: i64, entry: i64, shoff: i64, shnum: i64, mach: i64) -> i64 {
     let b = vnew_cap(ELF_HEADERS);
     // e_ident
     x_byte(b, 127);
@@ -42,7 +50,7 @@ fn elf_headers(body: i64, entry: i64, shoff: i64, shnum: i64) -> i64 {
     x_byte(b, 0);   // System V ABI
     x_u64(b, 0);
     elf_u16(b, 2);  // ET_EXEC
-    elf_u16(b, 62); // EM_X86_64
+    elf_u16(b, mach); // e_machine
     x_u32(b, 1);
     x_u64(b, ELF_BASE + ELF_HEADERS + entry);
     x_u64(b, 64);   // e_phoff
@@ -69,7 +77,11 @@ fn elf_headers(body: i64, entry: i64, shoff: i64, shnum: i64) -> i64 {
     x_u64(b, ELF_BASE);
     x_u64(b, size);
     x_u64(b, size);
-    x_u64(b, 4096);
+    if mach == ELF_AARCH64 {
+        x_u64(b, 65536);
+    } else {
+        x_u64(b, 4096);
+    }
     // program header: PT_GNU_STACK, RW (the stack is not executable)
     x_u32(b, 1685382481);
     x_u32(b, 6);
@@ -178,6 +190,11 @@ fn elf_tail(body: i64, code: i64, syms: i64, shoff_out: i64) -> i64 {
 // the functions of `syms` (elf_tail), or with no sections when `syms` is
 // 0. Returns 0 on success.
 fn elf_write_file(path: i64, body: i64, code: i64, syms: i64) -> i64 {
+    return elf_write_file_m(path, body, code, syms, ELF_X86_64);
+}
+
+// elf_write_file for machine `mach` (elf_headers_m).
+fn elf_write_file_m(path: i64, body: i64, code: i64, syms: i64, mach: i64) -> i64 {
     let shoff = vfill(vnew(), 1, 0);
     let mut tail = vnew();
     let mut shnum: i64 = 0;
@@ -185,7 +202,7 @@ fn elf_write_file(path: i64, body: i64, code: i64, syms: i64) -> i64 {
         tail = elf_tail(body, code, syms, shoff);
         shnum = 6;
     }
-    let head = elf_headers(body, 0, vget(shoff, 0), shnum);
+    let head = elf_headers_m(body, 0, vget(shoff, 0), shnum, mach);
     let h = vlen(head);
     let m = h + vlen(body);
     let n = m + vlen(tail);
