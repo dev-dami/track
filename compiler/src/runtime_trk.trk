@@ -2430,14 +2430,15 @@ fn rt_module_source_5(b: i64) -> i64 {
     sb_line(b, "    return 0;");
     sb_line(b, "}");
     sb_line(b, "");
-    sb_line(b, "// system(3) with cmd.exe: `cmd.exe /c cmd`; the exit code, -1 when the");
-    sb_line(b, "// process could not start.");
+    sb_line(b, "// system(3) with cmd.exe: `cmd.exe /s /c \"cmd\"` (/s: cmd strips exactly");
+    sb_line(b, "// the outer quotes, so `cmd` may start with a quoted path); the exit");
+    sb_line(b, "// code, -1 when the process could not start.");
     sb_line(b, "fn sys_exec(cmd: i64) -> i64 {");
     sb_line(b, "    if cmd == 0 {");
     sb_line(b, "        return -1;");
     sb_line(b, "    }");
     sb_line(b, "    rt_flush();");
-    sb_line(b, "    let line = str_concat(\"cmd.exe /c \", cmd);");
+    sb_line(b, "    let line = str_concat(str_concat(\"cmd.exe /s /c \\\"\", cmd), \"\\\"\");");
     sb_line(b, "    let wl = win_wide(line);");
     sb_line(b, "    let si = rt_malloc(104);");
     sb_line(b, "    rt_zero(si, 104);");

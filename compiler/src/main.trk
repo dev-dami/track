@@ -280,6 +280,22 @@ fn make_dir(dir: i64) -> i64 {
     if path_exists(dir) {
         return 0;
     }
+    if text_eq(host_target(), "x86_64-windows") {
+        // cmd.exe: mkdir makes the parents too; it wants backslashes
+        let sb = sb_new();
+        let bytes = text_bytes(dir);
+        let mut i: i64 = 0;
+        while i < vlen(bytes) {
+            let b = vget(bytes, i);
+            if b == 47 {
+                sb_byte(sb, 92);
+            } else {
+                sb_byte(sb, b);
+            }
+            i = i + 1;
+        }
+        return shell(text_cat3("mkdir \"", sb_text(sb), "\" 2>nul"));
+    }
     return shell(text_cat3("mkdir -p ", shell_quote(dir), " 2>/dev/null"));
 }
 

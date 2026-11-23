@@ -287,14 +287,15 @@ fn env_exists(key: i64) -> i64 {
     return 0;
 }
 
-// system(3) with cmd.exe: `cmd.exe /c cmd`; the exit code, -1 when the
-// process could not start.
+// system(3) with cmd.exe: `cmd.exe /s /c "cmd"` (/s: cmd strips exactly
+// the outer quotes, so `cmd` may start with a quoted path); the exit
+// code, -1 when the process could not start.
 fn sys_exec(cmd: i64) -> i64 {
     if cmd == 0 {
         return -1;
     }
     rt_flush();
-    let line = str_concat("cmd.exe /c ", cmd);
+    let line = str_concat(str_concat("cmd.exe /s /c \"", cmd), "\"");
     let wl = win_wide(line);
     let si = rt_malloc(104);
     rt_zero(si, 104);

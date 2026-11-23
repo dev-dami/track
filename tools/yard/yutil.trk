@@ -2,8 +2,60 @@
 //
 // Strings and lists are i64 handles, as in the compiler (compiler/src/base.trk).
 // Every OS operation yard needs beyond the runtime builtins (mkdir -p,
-// rm -rf, directory walks, cp, cksum) goes through `sys_exec` and /bin/sh,
-// so yard adds no runtime primitive.
+// rm -rf, directory walks, cp, cksum) goes through `sys_exec`: /bin/sh on
+// Linux, cmd.exe on Windows (`on_windows`), so yard adds no runtime
+// primitive. Paths inside yard always use '/'; `sq` turns them into
+// backslashes for cmd.exe.
+
+// Running on Windows: the same test trackc uses for its host target.
+fn on_windows() -> bool {
+    if text_eq(env_or_empty("OS"), "Windows_NT") {
+        return true;
+    }
+    let me = arg_text(0);
+    return text_ends(me, ".exe") || text_ends(me, ".EXE");
+}
+
+// `s` with every '\\' turned into '/'.
+fn fwd_slashes(s: i64) -> i64 {
+    let b = sb_new();
+    let n = text_len(s);
+    let mut i: i64 = 0;
+    while i < n {
+        let ch = text_at(s, i);
+        if ch == 92 {
+            sb_byte(b, 47);
+        } else {
+            sb_byte(b, ch);
+        }
+        i = i + 1;
+    }
+    return sb_text(b);
+}
+
+// The executable file name for program `name` ("name.exe" on Windows).
+fn exe_name(path: i64) -> i64 {
+    if on_windows() {
+        return text_cat(path, ".exe");
+    }
+    return path;
+}
+
+// Shell suffix that discards stderr.
+fn no_err() -> i64 {
+    if on_windows() {
+        return " 2>nul";
+    }
+    return " 2>/dev/null";
+}
+
+// `cd <dir> && `, for the host shell.
+fn cd_and(dir: i64) -> i64 {
+    if on_windows() {
+        return text_cat3("cd /d ", sq(dir), " && ");
+    }
+    return text_cat3("cd ", sq(dir), " && ");
+}
 
 fn vnew() -> i64 { return track_i64_collection_new(16); }
 fn vlen(v: i64) -> i64 { return track_i64_collection_len(v); }
@@ -105,8 +157,26 @@ fn env_or_empty(name: i64) -> i64 {
     return "";
 }
 
-// Wrap in single quotes for /bin/sh.
+// Wrap in single quotes for /bin/sh; on Windows, in double quotes for
+// cmd.exe, with '/' turned into '\\'.
 fn sq(s: i64) -> i64 {
+    if on_windows() {
+        let w = sb_new();
+        sb_byte(w, 34);
+        let m = text_len(s);
+        let mut j: i64 = 0;
+        while j < m {
+            let c = text_at(s, j);
+            if c == 47 {
+                sb_byte(w, 92);
+            } else if c != 34 {
+                sb_byte(w, c);
+            }
+            j = j + 1;
+        }
+        sb_byte(w, 34);
+        return sb_text(w);
+    }
     let b = sb_new();
     sb_byte(b, 39);
     let n = text_len(s);
@@ -182,7 +252,7 @@ fn dir_name(path: i64) -> i64 {
 }
 
 fn join(a: i64, b: i64) -> i64 {
-    if text_starts(b, "/") {
+    if is_absolute(b) {
         return b;
     }
     if text_ends(a, "/") {
@@ -201,6 +271,13 @@ fn strip_dir(path: i64, prefix: i64) -> i64 {
 }
 
 fn cwd() -> i64 {
+    if on_windows() {
+        let here = text_trim(capture("cd"));
+        if text_len(here) > 0 {
+            return fwd_slashes(here);
+        }
+        return ".";
+    }
     let pwd = env_or_empty("PWD");
     if text_len(pwd) > 0 {
         return pwd;
@@ -208,8 +285,16 @@ fn cwd() -> i64 {
     return ".";
 }
 
-fn absolute(path: i64) -> i64 {
+fn is_absolute(path: i64) -> bool {
     if text_starts(path, "/") {
+        return true;
+    }
+    // a Windows drive path, "C:/..." (yard paths use '/')
+    return on_windows() && text_len(path) >= 2 && text_at(path, 1) == 58;
+}
+
+fn absolute(path: i64) -> i64 {
+    if is_absolute(path) {
         return path;
     }
     return join(cwd(), path);
@@ -219,16 +304,31 @@ fn make_dirs(dir: i64) -> i64 {
     if is_dir(dir) {
         return 0;
     }
+    if on_windows() {
+        return shell(text_cat3("mkdir ", sq(dir), " 2>nul"));
+    }
     return shell(text_cat3("mkdir -p ", sq(dir), " 2>/dev/null"));
 }
 
 fn remove_tree(dir: i64) -> i64 {
+    if on_windows() {
+        if is_dir(dir) {
+            return shell(text_cat3("rmdir /s /q ", sq(dir), " 2>nul"));
+        }
+        if exists(dir) {
+            return shell(text_cat3("del /f /q ", sq(dir), " 2>nul"));
+        }
+        return 0;
+    }
     return shell(text_cat3("rm -rf ", sq(dir), " 2>/dev/null"));
 }
 
-// A fresh scratch path under $TMPDIR (default /tmp).
+// A fresh scratch path under $TMPDIR (default /tmp; %TEMP% on Windows).
 fn scratch_path(tag: i64) -> i64 {
     let mut tmp = env_or_empty("TMPDIR");
+    if text_len(tmp) == 0 && on_windows() {
+        tmp = fwd_slashes(env_or_empty("TEMP"));
+    }
     if text_len(tmp) == 0 {
         tmp = "/tmp";
     }
@@ -251,7 +351,37 @@ fn capture(cmd: i64) -> i64 {
 
 // Every `.trk` file under `dir`, recursively, sorted.
 fn find_trk(dir: i64) -> i64 {
+    if on_windows() {
+        return find_trk_win(dir, true);
+    }
     let files = split_lines(capture(text_cat3("find -L ", sq(dir), " -type f -name '*.trk' 2>/dev/null")));
+    sort_texts(files);
+    return files;
+}
+
+// `dir /b` lists names (absolute paths with /s); yard wants `dir/<rel>`
+// with '/', as find prints it. `deep` walks subdirectories.
+fn find_trk_win(dir: i64, deep: bool) -> i64 {
+    let mut flags = "/b /a-d ";
+    if deep {
+        flags = "/s /b /a-d ";
+    }
+    let lines = split_lines(capture(text_cat3(text_cat("dir ", flags), sq(join(dir, "*.trk")), " 2>nul")));
+    let base = absolute(fwd_slashes(dir));
+    let files = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(lines) {
+        let mut f = fwd_slashes(text_trim(vget(lines, i)));
+        if text_ends(f, ".trk") {
+            if !deep {
+                f = join(dir, f);
+            } else if text_starts(f, text_cat(base, "/")) {
+                f = join(dir, text_from(f, text_len(base) + 1));
+            }
+            vpush(files, f);
+        }
+        i = i + 1;
+    }
     sort_texts(files);
     return files;
 }

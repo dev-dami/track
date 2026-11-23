@@ -162,7 +162,7 @@ fn cmd_run(root: i64, m: i64) -> i64 {
     if text_len(built) > 0 {
         return built;
     }
-    let exe = join(join(root, "target"), vget(m, M_NAME));
+    let exe = exe_name(join(join(root, "target"), vget(m, M_NAME)));
     let status = shell(sq(exe));
     if status != 0 {
         return text_cat3("Process exited with code: Some(", text_of_int(status), ")");
