@@ -26,6 +26,7 @@ import "life";
 import "ngen";
 import "ngen_a64";
 import "pe";
+import "macho";
 import "runtime_trk";
 import "lsp";
 
@@ -34,7 +35,7 @@ fn trackc_version() -> i64 { return "1.0.0"; }
 fn usage() -> i64 {
     err("trackc 1.0.0 — the self-hosted Track compiler\n\n");
     err("USAGE:\n");
-    err("    trackc build <file.trk> [-o <exe>]     Compile to a native executable (ELF, or PE for windows)\n");
+    err("    trackc build <file.trk> [-o <exe>]     Compile to a native executable (ELF, PE for windows, Mach-O for macos)\n");
     err("        -g, --symbols                      ...with a symbol table (nm, perf, gdb)\n");
     err("    trackc run <file.trk> [args...]        Compile and run\n");
     err("    trackc check <file.trk>                Parse and ownership-check only\n");
@@ -46,7 +47,7 @@ fn usage() -> i64 {
     err("\nOPTIONS:\n");
     err("    --deny-warnings  exit 1 when any warning is reported\n");
     err("    --target <arch>-<os>  build/run/check for x86_64|aarch64 - linux|macos|windows\n");
-    err("                     (also TRACKC_TARGET; default: the host; built today: x86_64-linux, x86_64-windows)\n");
+    err("                     (also TRACKC_TARGET; default: the host; built today: x86_64-linux/macos/windows, aarch64-linux/macos)\n");
     return 0;
 }
 
@@ -126,7 +127,7 @@ const TG_LINUX = 0;
 const TG_WINDOWS = 1;
 const TG_MACOS = 2;
 
-// The host's target: Windows when trackc itself runs there.
+// The host's target: Windows or macOS when trackc itself runs there.
 fn host_target() -> i64 {
     if text_eq(env_get("OS"), "Windows_NT") {
         return "x86_64-windows";
@@ -134,6 +135,11 @@ fn host_target() -> i64 {
     let me = arg_text(0);
     if text_ends(me, ".exe") || text_ends(me, ".EXE") {
         return "x86_64-windows";
+    }
+    // macOS (an arm64 Mac runs x86_64 output under Rosetta 2; pass
+    // --target aarch64-macos for native code)
+    if path_exists("/System/Library/CoreServices/SystemVersion.plist") {
+        return "x86_64-macos";
     }
     return "x86_64-linux";
 }
@@ -218,14 +224,14 @@ fn check_target_buildable() -> i64 {
     check_target_known();
     let arch = target_arch_name();
     let os = target_os_name();
-    if text_eq(arch, "x86_64") && (text_eq(os, "linux") || text_eq(os, "windows")) {
+    if text_eq(arch, "x86_64") && (text_eq(os, "linux") || text_eq(os, "windows") || text_eq(os, "macos")) {
         return 0;
     }
-    if text_eq(arch, "aarch64") && text_eq(os, "linux") {
+    if text_eq(arch, "aarch64") && (text_eq(os, "linux") || text_eq(os, "macos")) {
         return 0;
     }
     err(text_cat3("trackc: target '", target_text(), "' is not supported yet\n"));
-    err("  supported: x86_64-linux, x86_64-windows, aarch64-linux\n");
+    err("  supported: x86_64-linux, x86_64-windows, x86_64-macos, aarch64-linux, aarch64-macos\n");
     quit(2);
     return 0;
 }
@@ -262,6 +268,15 @@ fn shell_quote(s: i64) -> i64 {
     }
     sb_byte(b, 39);
     return sb_text(b);
+}
+
+// The last path component of `path`.
+fn exe_name(path: i64) -> i64 {
+    let slash = last_slash(path);
+    if slash >= 0 {
+        return str_substr(path, slash + 1, text_len(path) - slash - 1);
+    }
+    return path;
 }
 
 fn file_stem(path: i64) -> i64 {
@@ -346,6 +361,28 @@ fn build_native(path: i64, exe: i64) -> i64 {
     }
     if os == TG_WINDOWS {
         if pe_write_file(exe, body, native_code_len(c), native_imports(c), native_import_fixups(c)) != 0 {
+            err(text_cat3("trackc: cannot write '", exe, "'\n"));
+            quit(1);
+        }
+        return 0;
+    }
+    if os == TG_MACOS {
+        let mut mcode = native_code_len(c);
+        let mut mfix = native_import_fixups(c);
+        let mut cpu = MO_CPU_X86_64;
+        if text_eq(target_arch_name(), "aarch64") {
+            // lift to A64; import calls become AAPCS64 calls (ngen_a64.trk)
+            let mlen = vfill(vnew(), 1, 0);
+            let afix = vnew();
+            body = a64_translate_os(body, mcode, mlen, TG_MACOS, mfix, afix);
+            if body == 0 {
+                quit(1);
+            }
+            mcode = vget(mlen, 0);
+            mfix = afix;
+            cpu = MO_CPU_ARM64;
+        }
+        if macho_write_file(exe, body, mcode, native_imports(c), mfix, exe_name(exe), cpu) != 0 {
             err(text_cat3("trackc: cannot write '", exe, "'\n"));
             quit(1);
         }

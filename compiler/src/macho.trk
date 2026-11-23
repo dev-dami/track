@@ -1,0 +1,631 @@
+// macho.trk — Mach-O 64 executable writer (x86_64-macos; aarch64-macos
+// once an aarch64 backend exists: a cputype and a fixup patcher).
+//
+// Layout (every segment 16 KiB aligned in the file and in memory, the
+// file offset of a byte equal to its address minus MO_BASE):
+//
+//   __PAGEZERO  4 GiB, no access
+//   __TEXT      file 0: mach header and load commands; __text at
+//               MO_TEXT_OFF (the entry, LC_MAIN), the code ngen made
+//   __DATA      __data (the data ngen appends after the code: ngen pads the
+//               code to 16 KiB for this target, so its rip-relative
+//               references hold), then __got, one 8-byte slot per import
+//   __LINKEDIT  dyld bind opcodes, export trie, symbol table, indirect
+//               symbol table, string table, then the code signature
+//
+// Load commands: the four segments, LC_DYLD_INFO_ONLY, LC_SYMTAB,
+// LC_DYSYMTAB, LC_LOAD_DYLINKER (/usr/lib/dyld), LC_UUID,
+// LC_BUILD_VERSION (macOS 11.0), LC_MAIN, one LC_LOAD_DYLIB per library,
+// LC_CODE_SIGNATURE. Every import is bound by dyld into its __got slot
+// (BIND_TYPE_POINTER, two-level namespace, library ordinal = position of
+// its LC_LOAD_DYLIB); each call site is `call [rip + slot]` (ffi.trk).
+//
+// The code signature is ad hoc and linker-signed, as ld64 writes it: a
+// SuperBlob holding one CodeDirectory (version 0x20400, flags adhoc |
+// linker-signed, SHA-256 of every 4 KiB page of the file before the
+// signature, the exec segment = __TEXT). Arm64 macOS runs nothing
+// unsigned; x86_64 gets the same signature.
+
+import "base";
+import "x64";
+
+const MO_BASE = 4294967296;     // 0x100000000, the end of __PAGEZERO
+const MO_PAGE = 16384;
+const MO_TEXT_OFF = 16384;      // __text: the page after the headers
+const MO_CPU_X86_64 = 16777223; // CPU_TYPE_X86_64 (0x01000007)
+const MO_CPU_ARM64 = 16777228;  // CPU_TYPE_ARM64 (0x0100000c)
+const MO_STACK = 33554432;      // LC_MAIN stack size: 32 MiB (trackc recurses deeply)
+
+fn mo_up(n: i64, a: i64) -> i64 { return (n + a - 1) / a * a; }
+
+fn mo_u16(b: i64, v: i64) -> i64 {
+    x_byte(b, v);
+    return x_byte(b, v >> 8);
+}
+
+fn mo_be32(b: i64, v: i64) -> i64 {
+    x_byte(b, v >> 24);
+    x_byte(b, v >> 16);
+    x_byte(b, v >> 8);
+    return x_byte(b, v);
+}
+
+fn mo_be64(b: i64, v: i64) -> i64 {
+    mo_be32(b, v >> 32);
+    return mo_be32(b, v);
+}
+
+fn mo_pad(b: i64, size: i64) -> i64 {
+    while vlen(b) < size {
+        vpush(b, 0);
+    }
+    return 0;
+}
+
+fn mo_append(b: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < vlen(src) {
+        vpush(b, vget(src, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn mo_cstr(b: i64, s: i64) -> i64 {
+    mo_append(b, text_bytes(s));
+    return vpush(b, 0);
+}
+
+// A 16-byte, NUL-padded name field.
+fn mo_name16(b: i64, name: i64) -> i64 {
+    let at = vlen(b);
+    mo_append(b, text_bytes(name));
+    return mo_pad(b, at + 16);
+}
+
+fn mo_uleb(b: i64, v: i64) -> i64 {
+    let mut x = v;
+    while x >= 128 {
+        x_byte(b, (x & 127) | 128);
+        x = x >> 7;
+    }
+    return x_byte(b, x);
+}
+
+fn mo_segment(b: i64, name: i64, addr: i64, vsize: i64, off: i64, fsize: i64, prot: i64, nsects: i64) -> i64 {
+    x_u32(b, 25);                  // LC_SEGMENT_64
+    x_u32(b, 72 + 80 * nsects);
+    mo_name16(b, name);
+    x_u64(b, addr);
+    x_u64(b, vsize);
+    x_u64(b, off);
+    x_u64(b, fsize);
+    x_u32(b, prot);                // maxprot
+    x_u32(b, prot);                // initprot
+    x_u32(b, nsects);
+    return x_u32(b, 0);
+}
+
+fn mo_section(b: i64, sect: i64, seg: i64, addr: i64, size: i64, off: i64, align: i64, flags: i64, r1: i64) -> i64 {
+    mo_name16(b, sect);
+    mo_name16(b, seg);
+    x_u64(b, addr);
+    x_u64(b, size);
+    x_u32(b, off);
+    x_u32(b, align);
+    x_u32(b, 0);
+    x_u32(b, 0);
+    x_u32(b, flags);
+    x_u32(b, r1);
+    x_u32(b, 0);
+    return x_u32(b, 0);
+}
+
+// The symbol dyld looks up for `sym`. On x86_64 libSystem keeps the
+// 32-bit-inode stat family under the plain names; the 64-bit-inode
+// layout (the only one arm64 has) is `$INODE64`.
+fn mo_symbol(sym: i64, cpu: i64) -> i64 {
+    if cpu == MO_CPU_X86_64 && (text_eq(sym, "stat") || text_eq(sym, "fstat") || text_eq(sym, "lstat")) {
+        return text_cat3("_", sym, "$INODE64");
+    }
+    return text_cat("_", sym);
+}
+
+// The install name of library `lib` as an extern names it.
+fn mo_dylib_path(lib: i64) -> i64 {
+    if text_starts(lib, "/") {
+        return lib;
+    }
+    return text_cat("/usr/lib/", lib);
+}
+
+// ---------------------------------------------------------------- SHA-256
+
+const MO_M32 = 4294967295;
+
+fn sha_xor(a: i64, b: i64) -> i64 { return (a | b) - (a & b); }
+
+fn sha_rotr(x: i64, n: i64) -> i64 { return ((x >> n) | (x << (32 - n))) & MO_M32; }
+
+fn sha_k() -> i64 {
+    let k = vnew_cap(64);
+    vpush(k, 1116352408); vpush(k, 1899447441); vpush(k, 3049323471); vpush(k, 3921009573);
+    vpush(k, 961987163); vpush(k, 1508970993); vpush(k, 2453635748); vpush(k, 2870763221);
+    vpush(k, 3624381080); vpush(k, 310598401); vpush(k, 607225278); vpush(k, 1426881987);
+    vpush(k, 1925078388); vpush(k, 2162078206); vpush(k, 2614888103); vpush(k, 3248222580);
+    vpush(k, 3835390401); vpush(k, 4022224774); vpush(k, 264347078); vpush(k, 604807628);
+    vpush(k, 770255983); vpush(k, 1249150122); vpush(k, 1555081692); vpush(k, 1996064986);
+    vpush(k, 2554220882); vpush(k, 2821834349); vpush(k, 2952996808); vpush(k, 3210313671);
+    vpush(k, 3336571891); vpush(k, 3584528711); vpush(k, 113926993); vpush(k, 338241895);
+    vpush(k, 666307205); vpush(k, 773529912); vpush(k, 1294757372); vpush(k, 1396182291);
+    vpush(k, 1695183700); vpush(k, 1986661051); vpush(k, 2177026350); vpush(k, 2456956037);
+    vpush(k, 2730485921); vpush(k, 2820302411); vpush(k, 3259730800); vpush(k, 3345764771);
+    vpush(k, 3516065817); vpush(k, 3600352804); vpush(k, 4094571909); vpush(k, 275423344);
+    vpush(k, 430227734); vpush(k, 506948616); vpush(k, 659060556); vpush(k, 883997877);
+    vpush(k, 958139571); vpush(k, 1322822218); vpush(k, 1537002063); vpush(k, 1747873779);
+    vpush(k, 1955562222); vpush(k, 2024104815); vpush(k, 2227730452); vpush(k, 2361852424);
+    vpush(k, 2428436474); vpush(k, 2756734187); vpush(k, 3204031479); vpush(k, 3329325298);
+    return k;
+}
+
+// One 64-byte block of `src` at `at` into the state `h`.
+fn sha_block(h: i64, w: i64, k: i64, src: i64, at: i64) -> i64 {
+    let mut t: i64 = 0;
+    while t < 16 {
+        let p = at + 4 * t;
+        vset(w, t, (vget(src, p) << 24) | (vget(src, p + 1) << 16) | (vget(src, p + 2) << 8) | vget(src, p + 3));
+        t = t + 1;
+    }
+    while t < 64 {
+        let x = vget(w, t - 15);
+        let y = vget(w, t - 2);
+        let s0 = sha_xor(sha_xor(sha_rotr(x, 7), sha_rotr(x, 18)), x >> 3);
+        let s1 = sha_xor(sha_xor(sha_rotr(y, 17), sha_rotr(y, 19)), y >> 10);
+        vset(w, t, (vget(w, t - 16) + s0 + vget(w, t - 7) + s1) & MO_M32);
+        t = t + 1;
+    }
+    let mut a = vget(h, 0);
+    let mut b = vget(h, 1);
+    let mut c = vget(h, 2);
+    let mut d = vget(h, 3);
+    let mut e = vget(h, 4);
+    let mut f = vget(h, 5);
+    let mut g = vget(h, 6);
+    let mut hh = vget(h, 7);
+    let mut r: i64 = 0;
+    while r < 64 {
+        let s1 = sha_xor(sha_xor(sha_rotr(e, 6), sha_rotr(e, 11)), sha_rotr(e, 25));
+        let ch = sha_xor(e & f, (MO_M32 - e) & g);
+        let t1 = (hh + s1 + ch + vget(k, r) + vget(w, r)) & MO_M32;
+        let s0 = sha_xor(sha_xor(sha_rotr(a, 2), sha_rotr(a, 13)), sha_rotr(a, 22));
+        let maj = sha_xor(sha_xor(a & b, a & c), b & c);
+        let t2 = (s0 + maj) & MO_M32;
+        hh = g;
+        g = f;
+        f = e;
+        e = (d + t1) & MO_M32;
+        d = c;
+        c = b;
+        b = a;
+        a = (t1 + t2) & MO_M32;
+        r = r + 1;
+    }
+    vset(h, 0, (vget(h, 0) + a) & MO_M32);
+    vset(h, 1, (vget(h, 1) + b) & MO_M32);
+    vset(h, 2, (vget(h, 2) + c) & MO_M32);
+    vset(h, 3, (vget(h, 3) + d) & MO_M32);
+    vset(h, 4, (vget(h, 4) + e) & MO_M32);
+    vset(h, 5, (vget(h, 5) + f) & MO_M32);
+    vset(h, 6, (vget(h, 6) + g) & MO_M32);
+    return vset(h, 7, (vget(h, 7) + hh) & MO_M32);
+}
+
+// SHA-256 of bytes [from, to) of `src`, appended (32 bytes) to `out`.
+fn sha256_into(out: i64, k: i64, src: i64, from: i64, to: i64) -> i64 {
+    let h = vnew_cap(8);
+    vpush(h, 1779033703); vpush(h, 3144134277); vpush(h, 1013904242); vpush(h, 2773480762);
+    vpush(h, 1359893119); vpush(h, 2600822924); vpush(h, 528734635); vpush(h, 1541459225);
+    let w = vfill(vnew_cap(64), 64, 0);
+    let mut at = from;
+    while at + 64 <= to {
+        sha_block(h, w, k, src, at);
+        at = at + 64;
+    }
+    let tail = vnew_cap(128);
+    while at < to {
+        vpush(tail, vget(src, at));
+        at = at + 1;
+    }
+    vpush(tail, 128);
+    while vlen(tail) % 64 != 56 {
+        vpush(tail, 0);
+    }
+    mo_be64(tail, 8 * (to - from));
+    let mut q: i64 = 0;
+    while q < vlen(tail) {
+        sha_block(h, w, k, tail, q);
+        q = q + 64;
+    }
+    let mut i: i64 = 0;
+    while i < 8 {
+        mo_be32(out, vget(h, i));
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- image
+
+// The libraries of `imports`, in order of first use.
+fn mo_libs(imports: i64) -> i64 {
+    let libs = vnew();
+    let mut i: i64 = 0;
+    while i < vlen(imports) {
+        let lib = vget(imports, i);
+        let mut seen = false;
+        let mut j: i64 = 0;
+        while j < vlen(libs) {
+            if text_eq(vget(libs, j), lib) {
+                seen = true;
+            }
+            j = j + 1;
+        }
+        if !seen {
+            vpush(libs, lib);
+        }
+        i = i + 2;
+    }
+    return libs;
+}
+
+fn mo_ordinal(libs: i64, lib: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < vlen(libs) {
+        if text_eq(vget(libs, j), lib) {
+            return j + 1;
+        }
+        j = j + 1;
+    }
+    return 1;
+}
+
+// x86_64: each fixup is the disp32 of a `call [rip + disp32]` in the code
+// at MO_TEXT_OFF; it gets the distance to the import's __got slot.
+fn mo_patch_x64(body: i64, fixups: i64, got_off: i64) -> i64 {
+    let mut f: i64 = 0;
+    while f < vlen(fixups) {
+        let at = vget(fixups, f);
+        x_patch32(body, at, got_off + 8 * vget(fixups, f + 1) - (MO_TEXT_OFF + at + 4));
+        f = f + 2;
+    }
+    return 0;
+}
+
+fn mo_get32(b: i64, at: i64) -> i64 {
+    return vget(b, at) | (vget(b, at + 1) << 8) | (vget(b, at + 2) << 16) | (vget(b, at + 3) << 24);
+}
+
+fn mo_put32(b: i64, at: i64, v: i64) -> i64 {
+    vset(b, at, v & 255);
+    vset(b, at + 1, (v >> 8) & 255);
+    vset(b, at + 2, (v >> 16) & 255);
+    return vset(b, at + 3, (v >> 24) & 255);
+}
+
+// arm64: each fixup is (word of an `adrp x16; ldr x16, [x16]` pair,
+// import id) in the A64 code (ngen_a64.trk ax_import_call); the pair gets
+// the page and offset of the import's __got slot.
+fn mo_patch_a64(body: i64, fixups: i64, got_off: i64) -> i64 {
+    let mut f: i64 = 0;
+    while f < vlen(fixups) {
+        let at = 4 * vget(fixups, f);
+        let pc = MO_BASE + MO_TEXT_OFF + at;
+        let slot = MO_BASE + got_off + 8 * vget(fixups, f + 1);
+        let pages = (slot >> 12) - (pc >> 12);
+        let adrp = mo_get32(body, at);
+        mo_put32(body, at, (adrp & 2667577375) + (pages & 3) * 536870912 + ((pages >> 2) & 524287) * 32);
+        let ldr = mo_get32(body, at + 4);
+        mo_put32(body, at + 4, (ldr & 4290773983) + ((slot & 4095) / 8) * 1024);
+        f = f + 2;
+    }
+    return 0;
+}
+
+// The whole signed Mach-O image of code+data `body` (the first `code`
+// bytes code, a multiple of MO_PAGE) calling `imports` from the sites
+// `fixups`, for CPU type `cpu`; `ident` names it in the signature.
+fn macho_image(body: i64, code: i64, imports: i64, fixups: i64, ident: i64, cpu: i64) -> i64 {
+    let n = vlen(imports) / 2;
+    let libs = mo_libs(imports);
+    let mut dsize = mo_up(vlen(body) - code, 8);
+    if dsize < 8 {
+        dsize = 8;
+    }
+    let data_off = MO_TEXT_OFF + code;
+    let got_off = data_off + dsize;
+    let data_fsize = mo_up(dsize + 8 * n, MO_PAGE);
+    let le_off = data_off + data_fsize;
+    if cpu == MO_CPU_X86_64 {
+        mo_patch_x64(body, fixups, got_off);
+    } else {
+        mo_patch_a64(body, fixups, got_off);
+    }
+    // __LINKEDIT: bind opcodes
+    let le = vnew();
+    let mut i: i64 = 0;
+    while i < n {
+        let ord = mo_ordinal(libs, vget(imports, 2 * i));
+        if ord < 16 {
+            x_byte(le, 16 + ord);              // BIND_OPCODE_SET_DYLIB_ORDINAL_IMM
+        } else {
+            x_byte(le, 32);                    // ..._ULEB
+            mo_uleb(le, ord);
+        }
+        x_byte(le, 64);                        // BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM
+        mo_cstr(le, mo_symbol(vget(imports, 2 * i + 1), cpu));
+        x_byte(le, 81);                        // BIND_OPCODE_SET_TYPE_IMM pointer
+        x_byte(le, 114);                       // BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB, segment 2
+        mo_uleb(le, dsize + 8 * i);
+        x_byte(le, 144);                       // BIND_OPCODE_DO_BIND
+        i = i + 1;
+    }
+    x_byte(le, 0);                             // BIND_OPCODE_DONE
+    mo_pad(le, mo_up(vlen(le), 8));
+    let bind_size = vlen(le);
+    // export trie: __mh_execute_header at offset 0
+    let exp_at = vlen(le);
+    x_byte(le, 0);
+    x_byte(le, 1);
+    mo_cstr(le, "__mh_execute_header");
+    x_byte(le, 23);
+    x_byte(le, 2);
+    x_byte(le, 0);
+    x_byte(le, 0);
+    x_byte(le, 0);
+    mo_pad(le, mo_up(vlen(le), 8));
+    let exp_size = vlen(le) - exp_at;
+    // string table contents (offsets first: the symbols point into it)
+    let strs = vnew();
+    x_byte(strs, 32);
+    x_byte(strs, 0);
+    let mh_name = vlen(strs);
+    mo_cstr(strs, "__mh_execute_header");
+    let names = vnew();
+    let mut s: i64 = 0;
+    while s < n {
+        vpush(names, vlen(strs));
+        mo_cstr(strs, mo_symbol(vget(imports, 2 * s + 1), cpu));
+        s = s + 1;
+    }
+    mo_pad(strs, mo_up(vlen(strs), 8));
+    // symbol table: __mh_execute_header, then one undefined symbol per import
+    let sym_at = vlen(le);
+    x_u32(le, mh_name);
+    x_byte(le, 15);                            // N_SECT | N_EXT
+    x_byte(le, 1);
+    mo_u16(le, 16);                            // REFERENCED_DYNAMICALLY
+    x_u64(le, MO_BASE);
+    let mut y: i64 = 0;
+    while y < n {
+        x_u32(le, vget(names, y));
+        x_byte(le, 1);                         // N_UNDF | N_EXT
+        x_byte(le, 0);
+        mo_u16(le, mo_ordinal(libs, vget(imports, 2 * y)) << 8);
+        x_u64(le, 0);
+        y = y + 1;
+    }
+    // indirect symbol table: __got slot i -> symbol 1 + i
+    let ind_at = vlen(le);
+    let mut z: i64 = 0;
+    while z < n {
+        x_u32(le, 1 + z);
+        z = z + 1;
+    }
+    mo_pad(le, mo_up(vlen(le), 8));
+    let str_at = vlen(le);
+    mo_append(le, strs);
+    mo_pad(le, mo_up(vlen(le), 16));
+    // code signature sizes
+    let sig_off = le_off + vlen(le);
+    let nslots = (sig_off + 4095) / 4096;
+    let id_bytes = text_len(ident) + 1;
+    let cd_len = 88 + id_bytes + 32 * nslots;
+    let sb_len = 20 + cd_len;
+    let sig_size = mo_up(sb_len, 16);
+    let le_fsize = vlen(le) + sig_size;
+    // UUID: the first 16 bytes of the SHA-256 of the code and data
+    let k = sha_k();
+    let uuid = sha256_into(vnew(), k, body, 0, vlen(body));
+    vset(uuid, 6, (vget(uuid, 6) & 15) | 48);   // version 3 shape, as ld64 marks its UUIDs
+    vset(uuid, 8, (vget(uuid, 8) & 63) | 128);
+    // load commands
+    let lc = vnew();
+    let mut ncmds: i64 = 0;
+    mo_segment(lc, "__PAGEZERO", 0, MO_BASE, 0, 0, 0, 0);
+    ncmds = ncmds + 1;
+    mo_segment(lc, "__TEXT", MO_BASE, data_off, 0, data_off, 5, 1);
+    mo_section(lc, "__text", "__TEXT", MO_BASE + MO_TEXT_OFF, code, MO_TEXT_OFF, 4, 2147484672, 0);
+    ncmds = ncmds + 1;
+    mo_segment(lc, "__DATA", MO_BASE + data_off, data_fsize, data_off, data_fsize, 3, 2);
+    mo_section(lc, "__data", "__DATA", MO_BASE + data_off, dsize, data_off, 3, 0, 0);
+    mo_section(lc, "__got", "__DATA", MO_BASE + got_off, 8 * n, got_off, 3, 6, 0);
+    ncmds = ncmds + 1;
+    mo_segment(lc, "__LINKEDIT", MO_BASE + le_off, mo_up(le_fsize, MO_PAGE), le_off, le_fsize, 1, 0);
+    ncmds = ncmds + 1;
+    x_u32(lc, 2147483682);                     // LC_DYLD_INFO_ONLY
+    x_u32(lc, 48);
+    x_u32(lc, 0);                              // no rebases: the code is position independent
+    x_u32(lc, 0);
+    x_u32(lc, le_off);
+    x_u32(lc, bind_size);
+    x_u32(lc, 0);
+    x_u32(lc, 0);
+    x_u32(lc, 0);
+    x_u32(lc, 0);
+    x_u32(lc, le_off + exp_at);
+    x_u32(lc, exp_size);
+    ncmds = ncmds + 1;
+    x_u32(lc, 2);                              // LC_SYMTAB
+    x_u32(lc, 24);
+    x_u32(lc, le_off + sym_at);
+    x_u32(lc, 1 + n);
+    x_u32(lc, le_off + str_at);
+    x_u32(lc, vlen(strs));
+    ncmds = ncmds + 1;
+    x_u32(lc, 11);                             // LC_DYSYMTAB
+    x_u32(lc, 80);
+    x_u32(lc, 0);
+    x_u32(lc, 0);                              // locals
+    x_u32(lc, 0);
+    x_u32(lc, 1);                              // defined externals
+    x_u32(lc, 1);
+    x_u32(lc, n);                              // undefined
+    let mut q: i64 = 0;
+    while q < 6 {
+        x_u32(lc, 0);
+        q = q + 1;
+    }
+    x_u32(lc, le_off + ind_at);
+    x_u32(lc, n);
+    let mut q2: i64 = 0;
+    while q2 < 4 {
+        x_u32(lc, 0);
+        q2 = q2 + 1;
+    }
+    ncmds = ncmds + 1;
+    let dl_at = vlen(lc);
+    x_u32(lc, 14);                             // LC_LOAD_DYLINKER
+    x_u32(lc, 32);
+    x_u32(lc, 12);
+    mo_cstr(lc, "/usr/lib/dyld");
+    mo_pad(lc, dl_at + 32);
+    ncmds = ncmds + 1;
+    x_u32(lc, 27);                             // LC_UUID
+    x_u32(lc, 24);
+    vtrunc(uuid, 16);
+    mo_append(lc, uuid);
+    ncmds = ncmds + 1;
+    x_u32(lc, 50);                             // LC_BUILD_VERSION
+    x_u32(lc, 24);
+    x_u32(lc, 1);                              // PLATFORM_MACOS
+    x_u32(lc, 720896);                         // minos 11.0
+    x_u32(lc, 720896);                         // sdk 11.0
+    x_u32(lc, 0);
+    ncmds = ncmds + 1;
+    x_u32(lc, 2147483688);                     // LC_MAIN
+    x_u32(lc, 24);
+    x_u64(lc, MO_TEXT_OFF);
+    x_u64(lc, MO_STACK);
+    ncmds = ncmds + 1;
+    let mut l: i64 = 0;
+    while l < vlen(libs) {
+        let path = mo_dylib_path(vget(libs, l));
+        let at = vlen(lc);
+        let size = mo_up(24 + text_len(path) + 1, 8);
+        x_u32(lc, 12);                         // LC_LOAD_DYLIB
+        x_u32(lc, size);
+        x_u32(lc, 24);
+        x_u32(lc, 2);                          // timestamp
+        x_u32(lc, 65536);                      // current version 1.0.0
+        x_u32(lc, 65536);                      // compatibility version 1.0.0
+        mo_cstr(lc, path);
+        mo_pad(lc, at + size);
+        ncmds = ncmds + 1;
+        l = l + 1;
+    }
+    x_u32(lc, 29);                             // LC_CODE_SIGNATURE
+    x_u32(lc, 16);
+    x_u32(lc, sig_off);
+    x_u32(lc, sig_size);
+    ncmds = ncmds + 1;
+    // the file
+    let img = vnew_cap(sig_off + sig_size);
+    x_u32(img, 4277009103);                    // MH_MAGIC_64
+    x_u32(img, cpu);
+    if cpu == MO_CPU_X86_64 {
+        x_u32(img, 3);                         // CPU_SUBTYPE_X86_64_ALL
+    } else {
+        x_u32(img, 0);                         // CPU_SUBTYPE_ARM64_ALL
+    }
+    x_u32(img, 2);                             // MH_EXECUTE
+    x_u32(img, ncmds);
+    x_u32(img, vlen(lc));
+    x_u32(img, 2097285);                       // MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL | MH_PIE
+    x_u32(img, 0);
+    mo_append(img, lc);
+    mo_pad(img, MO_TEXT_OFF);
+    let mut c: i64 = 0;
+    while c < vlen(body) {
+        vpush(img, vget(body, c));
+        c = c + 1;
+    }
+    mo_pad(img, le_off);
+    mo_append(img, le);
+    // the signature: SuperBlob { CodeDirectory }
+    mo_be32(img, 4208856256);                  // CSMAGIC_EMBEDDED_SIGNATURE 0xfade0cc0
+    mo_be32(img, sb_len);
+    mo_be32(img, 1);
+    mo_be32(img, 0);                           // CSSLOT_CODEDIRECTORY
+    mo_be32(img, 20);
+    mo_be32(img, 4208856066);                  // CSMAGIC_CODEDIRECTORY 0xfade0c02
+    mo_be32(img, cd_len);
+    mo_be32(img, 132096);                      // version 0x20400
+    mo_be32(img, 131074);                      // CS_ADHOC | CS_LINKER_SIGNED
+    mo_be32(img, 88 + id_bytes);               // hashOffset
+    mo_be32(img, 88);                          // identOffset
+    mo_be32(img, 0);                           // nSpecialSlots
+    mo_be32(img, nslots);
+    mo_be32(img, sig_off);                     // codeLimit
+    x_byte(img, 32);                           // hashSize
+    x_byte(img, 2);                            // CS_HASHTYPE_SHA256
+    x_byte(img, 0);                            // platform
+    x_byte(img, 12);                           // log2 page size
+    mo_be32(img, 0);                           // spare2
+    mo_be32(img, 0);                           // scatterOffset
+    mo_be32(img, 0);                           // teamOffset
+    mo_be32(img, 0);                           // spare3
+    mo_be64(img, 0);                           // codeLimit64
+    mo_be64(img, 0);                           // execSegBase
+    mo_be64(img, data_off);                    // execSegLimit
+    mo_be64(img, 1);                           // CS_EXECSEG_MAIN_BINARY
+    mo_cstr(img, ident);
+    let mut p: i64 = 0;
+    while p < nslots {
+        let mut end = 4096 * (p + 1);
+        if end > sig_off {
+            end = sig_off;
+        }
+        sha256_into(img, k, img, 4096 * p, end);
+        p = p + 1;
+    }
+    mo_pad(img, sig_off + sig_size);
+    return img;
+}
+
+// Write the Mach-O image to `path` (mode 0755). Returns 0 on success.
+fn macho_write_file(path: i64, body: i64, code: i64, imports: i64, fixups: i64, ident: i64, cpu: i64) -> i64 {
+    let img = macho_image(body, code, imports, fixups, ident, cpu);
+    let n = vlen(img);
+    let buf: i64 = alloc(n + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        memset(buf + i, vget(img, i), 1);
+        i = i + 1;
+    }
+    let fd: i64 = open64(path, 577, 493);
+    if fd < 0 {
+        return 1;
+    }
+    fchmod(fd, 493);
+    let mut done: i64 = 0;
+    while done < n {
+        let w: i64 = write(fd, buf + done, n - done);
+        if w <= 0 {
+            close(fd);
+            return 1;
+        }
+        done = done + w;
+    }
+    close(fd);
+    return 0;
+}

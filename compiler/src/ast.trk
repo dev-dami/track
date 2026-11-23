@@ -32,7 +32,7 @@ const K_WHILE = 18;     // a = condition, b = body
 const K_FOR = 19;       // a = variable name, b = iterable, c = body
 const K_RETURN = 20;    // a = value (-1)
 const K_ASSIGN = 21;    // a = target, b = value
-const K_FN = 22;        // a = name, b = generics, c = [name, type]*, d = return type (-1), e = body
+const K_FN = 22;        // a = name, b = generics, c = [name, type]*, d = return type (-1), e = symbol text (`as "sym"`, -1: the name), e = body
 const K_USE = 23;       // a = path text, b = import names (-1), c = alias name (-1)
 const K_CONST = 24;     // a = name, b = value
 const K_TYPEDEF = 25;   // a = name, b = target type
@@ -45,7 +45,7 @@ const K_UNION = 31;     // a = name, b = [name, payload type (-1)]*
 const K_MATCH = 32;     // a = target, b = [pattern, guard (-1), body]*
 const K_STRUCT = 33;    // a = name, b = [field name, type]*
 const K_FIELD = 34;     // a = target, b = field name
-const K_EXTERN = 35;    // a = name, b = library text, c = [name, type]*, d = return type (-1)
+const K_EXTERN = 35;    // a = name, b = library text, c = [name, type]*, d = return type (-1), e = symbol text (`as "sym"`, -1: the name)
 
 // Patterns
 const P_IDENT = 40;     // a = name

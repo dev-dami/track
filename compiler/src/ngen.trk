@@ -5919,8 +5919,8 @@ fn ng_extern_of(c: i64, name: i64) -> i64 {
 
 fn ng_extern_call(c: i64, e: i64, args: i64, count: i64) -> i64 {
     let b = ncode(c);
-    if ng(c, NG_TARGET) != 1 {
-        err(text_cat3("trackc: native: imported function '", name_text(c, na(c, e)), "' needs --target x86_64-windows (this target has no import support yet)\n"));
+    if ng(c, NG_TARGET) != 1 && ng(c, NG_TARGET) != 2 {
+        err(text_cat3("trackc: native: imported function '", name_text(c, na(c, e)), "' needs --target x86_64-windows or x86_64-macos (this target has no import support yet)\n"));
         quit(1);
     }
     let mut i: i64 = 0;
@@ -5929,7 +5929,11 @@ fn ng_extern_call(c: i64, e: i64, args: i64, count: i64) -> i64 {
         x_push_rax(b);
         i = i + 1;
     }
-    let id = ffi_import_id(ng(c, NG_IMPORTS), nb(c, e), name_text(c, na(c, e)));
+    let mut sym = name_text(c, na(c, e));
+    if ne(c, e) != -1 {
+        sym = ne(c, e);
+    }
+    let id = ffi_import_id(ng(c, NG_IMPORTS), nb(c, e), sym);
     let ret = nd(c, e);
     let mut kind: i64 = 0;
     if ret >= 0 && is_prim(c, ret, PRIM_I32) {
@@ -5939,6 +5943,9 @@ fn ng_extern_call(c: i64, e: i64, args: i64, count: i64) -> i64 {
     }
     ng_set(c, NG_CLOB, 1);
     ng_set(c, NG_VOLX, 1);
+    if ng(c, NG_TARGET) == 2 {
+        return ffi_sysv_call(b, ng(c, NG_IMPFIX), id, count, kind);
+    }
     return ffi_win64_call(b, ng(c, NG_IMPFIX), id, count, kind);
 }
 
@@ -5957,6 +5964,19 @@ fn ng_entry_win(c: i64) -> i64 {
     x_push_rax(b);
     ng_call_rt(c, "sys_exit", 1);
     return x_byte(b, 204);     // int3: sys_exit does not return
+}
+
+// macOS entry (LC_MAIN): dyld calls it as main(argc, argv, envp, apple)
+// with rsp 8 mod 16. os_start(argc, argv) (the OS layer) calls rt_start,
+// which ends in sys_exit, whose exit(3) does not return.
+fn ng_entry_mac(c: i64) -> i64 {
+    let b = ncode(c);
+    x_bytes3(b, 72, 131, 236);
+    x_byte(b, 8);              // sub rsp, 8
+    x_byte(b, 87);             // push rdi (argc)
+    x_byte(b, 86);             // push rsi (argv)
+    ng_call_rt(c, "os_start", 2);
+    return x_byte(b, 204);     // int3
 }
 
 fn ng_is_declaration(c: i64, n: i64) -> bool {
@@ -6039,6 +6059,8 @@ fn generate_native_for(c: i64, target: i64) -> i64 {
     ng_set(c, NG_EXTERNS, ng_extern_table(c));
     if target == 1 {
         ng_entry_win(c);
+    } else if target == 2 {
+        ng_entry_mac(c);
     } else {
         ng_entry(c);
     }
@@ -6114,10 +6136,13 @@ fn generate_native_for(c: i64, target: i64) -> i64 {
         }
         return 0;
     }
-    // data after the code, 8-aligned (page-aligned for a PE .data section)
+    // data after the code, 8-aligned (page-aligned for a PE .data section
+    // or a Mach-O __DATA segment)
     let mut align: i64 = 8;
     if target == 1 {
         align = 4096;
+    } else if target == 2 {
+        align = 16384;        // __DATA starts on a 16 KiB page (macho.trk)
     }
     while vlen(b) % align != 0 {
         x_byte(b, 204);

@@ -1,0 +1,617 @@
+// rt/os/macos.trk — Track runtime OS layer for macOS, through libSystem.
+//
+// Implements the OS interface (docs/native.md, "The OS layer") with
+// libSystem functions called through the import table (`extern`; dyld
+// binds them, macho.trk):
+//
+//   os_start         process entry: LC_MAIN's main(argc, argv, envp, apple)
+//                    hands argc and argv over; then rt_start
+//   os_syscall       the kernel calls the portable modules (mem, io, libc)
+//                    make through `syscall6`, by Linux number, mapped to
+//                    libSystem: open flags, mmap flags, the stat layout,
+//                    clock ids and socket options translated, failures as
+//                    -errno (errno from __error())
+//   os_args_count, os_arg, env_get, env_exists, sys_exec, process_spawn,
+//   clock_ms, file_*, dir_exists, track_file_*, net_socket_*
+//
+// No variadic call: arm64 macOS passes variadic arguments on the stack,
+// so open(2) is called without a mode and a file is created with
+// creat(2) (mac_open).
+//
+// libSystem returns -1 and sets errno; os_syscall returns -errno like the
+// Linux kernel, with macOS errno values (ENOENT, EINTR, EBADF agree).
+
+extern "libSystem.B.dylib" fn c_read(fd: i64, buf: i64, n: i64) -> i64 as "read";
+extern "libSystem.B.dylib" fn c_write(fd: i64, buf: i64, n: i64) -> i64 as "write";
+extern "libSystem.B.dylib" fn c_open(path: i64, flags: i64) -> i32 as "open";
+extern "libSystem.B.dylib" fn c_creat(path: i64, mode: i64) -> i32 as "creat";
+extern "libSystem.B.dylib" fn c_close(fd: i64) -> i32 as "close";
+extern "libSystem.B.dylib" fn c_stat(path: i64, st: i64) -> i32 as "stat";
+extern "libSystem.B.dylib" fn c_lseek(fd: i64, off: i64, how: i64) -> i64 as "lseek";
+extern "libSystem.B.dylib" fn c_mmap(addr: i64, len: i64, prot: i64, flags: i64, fd: i64, off: i64) -> i64 as "mmap";
+extern "libSystem.B.dylib" fn c_munmap(addr: i64, len: i64) -> i32 as "munmap";
+extern "libSystem.B.dylib" fn c_pipe(fds: i64) -> i32 as "pipe";
+extern "libSystem.B.dylib" fn c_access(path: i64, mode: i64) -> i32 as "access";
+extern "libSystem.B.dylib" fn c_getpid() -> i32 as "getpid";
+extern "libSystem.B.dylib" fn c_kill(pid: i64, sig: i64) -> i32 as "kill";
+extern "libSystem.B.dylib" fn c_unlink(path: i64) -> i32 as "unlink";
+extern "libSystem.B.dylib" fn c_clock_gettime(id: i64, ts: i64) -> i32 as "clock_gettime";
+extern "libSystem.B.dylib" fn c_exit(code: i64) -> i64 as "exit";
+extern "libSystem.B.dylib" fn c_fchmod(fd: i64, mode: i64) -> i32 as "fchmod";
+extern "libSystem.B.dylib" fn c_errno_at() -> i64 as "__error";
+extern "libSystem.B.dylib" fn c_environ_at() -> i64 as "_NSGetEnviron";
+extern "libSystem.B.dylib" fn c_system(cmd: i64) -> i32 as "system";
+extern "libSystem.B.dylib" fn c_socket(domain: i64, kind: i64, proto: i64) -> i32 as "socket";
+extern "libSystem.B.dylib" fn c_setsockopt(fd: i64, level: i64, opt: i64, val: i64, len: i64) -> i32 as "setsockopt";
+extern "libSystem.B.dylib" fn c_bind(fd: i64, addr: i64, len: i64) -> i32 as "bind";
+extern "libSystem.B.dylib" fn c_listen(fd: i64, backlog: i64) -> i32 as "listen";
+extern "libSystem.B.dylib" fn c_accept(fd: i64, addr: i64, len: i64) -> i32 as "accept";
+extern "libSystem.B.dylib" fn c_connect(fd: i64, addr: i64, len: i64) -> i32 as "connect";
+extern "libSystem.B.dylib" fn c_send(fd: i64, buf: i64, n: i64, flags: i64) -> i64 as "send";
+extern "libSystem.B.dylib" fn c_recv(fd: i64, buf: i64, n: i64, flags: i64) -> i64 as "recv";
+
+const MS_STAT = 6400;        // macOS struct stat (144 bytes) in the state page
+
+// ---------------------------------------------------------------- process
+
+// The process entry (trackc's macOS entry calls it with LC_MAIN's argc
+// and argv; envp follows argv as on Linux, and rt_getenv reads environ).
+fn os_start(argc: i64, argv: i64) -> i64 {
+    return rt_start(argc, argv);
+}
+
+fn os_args_count() -> i64 { return rs(RS_ARGC); }
+
+fn os_arg(idx: i64) -> i64 {
+    if idx >= 0 && idx < rs(RS_ARGC) {
+        return rt_dup(load64(rs(RS_ARGV) + 8 * idx));
+    }
+    return rt_dup_n("", 0);
+}
+
+// Value of environment variable `key` ("NAME=value"), or 0 when unset.
+fn rt_getenv(key: i64) -> i64 {
+    let mut e = load64(c_environ_at());
+    while load64(e) != 0 {
+        let entry = load64(e);
+        let mut i: i64 = 0;
+        while load8(key + i) != 0 && load8(key + i) == load8(entry + i) {
+            i = i + 1;
+        }
+        if load8(key + i) == 0 && load8(entry + i) == 61 {
+            return entry + i + 1;
+        }
+        e = e + 8;
+    }
+    return 0;
+}
+
+fn env_get(key: i64) -> i64 {
+    if key == 0 {
+        return rt_dup_n("", 0);
+    }
+    let v = rt_getenv(key);
+    if v == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_dup(v);
+}
+
+fn env_exists(key: i64) -> i64 {
+    if key != 0 && rt_getenv(key) != 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// system(3): /bin/sh -c cmd; exit status, or 128 + signal.
+fn sys_exec(cmd: i64) -> i64 {
+    if cmd == 0 {
+        return -1;
+    }
+    rt_flush();
+    let status = c_system(cmd);
+    if status < 0 {
+        return -1;
+    }
+    if (status & 127) == 0 {
+        return (status >> 8) & 255;
+    }
+    return 128 + (status & 127);
+}
+
+fn process_spawn(cmd: i64) -> i64 { return sys_exec(cmd); }
+
+fn clock_ms() -> i64 {
+    let ts = RT_BASE + RS_TIME;
+    c_clock_gettime(6, ts);                   // CLOCK_MONOTONIC
+    return load64(ts) * 1000 + load64(ts + 8) / 1000000;
+}
+
+// ---------------------------------------------------------- kernel calls
+
+// A libSystem result: -errno when it failed (-1).
+fn mac_ret(r: i64) -> i64 {
+    if r == -1 {
+        return 0 - (load64(c_errno_at()) & 4294967295);
+    }
+    return r;
+}
+
+// Linux open(2) flags -> macOS.
+fn mac_oflags(f: i64) -> i64 {
+    let mut m = f & 3;
+    if (f & 64) != 0 { m = m | 512; }            // O_CREAT
+    if (f & 128) != 0 { m = m | 2048; }          // O_EXCL
+    if (f & 512) != 0 { m = m | 1024; }          // O_TRUNC
+    if (f & 1024) != 0 { m = m | 8; }            // O_APPEND
+    if (f & 2048) != 0 { m = m | 4; }            // O_NONBLOCK
+    if (f & 65536) != 0 { m = m | 1048576; }     // O_DIRECTORY
+    if (f & 524288) != 0 { m = m | 16777216; }   // O_CLOEXEC
+    return m;
+}
+
+// open(2) with Linux flags and mode, without a variadic call: creating
+// goes through creat(2) (O_WRONLY | O_CREAT | O_TRUNC), then the file is
+// opened again with the asked flags minus O_CREAT and O_EXCL (unless
+// creat's write-only descriptor already fits).
+fn mac_open(path: i64, f: i64, mode: i64) -> i64 {
+    let flags = mac_oflags(f) & (0 - 2561);      // without O_CREAT | O_EXCL
+    if (f & 64) == 0 {
+        return mac_ret(c_open(path, flags));
+    }
+    if c_access(path, 0) == 0 {
+        if (f & 128) != 0 {
+            return -17;                           // EEXIST
+        }
+        return mac_ret(c_open(path, flags));
+    }
+    let fd = mac_ret(c_creat(path, mode));
+    if fd < 0 {
+        return fd;
+    }
+    if (f & 3) == 1 && (f & 1024) == 0 {
+        return fd;                                // creat's own descriptor fits
+    }
+    c_close(fd);
+    return mac_ret(c_open(path, flags));
+}
+
+// Linux mmap(2) flags -> macOS; MAP_FIXED_NOREPLACE becomes a hint that
+// must be met (os_syscall checks).
+fn mac_mflags(f: i64) -> i64 {
+    let mut m = f & 19;                           // MAP_SHARED | MAP_PRIVATE | MAP_FIXED
+    if (f & 32) != 0 { m = m | 4096; }           // MAP_ANON
+    if (f & 16384) != 0 { m = m | 64; }          // MAP_NORESERVE
+    return m;
+}
+
+// stat(2) into the Linux struct stat layout the portable code reads:
+// st_mode at 24, st_size at 48 (macOS 64-bit-inode stat: 4 and 96).
+fn mac_stat(path: i64, st: i64) -> i64 {
+    let ms = RT_BASE + MS_STAT;
+    let r = mac_ret(c_stat(path, ms));
+    if r < 0 {
+        return r;
+    }
+    rt_zero(st, 144);
+    store64(st + 24, load64(ms + 4) & 65535);
+    store64(st + 48, load64(ms + 96));
+    return 0;
+}
+
+// The `syscall6` calls of the portable runtime modules, by Linux number;
+// -38 (ENOSYS) for the rest.
+fn os_syscall(nr: i64, a: i64, b: i64, d: i64, e: i64, f: i64) -> i64 {
+    if nr == 0 {
+        return mac_ret(c_read(a, b, d));
+    }
+    if nr == 1 {
+        return mac_ret(c_write(a, b, d));
+    }
+    if nr == 2 {
+        return mac_open(a, b, d);
+    }
+    if nr == 3 {
+        return mac_ret(c_close(a));
+    }
+    if nr == 4 {
+        return mac_stat(a, b);
+    }
+    if nr == 8 {
+        return mac_ret(c_lseek(a, b, d));
+    }
+    if nr == 9 {
+        let p = mac_ret(c_mmap(a, b, d, mac_mflags(e), f, 0));
+        if p >= 0 && (e & 1048576) != 0 && p != a {
+            c_munmap(p, b);
+            return -17;                           // EEXIST: the hint was not met
+        }
+        return p;
+    }
+    if nr == 11 {
+        return mac_ret(c_munmap(a, b));
+    }
+    if nr == 25 {
+        // mremap(old, old_len, new_len, MAYMOVE): a new mapping, copied
+        let q = mac_ret(c_mmap(0, d, 3, 4098, -1, 0));
+        if q < 0 {
+            return q;
+        }
+        let mut n = b;
+        if d < n {
+            n = d;
+        }
+        rt_copy(q, a, n);
+        c_munmap(a, b);
+        return q;
+    }
+    if nr == 28 {
+        return 0;                                 // madvise: hints only
+    }
+    if nr == 91 {
+        return mac_ret(c_fchmod(a, b));
+    }
+    if nr == 22 {
+        return mac_ret(c_pipe(a));
+    }
+    if nr == 21 {
+        return mac_ret(c_access(a, b));
+    }
+    if nr == 87 {
+        return mac_ret(c_unlink(a));
+    }
+    if nr == 39 {
+        return c_getpid();
+    }
+    if nr == 62 {
+        return mac_ret(c_kill(a, b));
+    }
+    if nr == 228 {
+        let mut id = a;
+        if id == 1 {
+            id = 6;                               // CLOCK_MONOTONIC
+        }
+        return mac_ret(c_clock_gettime(id, b));
+    }
+    if nr == 231 || nr == 60 {
+        c_exit(a);
+        return 0;
+    }
+    return -38;
+}
+
+// ------------------------------------------------------------------ files
+//
+// A file handle is a runtime record [fd]; 0 when the open failed.
+
+const O_RDONLY = 0;
+const O_WRONLY_CREAT_TRUNC = 577;    // O_WRONLY | O_CREAT | O_TRUNC
+const O_WRONLY_CREAT_APPEND = 1089;  // O_WRONLY | O_CREAT | O_APPEND
+const O_RDWR = 2;
+
+// open(2) flags for an fopen(3) mode string.
+fn rt_open_flags(mode: i64) -> i64 {
+    let m = load8(mode);
+    let plus = rt_find(mode, "+") >= 0;
+    if m == 114 {
+        if plus {
+            return O_RDWR;
+        }
+        return O_RDONLY;
+    }
+    if m == 119 {
+        if plus {
+            return 578;                   // O_RDWR | O_CREAT | O_TRUNC
+        }
+        return O_WRONLY_CREAT_TRUNC;
+    }
+    if m == 97 {
+        if plus {
+            return 1090;                  // O_RDWR | O_CREAT | O_APPEND
+        }
+        return O_WRONLY_CREAT_APPEND;
+    }
+    return -1;
+}
+
+fn file_open(path: i64, mode: i64) -> i64 {
+    if path == 0 || mode == 0 {
+        return 0;
+    }
+    let flags = rt_open_flags(mode);
+    if flags < 0 {
+        return 0;
+    }
+    let fd = sys3(SYS_OPEN, path, flags | 524288, 438);  // O_CLOEXEC, 0666
+    if fd < 0 {
+        return 0;
+    }
+    let h = rt_malloc(8);
+    store64(h, fd);
+    return h;
+}
+
+fn file_close(h: i64) -> i64 {
+    if h != 0 {
+        sys1(SYS_CLOSE, load64(h));
+        rt_free(h);
+    }
+    return 0;
+}
+
+// Read everything from `fd` to end of file; "" on error. The size from
+// lseek only sizes the first buffer: files whose size is not known up
+// front (/proc, pipes) read whole too.
+fn rt_read_fd(fd: i64) -> i64 {
+    let mut cap: i64 = 4096;
+    let end = sys3(SYS_LSEEK, fd, 0, 2);
+    if end >= 0 {
+        if sys3(SYS_LSEEK, fd, 0, 0) < 0 {
+            return rt_dup_n("", 0);
+        }
+        cap = end + 1;
+    }
+    let mut buf = rt_malloc(cap + 1);
+    let mut got: i64 = 0;
+    let mut going = true;
+    while going {
+        if got == cap {
+            cap = cap * 2;
+            buf = rt_realloc(buf, cap + 1);
+        }
+        let r = sys3(SYS_READ, fd, buf + got, cap - got);
+        if r == -4 {
+            // EINTR: retry
+        } else if r <= 0 {
+            going = false;
+        } else {
+            got = got + r;
+        }
+    }
+    store8(buf + got, 0);
+    return buf;
+}
+
+fn file_read_all(h: i64) -> i64 {
+    if h == 0 {
+        return rt_dup_n("", 0);
+    }
+    return rt_read_fd(load64(h));
+}
+
+fn file_write(h: i64, content: i64) -> i64 {
+    if h == 0 || content == 0 {
+        return -1;
+    }
+    return rt_write_all(load64(h), content, rt_strlen(content));
+}
+
+fn file_exists(path: i64) -> i64 {
+    if path != 0 && sys2(SYS_ACCESS, path, 0) == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn file_remove(path: i64) -> i64 {
+    if path != 0 && sys1(SYS_UNLINK, path) == 0 {
+        return 0;
+    }
+    return -1;
+}
+
+fn file_size(path: i64) -> i64 {
+    let st = RT_BASE + RS_STAT;
+    if path == 0 || sys2(SYS_STAT, path, st) != 0 {
+        return -1;
+    }
+    return load64(st + 48);
+}
+
+fn dir_exists(path: i64) -> bool {
+    let st = RT_BASE + RS_STAT;
+    if path == 0 || sys2(SYS_STAT, path, st) != 0 {
+        return false;
+    }
+    return (load64(st + 24) & 61440) == 16384;
+}
+
+fn file_copy(src: i64, dst: i64) -> i64 {
+    if src == 0 || dst == 0 {
+        return -1;
+    }
+    let fin = sys3(SYS_OPEN, src, O_RDONLY | 524288, 0);
+    if fin < 0 {
+        return -1;
+    }
+    let fout = sys3(SYS_OPEN, dst, O_WRONLY_CREAT_TRUNC | 524288, 438);
+    if fout < 0 {
+        sys1(SYS_CLOSE, fin);
+        return -1;
+    }
+    let buf = rt_malloc(65536);
+    let mut going = true;
+    while going {
+        let n = sys3(SYS_READ, fin, buf, 65536);
+        if n == -4 {
+            // EINTR: retry
+        } else if n <= 0 {
+            going = false;
+        } else {
+            rt_write_all(fout, buf, n);
+        }
+    }
+    rt_free(buf);
+    sys1(SYS_CLOSE, fin);
+    sys1(SYS_CLOSE, fout);
+    return 0;
+}
+
+// Whole-file helpers: open, transfer, and close in one call.
+fn track_file_read(path: i64) -> i64 {
+    if path == 0 {
+        return rt_dup_n("", 0);
+    }
+    let fd = sys3(SYS_OPEN, path, O_RDONLY | 524288, 0);
+    if fd < 0 {
+        return rt_dup_n("", 0);
+    }
+    let out = rt_read_fd(fd);
+    sys1(SYS_CLOSE, fd);
+    return out;
+}
+
+fn track_file_write_all(path: i64, content: i64) -> i64 {
+    if path == 0 {
+        return -1;
+    }
+    let fd = sys3(SYS_OPEN, path, O_WRONLY_CREAT_TRUNC | 524288, 438);
+    if fd < 0 {
+        return -1;
+    }
+    let mut status: i64 = -1;
+    if content != 0 {
+        status = rt_write_all(fd, content, rt_strlen(content));
+    }
+    if sys1(SYS_CLOSE, fd) != 0 {
+        status = -1;
+    }
+    return status;
+}
+
+// ---------------------------------------------------------------- network
+
+// struct sockaddr_in for AF_INET (BSD: sin_len first), `port`, and the
+// IPv4 address word `addr` (network byte order packed little-endian).
+fn rt_sockaddr(port: i64, addr: i64) -> i64 {
+    let sa = RT_BASE + RS_SOCK;
+    let p = port & 65535;
+    store64(sa, 16 | (2 << 8) | ((p >> 8) << 16) | ((p & 255) << 24) | ((addr & 4294967295) << 32));
+    store64(sa + 8, 0);
+    return sa;
+}
+
+// inet_pton for dotted-quad IPv4; -1 when malformed.
+fn rt_parse_ipv4(s: i64) -> i64 {
+    let mut addr: i64 = 0;
+    let mut part: i64 = 0;
+    let mut digits: i64 = 0;
+    let mut parts: i64 = 0;
+    let mut i: i64 = 0;
+    while true {
+        let ch = load8(s + i);
+        if rt_is_digit(ch) {
+            part = part * 10 + ch - 48;
+            digits = digits + 1;
+            if part > 255 || digits > 3 {
+                return -1;
+            }
+        } else if ch == 46 || ch == 0 {
+            if digits == 0 || parts == 4 {
+                return -1;
+            }
+            addr = addr | (part << (8 * parts));
+            parts = parts + 1;
+            part = 0;
+            digits = 0;
+            if ch == 0 {
+                if parts != 4 {
+                    return -1;
+                }
+                return addr;
+            }
+        } else {
+            return -1;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn net_socket_tcp_listen(port: i64) -> i64 {
+    let fd = c_socket(2, 1, 0);
+    if fd < 0 {
+        return -1;
+    }
+    c_setsockopt(fd, 65535, 4, RT_BASE + RS_ONE, 4);   // SOL_SOCKET, SO_REUSEADDR
+    let r = mac_ret(c_bind(fd, rt_sockaddr(port, 0), 16));
+    if r < 0 {
+        let b = track_sb_new();
+        if r == -48 {
+            track_sb_push(b, "Track Network Error: Port conflict! Port ");
+            track_sb_push_int(b, port);
+            track_sb_push(b, " is already in use by another process.\n");
+        } else {
+            track_sb_push(b, "Track Network Error: Failed to bind TCP socket on port ");
+            track_sb_push_int(b, port);
+            track_sb_push(b, " (errno: ");
+            track_sb_push_int(b, 0 - r);
+            track_sb_push(b, ").\n");
+        }
+        rt_err_bytes(load64(b), track_sb_len(b));
+        c_close(fd);
+        return -1;
+    }
+    if c_listen(fd, 128) < 0 {
+        c_close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+fn net_socket_accept(server_fd: i64) -> i64 {
+    if server_fd < 0 {
+        return -1;
+    }
+    let r = c_accept(server_fd, 0, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_connect(host: i64, port: i64) -> i64 {
+    if host == 0 {
+        return -1;
+    }
+    let fd = c_socket(2, 1, 0);
+    if fd < 0 {
+        return -1;
+    }
+    let addr = rt_parse_ipv4(host);
+    if addr < 0 || c_connect(fd, rt_sockaddr(port, addr), 16) < 0 {
+        c_close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+fn net_socket_send(fd: i64, data: i64, len: i64) -> i64 {
+    if fd < 0 || data == 0 {
+        return -1;
+    }
+    let r = c_send(fd, data, len, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_recv(fd: i64, buf: i64, max_len: i64) -> i64 {
+    if fd < 0 || buf == 0 {
+        return -1;
+    }
+    let r = c_recv(fd, buf, max_len, 0);
+    if r < 0 {
+        return -1;
+    }
+    return r;
+}
+
+fn net_socket_close(fd: i64) -> i64 {
+    if fd >= 0 {
+        c_close(fd);
+    }
+    return 0;
+}

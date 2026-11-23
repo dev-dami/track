@@ -87,6 +87,97 @@ jobs:
           build/yard --version | grep -q "1.0.0"
           echo "✓ versions ok"
 
+  macos-cross:
+    # Cross-build the macOS executables on Linux: trackc itself, hello and
+    # every example for x86_64-macos and aarch64-macos (docs/native.md,
+    # "Mach-O layout"); the macos job runs them on real Macs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap trackc
+        run: scripts/bootstrap.sh
+
+      - name: Cross-build for both macOS targets and check the images
+        run: |
+          tc=build/bootstrap/stage3/trackc
+          for t in x86_64-macos aarch64-macos; do
+            d=build/macos/$t
+            mkdir -p "$d/examples"
+            "$tc" build --target "$t" compiler/src/main.trk -o "$d/trackc"
+            for f in examples/*.trk; do
+              s=$(basename "$f" .trk)
+              case "$s" in *_err) continue ;; esac
+              "$tc" build --target "$t" "$f" -o "$d/examples/$s"
+            done
+            python3 tests/tools/macho_check.py "$d/trackc" "$d"/examples/*
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries
+          path: build/macos
+          if-no-files-found: error
+
+  macos:
+    # [untested here] Runs the cross-built binaries on GitHub's Macs: the
+    # examples against their goldens, then trackc rebuilds hello on the Mac
+    # and must produce the same bytes as the Linux trackc did.
+    needs: macos-cross
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel   # Intel
+            target: x86_64-macos
+          - runner: macos-latest     # Apple silicon
+            target: aarch64-macos
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-binaries
+          path: build/macos
+
+      - name: Show the machine
+        run: uname -a && sw_vers
+
+      - name: Examples print their goldens
+        run: |
+          d=build/macos/${{ matrix.target }}
+          chmod +x "$d/trackc" "$d"/examples/*
+          fails=0
+          for f in examples/*.trk; do
+            s=$(basename "$f" .trk)
+            case "$s" in *_err) continue ;; esac
+            set +e
+            "$d/examples/$s" >"$d/examples/$s.out" 2>"$d/examples/$s.err"
+            rc=$?
+            set -e
+            hb=0
+            if sed "s/@HOSTNAME_BYTES@/$hb/" "tests/cases/examples/$s.out" | cmp -s - "$d/examples/$s.out" \
+                && [ "$rc" = "$(cat "tests/cases/examples/$s.code")" ]; then
+              echo "ok $s"
+            else
+              echo "FAIL $s (exit $rc)"
+              sed "s/@HOSTNAME_BYTES@/$hb/" "tests/cases/examples/$s.out" | diff - "$d/examples/$s.out" | head -20 || true
+              head -5 "$d/examples/$s.err"
+              fails=$((fails + 1))
+            fi
+          done
+          [ "$fails" = 0 ]
+
+      - name: trackc builds hello on the Mac, byte-identical to the cross build
+        run: |
+          d=build/macos/${{ matrix.target }}
+          mkdir -p build/onmac
+          "$d/trackc" build --target ${{ matrix.target }} examples/hello.trk -o build/onmac/hello
+          cmp build/onmac/hello "$d/examples/hello"
+          ./build/onmac/hello
+          "$d/trackc" check examples/stdlib_demo.trk
+
   windows:
     # Track on Windows from the committed Windows seed
     # (bootstrap/seed/trackc.exe): no Linux machine, no toolchain.

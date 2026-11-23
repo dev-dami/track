@@ -27,7 +27,13 @@ generates code for:
 |---|---|---|
 | x86_64-linux | static ELF, Linux syscalls | default; output byte-identical to earlier trackc |
 | x86_64-windows | PE32+ console .exe, kernel32 imports | builds and runs (tested under wine); trackc.exe self-hosts |
-| aarch64-linux, x86_64/aarch64-macos, aarch64-windows | | "not supported yet" |
+| aarch64-linux | static ELF, A64 lifted from ngen's x86-64 (ngen_a64.trk) | builds and runs (tested under qemu) |
+| x86_64-macos | Mach-O MH_EXECUTE, libSystem imports, ad-hoc signature | builds; structure and signature checked offline, runs in CI on an Intel Mac [CI only] |
+| aarch64-macos | the same Mach-O for arm64, A64 lifted as for aarch64-linux | builds; checked offline, runs in CI on Apple silicon [CI only] |
+| aarch64-windows | | "not supported yet" |
+
+On a Mac the default target is x86_64-macos (arm64 Macs run it under
+Rosetta 2); pass `--target aarch64-macos` for native code.
 
 `run` only runs host-target programs. The target picks the OS layer:
 trackc loads `rt/os/<os>.trk` with the portable rt modules and passes
@@ -76,10 +82,70 @@ writer lays out the table and fills the fixups. For x86_64-windows each
 call is `call [rip + IAT slot]` with the Win64 ABI: arguments 1-4 in
 rcx, rdx, r8, r9, the rest on the stack above 32 bytes of shadow space,
 rsp 16-byte aligned (`ffi_win64_call`); pe.trk writes one import
-descriptor per library. A macOS writer (dyld binding to libSystem, SysV
-ABI) or aarch64-windows reuses the two tables and adds its own call
-sequence next to `ffi_win64_call`. On a target without import support a
-call to an `extern` function is an error.
+descriptor per library. For x86_64-macos the call is the same
+`call [rip + slot]`, the slot a `__got` entry, with the System V ABI:
+arguments 1-6 in rdi, rsi, rdx, rcx, r8, r9, the rest at [rsp], rsp
+16-byte aligned, al = 0 (`ffi_sysv_call`). For aarch64-macos the A64
+translator turns that sequence into an AAPCS64 call (`ax_import_call`:
+x0-x5 from the System V registers, x6/x7 from the first two stack words,
+adrp + ldr of the slot, blr); variadic arguments, which Apple's arm64 ABI
+puts on the stack, are not supported, so the macOS layer calls no
+variadic function with variadic arguments (open(2) without a mode,
+creat(2) to create). aarch64-windows reuses the tables and the
+translator hook with its own call sequence. On a target without import
+support a call to an `extern` function is an error.
+
+`as "symbol"` after the signature names the library's symbol when the
+Track name differs (a runtime name such as `write` is taken, or the
+symbol is not an identifier):
+
+```track
+extern "libSystem.B.dylib" fn c_write(fd: i64, buf: i64, n: i64) -> i64 as "write";
+```
+
+### Mach-O layout (`macho.trk`)
+
+Segments are 16 KiB aligned in the file and in memory (a byte's file
+offset is its address minus 0x100000000), so arm64's page size holds:
+
+| segment | contents |
+|---|---|
+| `__PAGEZERO` | 4 GiB, no access |
+| `__TEXT` (r-x) | mach header and load commands; `__text` at file offset 0x4000, the entry (LC_MAIN) at its first byte |
+| `__DATA` (rw-) | `__data` (ngen's data, the code padded to 16 KiB so rip-relative / adrp references hold), `__got` (one slot per import, S_NON_LAZY_SYMBOL_POINTERS) |
+| `__LINKEDIT` (r--) | bind opcodes, export trie (`__mh_execute_header`), symbol table, indirect symbol table, string table, code signature |
+
+Load commands: the four segments, LC_DYLD_INFO_ONLY (bind opcodes, no
+rebases: the code is position independent, the image is MH_PIE),
+LC_SYMTAB, LC_DYSYMTAB, LC_LOAD_DYLINKER `/usr/lib/dyld`, LC_UUID (from
+the SHA-256 of code and data, so builds are reproducible),
+LC_BUILD_VERSION (macOS, minos 11.0), LC_MAIN (stack 32 MiB), one
+LC_LOAD_DYLIB per library (`"libSystem.B.dylib"` is
+`/usr/lib/libSystem.B.dylib`), LC_CODE_SIGNATURE. Each import is bound
+with BIND_TYPE_POINTER into its `__got` slot, two-level namespace, the
+library ordinal being its LC_LOAD_DYLIB. On x86_64 `stat`, `fstat` and
+`lstat` bind `$INODE64`, the 64-bit-inode layout arm64 has under the
+plain names.
+
+The entry is called as main(argc, argv, envp, apple); it passes argc and
+argv to `os_start` (rt/os/macos.trk), which calls `rt_start`. The
+cputype is x86_64 (0x01000007) or arm64 (0x0100000c); the x86_64 fixups
+are rip displacements, the arm64 ones adrp + ldr pairs (`mo_patch_a64`).
+
+**Code signature.** Arm64 macOS refuses unsigned code, so every image
+carries an ad-hoc, linker-signed signature as ld64 writes it: a
+SuperBlob (0xfade0cc0) with one CodeDirectory (0xfade0c02, version
+0x20400, flags `adhoc | linker-signed`, no special slots, identifier =
+the output file name), SHA-256 (computed in Track) of every 4 KiB page of
+the file up to the signature, `codeLimit` = the signature offset, exec
+segment = `__TEXT` (main binary). `tests/tools/macho_check.py` re-parses
+an image independently and recomputes every hash; `tests/sh/macos.sh`
+runs it over hello, the examples and trackc for both macOS targets.
+
+Not checked off a Mac: running. CI's `macos` job runs the cross-built
+binaries on an Intel runner (x86_64-macos) and an Apple-silicon one
+(aarch64-macos), against the example goldens, and has trackc rebuild
+hello there byte for byte.
 
 ### PE32+ layout (`pe.trk`)
 
@@ -129,6 +195,7 @@ calls; `store64`/`store8` must not be reordered across `syscall6`.
 | `vec.trk` | `vec_*`, `track_i64_collection_*`, `track_sb_*`, `track_array_*`, `array_len`, `track_bad_field`, `math_*`, `add`/`sum`/`sub` |
 | `os/linux.trk` | the Linux OS layer: argv, `env_*`, `sys_exec`/`process_spawn` (fork + execve `/bin/sh -c` + wait4), `clock_ms`, `file_*`, `track_file_*`, `dir_exists`, `net_socket_*` |
 | `os/windows.trk` | the Windows OS layer (kernel32 through `extern`): the same interface, plus `os_start` and `os_syscall` |
+| `os/macos.trk` | the macOS OS layer (libSystem through `extern`): the same interface, plus `os_start` and `os_syscall` (Linux numbers to libSystem calls; open/mmap flags, the stat layout, clock ids and socket options translated; -errno from `__error()`; `system(3)` for processes; environ from `_NSGetEnviron`) |
 | `libc.trk` | `open64`, `write`, `fchmod`, `close`, `memset`: the libc names `elf.trk` calls, written in Track |
 
 The runtime keeps the word-ABI behaviour of the retired C runtime

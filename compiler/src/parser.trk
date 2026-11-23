@@ -721,7 +721,13 @@ fn parse_extern(c: i64) -> i64 {
     if p_accept(c, TK_ARROW) {
         ret = parse_type(c);
     }
-    return node_new(c, K_EXTERN, name, lib, params, ret, -1, pos);
+    // `as "symbol"`: the library's name for it, when Track's differs
+    let mut sym: i64 = -1;
+    if p_accept(c, TK_AS) {
+        sym = p_value(c);
+        p_expect(c, TK_STR);
+    }
+    return node_new(c, K_EXTERN, name, lib, params, ret, sym, pos);
 }
 
 fn parse_macro_def(c: i64) -> i64 {
