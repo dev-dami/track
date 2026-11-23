@@ -178,7 +178,7 @@ with payload variants as heap cells `[tag, payload...]`, structs as
 `[name hash, fields...]`, and arrays as `[length, elements...]`. Arithmetic wraps,
 shift amounts are taken modulo 64, `>>` is logical, and `/` or `%` by zero, or of
 `INT64_MIN` by `-1` (the one quotient that does not fit), traps: stdout is flushed,
-then `SIGFPE` (shell status 136). trackc lowers to static x86-64 Linux executables and links
+then `SIGFPE` (shell status 136; on Windows exit code `0xC0000094`, STATUS_INTEGER_DIVIDE_BY_ZERO). trackc lowers to static x86-64 Linux executables and links
 the runtime written in Track (`compiler/rt/`); see [docs/bootstrap.md](docs/bootstrap.md).
 
 ## 12. Diagnostics & Error Reporting
