@@ -24,6 +24,7 @@ import "symbols";
 import "checker";
 import "life";
 import "ngen";
+import "ngen_a64";
 import "pe";
 import "macho";
 import "runtime_trk";
@@ -221,8 +222,11 @@ fn check_target_buildable() -> i64 {
     if text_eq(arch, "x86_64") && (text_eq(os, "linux") || text_eq(os, "windows") || text_eq(os, "macos")) {
         return 0;
     }
+    if text_eq(arch, "aarch64") && text_eq(os, "linux") {
+        return 0;
+    }
     err(text_cat3("trackc: target '", target_text(), "' is not supported yet\n"));
-    err("  supported: x86_64-linux, x86_64-windows, x86_64-macos\n");
+    err("  supported: x86_64-linux, x86_64-windows, x86_64-macos, aarch64-linux\n");
     quit(2);
     return 0;
 }
@@ -348,7 +352,20 @@ fn build_native(path: i64, exe: i64) -> i64 {
         }
         return 0;
     }
-    if elf_write_file(exe, body, native_code_len(c), syms) != 0 {
+    let mut code_len = native_code_len(c);
+    let mut mach = ELF_X86_64;
+    if text_eq(target_arch_name(), "aarch64") {
+        // lift ngen's x86-64 code to A64 (ngen_a64.trk)
+        let out_len = vfill(vnew(), 1, 0);
+        body = a64_translate(body, code_len, out_len);
+        if body == 0 {
+            quit(1);
+        }
+        code_len = vget(out_len, 0);
+        syms = 0;
+        mach = ELF_AARCH64;
+    }
+    if elf_write_file_m(exe, body, code_len, syms, mach) != 0 {
         err(text_cat3("trackc: cannot write '", exe, "'\n"));
         quit(1);
     }
